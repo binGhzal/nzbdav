@@ -158,7 +158,7 @@ public class ConfigManager
     {
         return int.Parse(
             StringUtil.EmptyToNull(GetConfigValue("usenet.connection-idle-timeout-seconds"))
-            ?? "300"
+            ?? "120"
         );
     }
 
