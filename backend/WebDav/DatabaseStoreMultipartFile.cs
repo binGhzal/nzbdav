@@ -37,10 +37,18 @@ public class DatabaseStoreMultipartFile(
 
     private Stream GetStream(DavMultipartFile multipartFile)
     {
+        // Closed-range end byte from GetAndHeadHandlerPatch, used to cap prefetch.
+        // Skip it for AES files: the Range is in decrypted coordinates, which don't map
+        // onto the encrypted packed stream this caps.
+        var requestedEndByte = multipartFile.Metadata.AesParams == null
+            ? httpContext.Items["RequestedRangeEnd"] as long?
+            : null;
+
         var packedStream = new DavMultipartFileStream(
             multipartFile.Metadata.FileParts,
             usenetClient,
-            configManager.GetArticleBufferSize()
+            configManager.GetArticleBufferSize(),
+            requestedEndByte
         );
 
         return multipartFile.Metadata.AesParams != null

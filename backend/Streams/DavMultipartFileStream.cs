@@ -8,7 +8,8 @@ namespace NzbWebDAV.Streams;
 public class DavMultipartFileStream(
     DavMultipartFile.FilePart[] fileParts,
     INntpClient usenetClient,
-    int articleBufferSize
+    int articleBufferSize,
+    long? requestedEndByte = null
 ) : Stream
 {
     private long _position = 0;
@@ -85,23 +86,56 @@ public class DavMultipartFileStream(
 
     private CombinedStream GetFileStream(long rangeStart)
     {
-        if (rangeStart == 0) return GetCombinedStream(0, 0);
+        if (rangeStart == 0)
+        {
+            return GetCombinedStream(0, 0, 0);
+        }
+
         var (filePartIndex, filePartOffset) = SeekFilePart(rangeStart);
-        var stream = GetCombinedStream(filePartIndex, rangeStart - filePartOffset);
-        return stream;
+        return GetCombinedStream(filePartIndex, rangeStart - filePartOffset, filePartOffset);
     }
 
-    private CombinedStream GetCombinedStream(int firstFilePartIndex, long additionalOffset)
+    private CombinedStream GetCombinedStream(int firstFilePartIndex, long additionalOffset, long firstPartFileStart)
     {
-        var streams = fileParts[firstFilePartIndex..]
+        var parts = fileParts[firstFilePartIndex..];
+
+        // File-absolute start of each part in the slice, for translating requestedEndByte per part.
+        var partFileStarts = new long[parts.Length];
+        var running = firstPartFileStart;
+        for (var i = 0; i < parts.Length; i++)
+        {
+            partFileStarts[i] = running;
+            running += parts[i].FilePartByteRange.Count;
+        }
+
+        var streams = parts
             .Select((x, i) =>
             {
                 var offset = (i == 0) ? additionalOffset : 0;
-                var stream = usenetClient.GetFileStream(x.SegmentIds, x.SegmentIdByteRange.Count, articleBufferSize);
+                var stream = usenetClient.GetFileStream(
+                    x.SegmentIds, x.SegmentIdByteRange.Count, articleBufferSize, GetPartEndByte(x, partFileStarts[i]));
                 stream.Seek(x.FilePartByteRange.StartInclusive + offset, SeekOrigin.Begin);
                 return Task.FromResult(stream.LimitLength(x.FilePartByteRange.Count - offset));
             });
         return new CombinedStream(streams);
+    }
+
+    // Translates the file-absolute requested end byte into this part's segment-data coordinate so the
+    // part's prefetch stops at the requested end. Null = no cap (the whole part is within the request).
+    private long? GetPartEndByte(DavMultipartFile.FilePart part, long partFileStart)
+    {
+        if (!requestedEndByte.HasValue)
+        {
+            return null;
+        }
+
+        var lastWantedByteInPart = requestedEndByte.Value - partFileStart;
+        if (lastWantedByteInPart < 0 || lastWantedByteInPart >= part.FilePartByteRange.Count - 1)
+        {
+            return null;
+        }
+
+        return part.FilePartByteRange.StartInclusive + lastWantedByteInPart;
     }
 
     protected override void Dispose(bool disposing)
