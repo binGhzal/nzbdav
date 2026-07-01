@@ -1,4 +1,6 @@
-﻿using System.Text.Json;
+﻿using System.IO.Compression;
+using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
@@ -8,6 +10,7 @@ using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
+using Serilog;
 
 namespace NzbWebDAV.Database;
 
@@ -163,9 +166,9 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
                 .HasConversion(new ValueConverter<string[], string>
                 (
                     v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
-                    v => JsonSerializer.Deserialize<string[]>(v, (JsonSerializerOptions?)null) ?? Array.Empty<string>()
+                    v => DeserializeOrFallback<string[]>(v) ?? Array.Empty<string>()
                 ))
-                .HasColumnType("TEXT") // store raw JSON
+                .HasColumnType("TEXT")
                 .IsRequired();
 
             e.HasOne(f => f.DavItem)
@@ -187,10 +190,9 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
                 .HasConversion(new ValueConverter<DavRarFile.RarPart[], string>
                 (
                     v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
-                    v => JsonSerializer.Deserialize<DavRarFile.RarPart[]>(v, (JsonSerializerOptions?)null)
-                         ?? Array.Empty<DavRarFile.RarPart>()
+                    v => DeserializeOrFallback<DavRarFile.RarPart[]>(v) ?? Array.Empty<DavRarFile.RarPart>()
                 ))
-                .HasColumnType("TEXT") // store raw JSON
+                .HasColumnType("TEXT")
                 .IsRequired();
 
             e.HasOne(f => f.DavItem)
@@ -212,10 +214,9 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
                 .HasConversion(new ValueConverter<DavMultipartFile.Meta, string>
                 (
                     v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
-                    v => JsonSerializer.Deserialize<DavMultipartFile.Meta>(v, (JsonSerializerOptions?)null) ??
-                         new DavMultipartFile.Meta()
+                    v => DeserializeOrFallback<DavMultipartFile.Meta>(v) ?? new DavMultipartFile.Meta()
                 ))
-                .HasColumnType("TEXT") // store raw JSON
+                .HasColumnType("TEXT")
                 .IsRequired();
 
             e.HasOne(f => f.DavItem)
@@ -600,5 +601,32 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
         BlobNzbFiles.Clear();
         BlobRarFiles.Clear();
         BlobMultipartFiles.Clear();
+    }
+
+    private static T? DeserializeOrFallback<T>(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return default;
+
+        var first = value[0];
+        if (first is '[' or '{' or '"' or '-' or (>= '0' and <= '9') or 't' or 'f' or 'n')
+            return JsonSerializer.Deserialize<T>(value, (JsonSerializerOptions?)null);
+
+        try
+        {
+            var bytes = Convert.FromBase64String(value);
+            using var input = new MemoryStream(bytes);
+            using var brotli = new BrotliStream(input, CompressionMode.Decompress);
+            using var reader = new StreamReader(brotli, Encoding.UTF8);
+            var json = reader.ReadToEnd();
+            return JsonSerializer.Deserialize<T>(json, (JsonSerializerOptions?)null);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(
+                ex,
+                "Failed to deserialize database value as JSON or legacy Base64+Brotli. Preview: {Preview}",
+                value.Length > 200 ? value[..200] : value);
+            return default;
+        }
     }
 }
