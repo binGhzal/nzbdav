@@ -30,7 +30,12 @@ export function useQueueDropzone(
     }, []);
 
     return useDropzone({
-        accept: { 'application/x-nzb': ['.nzb'] },
+        accept: {
+            "application/x-nzb": [".nzb"],
+            "application/xml": [".nzb"],
+            "text/xml": [".nzb"],
+            "application/octet-stream": [".nzb"],
+        },
         onDrop,
         noClick: true,
         noKeyboard: true,
