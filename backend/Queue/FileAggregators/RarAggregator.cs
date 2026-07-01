@@ -25,13 +25,14 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
 
     private void ProcessArchive(List<RarProcessor.StoredFileSegment> fileSegments)
     {
-        var archiveFiles = new Dictionary<string, List<RarProcessor.StoredFileSegment>>();
+        var archiveFiles = new Dictionary<ArchiveFileKey, List<RarProcessor.StoredFileSegment>>();
         foreach (var fileSegment in fileSegments)
         {
-            if (!archiveFiles.ContainsKey(fileSegment.PathWithinArchive))
-                archiveFiles.Add(fileSegment.PathWithinArchive, []);
+            var archiveFileKey = new ArchiveFileKey(fileSegment.ArchiveName, fileSegment.PathWithinArchive);
+            if (!archiveFiles.ContainsKey(archiveFileKey))
+                archiveFiles.Add(archiveFileKey, []);
 
-            archiveFiles[fileSegment.PathWithinArchive].Add(fileSegment);
+            archiveFiles[archiveFileKey].Add(fileSegment);
         }
 
         foreach (var archiveFile in archiveFiles)
@@ -40,7 +41,7 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
             ValidateVolumes(archiveFile.Value);
 
             // Initialize dav-item fields
-            var pathWithinArchive = archiveFile.Key;
+            var pathWithinArchive = archiveFile.Key.PathWithinArchive;
             var fileParts = SortByPartNumber(archiveFile.Value);
             var aesParams = fileParts.Select(x => x.AesParams).FirstOrDefault(x => x != null);
             var fileSize = aesParams?.DecodedSize ?? fileParts.Sum(x => x.ByteRangeWithinPart.Count);
@@ -134,4 +135,6 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
         if (partNumber.PartNumberFromFilename >= 0) return partNumber.PartNumberFromFilename!.Value + (delta ?? 0);
         return -1;
     }
+
+    private readonly record struct ArchiveFileKey(string ArchiveName, string PathWithinArchive);
 }
