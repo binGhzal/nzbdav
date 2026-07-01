@@ -172,6 +172,14 @@ public class ConfigManager
         );
     }
 
+    public int GetHealthCheckConcurrency()
+    {
+        return int.Parse(
+            GetConfigValue("repair.healthcheck-concurrency")
+            ?? "50"
+        );
+    }
+
     public int GetConnectionIdleTimeoutSeconds()
     {
         return int.Parse(

@@ -58,7 +58,7 @@ public class HealthCheckService : BackgroundService
                 }
 
                 // get concurrency
-                var concurrency = _configManager.GetUsenetProviderConfig().TotalPooledConnections;
+                var concurrency = _configManager.GetHealthCheckConcurrency();
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
                 // get the davItem to health-check
