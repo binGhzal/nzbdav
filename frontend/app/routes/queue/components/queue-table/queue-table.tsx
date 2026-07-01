@@ -8,6 +8,7 @@ import { PageSection } from "../page-section/page-section"
 import { EmptyQueue } from "../empty-queue/empty-queue"
 import { SimpleDropdown } from "../simple-dropdown/simple-dropdown"
 import styles from "../../route.module.css"
+import { withUrlBase } from "~/utils/url-base"
 import { WideViewport } from "../wide-viewport/wide-viewport"
 import { ThinViewport } from "../thin-viewport/thin-viewport"
 
@@ -91,7 +92,7 @@ export function QueueTable({
         setPendingRemoval(null);
         onIsRemovingChanged(queued_nzo_ids, true);
         try {
-            const url = `/api?mode=queue&name=delete`;
+            const url = withUrlBase(`/api?mode=queue&name=delete`);
             const response = await fetch(url, {
                 method: 'POST',
                 headers: {
@@ -207,7 +208,7 @@ export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, 
         setIsConfirmingRemoval(false);
         onIsRemovingChanged(slot.nzo_id, true);
         try {
-            const url = '/api?mode=queue&name=delete'
+            const url = withUrlBase('/api?mode=queue&name=delete')
                 + `&value=${encodeURIComponent(slot.nzo_id)}`;
             const response = await fetch(url);
             if (response.ok) {

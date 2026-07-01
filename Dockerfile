@@ -6,6 +6,12 @@ FROM --platform=$BUILDPLATFORM node:alpine AS frontend-build
 WORKDIR /frontend
 COPY ./frontend ./
 
+# URL_BASE bakes the React Router basename, Vite asset base, and a global
+# `__URL_BASE__` constant into the client bundle. Must match the URL_BASE env
+# var at runtime — they configure the same setting from opposite ends.
+ARG URL_BASE=""
+ENV URL_BASE=${URL_BASE}
+
 RUN npm install
 RUN npm run build
 RUN npm run build:server
@@ -52,6 +58,8 @@ RUN chmod +x /entrypoint.sh
 EXPOSE 3000 8080
 ARG NZBDAV_VERSION
 ENV NZBDAV_VERSION=${NZBDAV_VERSION}
+ARG URL_BASE=""
+ENV URL_BASE=${URL_BASE}
 ENV NODE_ENV=production
 ENV LOG_LEVEL=warning
 # LISTEN_ADDRESS controls the network interface both the frontend and backend bind to.
