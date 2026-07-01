@@ -37,7 +37,7 @@ class Program
 
         // Initialize logger
         var defaultLevel = LogEventLevel.Information;
-        var envLevel = EnvironmentUtil.GetEnvironmentVariable("LOG_LEVEL");
+        var envLevel = EnvironmentUtil.GetVariable("LOG_LEVEL");
         var level = Enum.TryParse<LogEventLevel>(envLevel, true, out var parsed) ? parsed : defaultLevel;
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Is(level)
@@ -145,7 +145,7 @@ class Program
         // If the user has set the UPGRADE env variable,
         // Then they have acknowledged the upgrade message.
         // Do nothing.
-        var upgradeEnv = EnvironmentUtil.GetEnvironmentVariable("UPGRADE");
+        var upgradeEnv = EnvironmentUtil.GetVariable("UPGRADE");
         if (upgradeEnv == "0.6.0") return;
 
         // Otherwise, display the upgrade message, and exit.

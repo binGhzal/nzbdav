@@ -3,13 +3,14 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Config;
 
 public class ConfigManager
 {
-    public static readonly string AppVersion = EnvironmentUtil.GetEnvironmentVariable("NZBDAV_VERSION") ?? "unknown";
+    public static readonly string AppVersion = EnvironmentUtil.GetVariable("NZBDAV_VERSION") ?? "unknown";
 
     private readonly Dictionary<string, string> _config = new();
     public event EventHandler<ConfigEventArgs>? OnConfigChanged;
@@ -32,13 +33,13 @@ public class ConfigManager
     {
         lock (_config)
         {
-            return _config.TryGetValue(configName, out string? value) ? value : null;
+            return _config.TryGetValue(configName, out string? value) ? value.ToNullIfEmpty() : null;
         }
     }
 
     private T? GetConfigValue<T>(string configName)
     {
-        var rawValue = StringUtil.EmptyToNull(GetConfigValue(configName));
+        var rawValue = GetConfigValue(configName);
         return rawValue == null ? default : JsonSerializer.Deserialize<T>(rawValue);
     }
 
@@ -58,8 +59,8 @@ public class ConfigManager
 
     public string GetRcloneMountDir()
     {
-        var mountDir = StringUtil.EmptyToNull(GetConfigValue("rclone.mount-dir"))
-                       ?? EnvironmentUtil.GetEnvironmentVariable("MOUNT_DIR")
+        var mountDir = GetConfigValue("rclone.mount-dir")
+                       ?? EnvironmentUtil.GetVariable("MOUNT_DIR")
                        ?? "/mnt/nzbdav";
         if (mountDir.EndsWith('/')) mountDir = mountDir.TrimEnd('/');
         return mountDir;
@@ -67,7 +68,7 @@ public class ConfigManager
 
     public string GetApiKey()
     {
-        return StringUtil.EmptyToNull(GetConfigValue("api.key"))
+        return GetConfigValue("api.key")
                ?? EnvironmentUtil.GetRequiredVariable("FRONTEND_BACKEND_API_KEY");
     }
 
@@ -79,8 +80,8 @@ public class ConfigManager
 
     public List<string> GetApiCategories()
     {
-        var value = StringUtil.EmptyToNull(GetConfigValue("api.categories"))
-                    ?? EnvironmentUtil.GetEnvironmentVariable("CATEGORIES")
+        var value = GetConfigValue("api.categories")
+                    ?? EnvironmentUtil.GetVariable("CATEGORIES")
                     ?? "audio,software,tv,movies";
 
         return value.Split(',')
@@ -92,22 +93,22 @@ public class ConfigManager
 
     public string GetManualUploadCategory()
     {
-        return StringUtil.EmptyToNull(GetConfigValue("api.manual-category"))
+        return GetConfigValue("api.manual-category")
                ?? "uncategorized";
     }
 
     public string? GetWebdavUser()
     {
-        return StringUtil.EmptyToNull(GetConfigValue("webdav.user"))
-               ?? EnvironmentUtil.GetEnvironmentVariable("WEBDAV_USER")
+        return GetConfigValue("webdav.user")
+               ?? EnvironmentUtil.GetVariable("WEBDAV_USER")
                ?? "admin";
     }
 
     public string? GetWebdavPasswordHash()
     {
-        var hashedPass = StringUtil.EmptyToNull(GetConfigValue("webdav.pass"));
+        var hashedPass = GetConfigValue("webdav.pass");
         if (hashedPass != null) return hashedPass;
-        var pass = EnvironmentUtil.GetEnvironmentVariable("WEBDAV_PASSWORD");
+        var pass = EnvironmentUtil.GetVariable("WEBDAV_PASSWORD");
         if (pass != null) return PasswordUtil.Hash(pass);
         return null;
     }
@@ -115,26 +116,26 @@ public class ConfigManager
     public bool IsEnsureImportableVideoEnabled()
     {
         var defaultValue = true;
-        var configValue = StringUtil.EmptyToNull(GetConfigValue("api.ensure-importable-video"));
+        var configValue = GetConfigValue("api.ensure-importable-video");
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
 
     public bool ShowHiddenWebdavFiles()
     {
         var defaultValue = false;
-        var configValue = StringUtil.EmptyToNull(GetConfigValue("webdav.show-hidden-files"));
+        var configValue = GetConfigValue("webdav.show-hidden-files");
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
 
     public string? GetLibraryDir()
     {
-        return StringUtil.EmptyToNull(GetConfigValue("media.library-dir"));
+        return GetConfigValue("media.library-dir");
     }
 
     public int GetMaxDownloadConnections()
     {
         return int.Parse(
-            StringUtil.EmptyToNull(GetConfigValue("usenet.max-download-connections"))
+            GetConfigValue("usenet.max-download-connections")
             ?? Math.Min(GetUsenetProviderConfig().TotalPooledConnections, 15).ToString()
         );
     }
@@ -142,14 +143,14 @@ public class ConfigManager
     public int GetArticleBufferSize()
     {
         return int.Parse(
-            StringUtil.EmptyToNull(GetConfigValue("usenet.article-buffer-size"))
+            GetConfigValue("usenet.article-buffer-size")
             ?? "40"
         );
     }
 
     public SemaphorePriorityOdds GetStreamingPriority()
     {
-        var stringValue = StringUtil.EmptyToNull(GetConfigValue("usenet.streaming-priority"));
+        var stringValue = GetConfigValue("usenet.streaming-priority");
         var numericalValue = int.Parse(stringValue ?? "80");
         return new SemaphorePriorityOdds() { HighPriorityOdds = numericalValue };
     }
@@ -157,7 +158,7 @@ public class ConfigManager
     public bool IsEnforceReadonlyWebdavEnabled()
     {
         var defaultValue = true;
-        var configValue = StringUtil.EmptyToNull(GetConfigValue("webdav.enforce-readonly"));
+        var configValue = GetConfigValue("webdav.enforce-readonly");
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
 
@@ -174,21 +175,21 @@ public class ConfigManager
     public bool IsPreviewPar2FilesEnabled()
     {
         var defaultValue = false;
-        var configValue = StringUtil.EmptyToNull(GetConfigValue("webdav.preview-par2-files"));
+        var configValue = GetConfigValue("webdav.preview-par2-files");
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
 
     public bool IsIgnoreSabHistoryLimitEnabled()
     {
         var defaultValue = true;
-        var configValue = StringUtil.EmptyToNull(GetConfigValue("api.ignore-history-limit"));
+        var configValue = GetConfigValue("api.ignore-history-limit");
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
 
     public bool IsRepairJobEnabled()
     {
         var defaultValue = false;
-        var configValue = StringUtil.EmptyToNull(GetConfigValue("repair.enable"));
+        var configValue = GetConfigValue("repair.enable");
         var isRepairJobEnabled = (configValue != null ? bool.Parse(configValue) : defaultValue);
         return isRepairJobEnabled
                && GetLibraryDir() != null
@@ -242,7 +243,7 @@ public class ConfigManager
     public bool IsRcloneRemoteControlEnabled()
     {
         var defaultValue = false;
-        var configValue = StringUtil.EmptyToNull(GetConfigValue("rclone.rc-enabled"));
+        var configValue = GetConfigValue("rclone.rc-enabled");
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
 
@@ -264,41 +265,41 @@ public class ConfigManager
     public string GetUserAgent()
     {
         var defaultValue = $"nzbdav/{AppVersion}";
-        return StringUtil.EmptyToNull(GetConfigValue("api.user-agent"))
-               ?? EnvironmentUtil.GetEnvironmentVariable("NZB_GRAB_USER_AGENT")
+        return GetConfigValue("api.user-agent")
+               ?? EnvironmentUtil.GetVariable("NZB_GRAB_USER_AGENT")
                ?? defaultValue;
     }
 
     public bool IsDatabaseStartupVacuumEnabled()
     {
         var defaultValue = false;
-        var configValue = StringUtil.EmptyToNull(GetConfigValue("db.is-startup-vacuum-enabled"));
+        var configValue = GetConfigValue("db.is-startup-vacuum-enabled");
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
 
     public bool IsNzbBackupEnabled()
     {
         var defaultValue = false;
-        var configValue = StringUtil.EmptyToNull(GetConfigValue("api.nzb-backup-enabled"));
+        var configValue = GetConfigValue("api.nzb-backup-enabled");
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
 
     public string? GetNzbBackupLocation()
     {
-        return StringUtil.EmptyToNull(GetConfigValue("api.nzb-backup-location"));
+        return GetConfigValue("api.nzb-backup-location");
     }
 
     public bool IsRemoveOrphanedFilesScheduleEnabled()
     {
         var defaultValue = false;
-        var configValue = StringUtil.EmptyToNull(GetConfigValue("maintenance.remove-orphaned-schedule-enabled"));
+        var configValue = GetConfigValue("maintenance.remove-orphaned-schedule-enabled");
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
 
     public TimeSpan RemoveOrphanedFilesSchedule()
     {
         var defaultValue = TimeSpan.Zero;
-        var configValue = StringUtil.EmptyToNull(GetConfigValue("maintenance.remove-orphaned-schedule-time"));
+        var configValue = GetConfigValue("maintenance.remove-orphaned-schedule-time");
         if (configValue == null) return defaultValue;
         if (!int.TryParse(configValue, out var totalMinutes)) return defaultValue;
         if (totalMinutes < 0 || totalMinutes >= 24 * 60) return defaultValue;

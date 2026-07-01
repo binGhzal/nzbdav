@@ -113,7 +113,7 @@ public class AddUrlRequest() : AddFileRequest
     {
         var contentDisposition = response.Content.Headers.ContentDisposition;
         var filename = contentDisposition?.FileName?.Trim('"');
-        return StringUtil.EmptyToNull(filename);
+        return filename.ToNullIfEmpty();
     }
 
     private static string? GetFilenameFromUrl(string url)

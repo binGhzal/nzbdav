@@ -1,5 +1,4 @@
 ﻿using Microsoft.AspNetCore.Http;
-using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Extensions;
 
@@ -13,13 +12,13 @@ public static class HttpContextExtensions
 
     public static string? GetQueryParam(this HttpContext httpContext, string name)
     {
-        return StringUtil.EmptyToNull(httpContext.Request.Query[name].FirstOrDefault());
+        return httpContext.Request.Query[name].FirstOrDefault().ToNullIfEmpty();
     }
 
     public static string? GetFormParam(this HttpContext httpContext, string name)
     {
         return httpContext.Request.HasFormContentType
-            ? StringUtil.EmptyToNull(httpContext.Request.Form[name].FirstOrDefault())
+            ? httpContext.Request.Form[name].FirstOrDefault().ToNullIfEmpty()
             : null;
     }
 
