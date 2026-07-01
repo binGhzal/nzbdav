@@ -144,7 +144,7 @@ public abstract class NntpClient : INntpClient
                     token
                 ).ConfigureAwait(false)
             ))
-            .WithConcurrencyAsync(concurrency);
+            .WithConcurrencyAsync(concurrency, token);
 
         var processed = 0;
         await foreach (var task in tasks.ConfigureAwait(false))
