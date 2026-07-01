@@ -13,7 +13,8 @@ internal class DavIsCollection<T> : DavString<T> where T : IStoreItem
 
 public class BaseStoreCollectionPropertyManager() : PropertyManager<BaseStoreCollection>(DavProperties)
 {
-    private static readonly XElement DavResourceType = new(WebDavNamespaces.DavNs + "collection");
+    private static XElement NewDavResourceType()
+        => new(WebDavNamespaces.DavNs + "collection");
 
     private static readonly DavProperty<BaseStoreCollection>[] DavProperties =
     [
@@ -23,7 +24,7 @@ public class BaseStoreCollectionPropertyManager() : PropertyManager<BaseStoreCol
         },
         new DavGetResourceType<BaseStoreCollection>
         {
-            Getter = _ => [DavResourceType]
+            Getter = _ => [NewDavResourceType()]
         },
         new DavGetLastModified<BaseStoreCollection>
         {

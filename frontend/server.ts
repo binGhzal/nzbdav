@@ -27,6 +27,10 @@ const URL_BASE = normalizeUrlBase(process.env.URL_BASE);
 const app = express();
 app.disable("x-powered-by");
 
+app.get("/healthz", (_req, res) => {
+  res.status(200).type("text/plain").send("ok");
+});
+
 // /health is always served at the unprefixed root regardless of URL_BASE so
 // container healthchecks and reverse-proxy probes don't have to know the
 // sub-path. Proxies to the backend's /health (the actual liveness signal)

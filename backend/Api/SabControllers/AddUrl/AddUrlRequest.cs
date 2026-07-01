@@ -80,7 +80,8 @@ public class AddUrlRequest() : AddFileRequest
         var httpClient = HttpClientInstance;
         httpClient.DefaultRequestHeaders.Remove("User-Agent");
         httpClient.DefaultRequestHeaders.Add("User-Agent", userAgent);
-        var response = await httpClient.GetAsync(url);
+        var currentUrl = url;
+        var response = await httpClient.GetAsync(currentUrl);
         var remainingRedirects = MaxAutomaticRedirections;
         while
         (
@@ -91,7 +92,8 @@ public class AddUrlRequest() : AddFileRequest
         )
         {
             var redirect = response.Headers.Location;
-            var redirectUri = redirect.IsAbsoluteUri ? redirect : new Uri(new Uri(url), redirect);
+            var redirectUri = redirect.IsAbsoluteUri ? redirect : new Uri(new Uri(currentUrl), redirect);
+            currentUrl = redirectUri.ToString();
             response = await httpClient.GetAsync(redirectUri);
             remainingRedirects--;
         }

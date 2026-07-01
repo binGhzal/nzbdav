@@ -17,12 +17,24 @@ namespace NzbWebDAV.Clients.Usenet;
 public class BaseNntpClient : NntpClient
 {
     private readonly UsenetClient _client = new();
+    private static readonly TimeSpan ConnectTimeout =
+        int.TryParse(Environment.GetEnvironmentVariable("NNTP_CONNECT_TIMEOUT_SECONDS"), out var timeoutSeconds)
+        && timeoutSeconds > 0
+            ? TimeSpan.FromSeconds(timeoutSeconds)
+            : TimeSpan.FromSeconds(15);
 
     public override async Task ConnectAsync(string host, int port, bool useSsl, CancellationToken cancellationToken)
     {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(ConnectTimeout);
         try
         {
-            await _client.ConnectAsync(host, port, useSsl, cancellationToken);
+            await _client.ConnectAsync(host, port, useSsl, timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new CouldNotConnectToUsenetException(
+                $"Connection to {host}:{port} timed out after {ConnectTimeout.TotalSeconds:F0}s.");
         }
         catch (Exception e) when (!e.IsCancellationException())
         {
