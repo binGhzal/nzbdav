@@ -32,8 +32,12 @@ export function QueueTable({
     onRemoved,
     onUploadClicked,
 }: QueueTableProps) {
-    const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
-    var selectedCount = queueSlots.filter(x => !!x.isSelected).length;
+    const [pendingRemoval, setPendingRemoval] = useState<{ nzoIds: Set<string>, label: string } | null>(null);
+    const selectedQueueIds = useMemo(
+        () => new Set<string>(queueSlots.filter(x => !!x.isSelected).map(x => x.nzo_id)),
+        [queueSlots]
+    );
+    var selectedCount = selectedQueueIds.size;
     var headerCheckboxState: TriCheckboxState = selectedCount === 0 ? 'none' : selectedCount === queueSlots.length ? 'all' : 'some';
 
     // row events
@@ -43,7 +47,7 @@ export function QueueTable({
 
     const onRowIsRemovingChanged = useCallback((id: string, isRemoving: boolean) => {
         onIsRemovingChanged(new Set<string>([id]), isRemoving);
-    }, [onIsSelectedChanged]);
+    }, [onIsRemovingChanged]);
 
     const onRowRemoved = useCallback((id: string) => {
         onRemoved(new Set([id]));
@@ -55,21 +59,36 @@ export function QueueTable({
     }, [queueSlots, onIsSelectedChanged]);
 
     const onRemove = useCallback(() => {
-        setIsConfirmingRemoval(true);
-    }, [setIsConfirmingRemoval]);
+        setPendingRemoval({ nzoIds: selectedQueueIds, label: `${selectedCount} selected item(s)` });
+    }, [selectedCount, selectedQueueIds, setPendingRemoval]);
+
+    const onBulkRemove = useCallback((category: string | null, label: string) => {
+        const nzoIds = new Set(queueSlots
+            .filter(x => !x.isUploading && (category === null || x.cat.toLowerCase() === category))
+            .map(x => x.nzo_id));
+
+        if (nzoIds.size === 0) return;
+        setPendingRemoval({ nzoIds, label: `${nzoIds.size} ${label} item(s)` });
+    }, [queueSlots, setPendingRemoval]);
 
     const onCancelRemoval = useCallback(() => {
-        setIsConfirmingRemoval(false);
-    }, [setIsConfirmingRemoval]);
+        setPendingRemoval(null);
+    }, [setPendingRemoval]);
 
     const onConfirmRemoval = useCallback(async () => {
+        if (!pendingRemoval) return;
+
         // immediately remove uploading items
-        const uploading_nzo_ids = new Set<string>(queueSlots.filter(x => x.isUploading && !!x.isSelected).map(x => x.nzo_id));
+        const uploading_nzo_ids = new Set<string>(queueSlots
+            .filter(x => x.isUploading && pendingRemoval.nzoIds.has(x.nzo_id))
+            .map(x => x.nzo_id));
         onRemoved(uploading_nzo_ids);
 
         // call backend to remove queued items
-        const queued_nzo_ids = new Set<string>(queueSlots.filter(x => !x.isUploading && !!x.isSelected).map(x => x.nzo_id));
-        setIsConfirmingRemoval(false);
+        const queued_nzo_ids = new Set<string>(queueSlots
+            .filter(x => !x.isUploading && pendingRemoval.nzoIds.has(x.nzo_id))
+            .map(x => x.nzo_id));
+        setPendingRemoval(null);
         onIsRemovingChanged(queued_nzo_ids, true);
         try {
             const url = `/api?mode=queue&name=delete`;
@@ -89,7 +108,7 @@ export function QueueTable({
             }
         } catch { }
         onIsRemovingChanged(queued_nzo_ids, false);
-    }, [queueSlots, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
+    }, [pendingRemoval, queueSlots, setPendingRemoval, onIsRemovingChanged, onRemoved]);
 
 
     // view
@@ -106,6 +125,13 @@ export function QueueTable({
             </h3>
             {headerCheckboxState !== 'none' &&
                 <ActionButton type="delete" onClick={onRemove} />
+            }
+            {queueSlots.length > 0 &&
+                <>
+                    <ActionButton type="delete" text="All" onClick={() => onBulkRemove(null, "queue")} />
+                    <ActionButton type="delete" text="TV" onClick={() => onBulkRemove("tv", "TV")} />
+                    <ActionButton type="delete" text="Movies" onClick={() => onBulkRemove("movies", "movie")} />
+                </>
             }
             <WideViewport width="450px">
                 <div style={{ marginLeft: '10px' }}>
@@ -140,9 +166,9 @@ export function QueueTable({
             )}
 
             <ConfirmModal
-                show={isConfirmingRemoval}
+                show={pendingRemoval !== null}
                 title="Remove From Queue?"
-                message={`${selectedCount} item(s) will be removed`}
+                message={`${pendingRemoval?.label ?? ""} will be removed`}
                 onConfirm={onConfirmRemoval}
                 onCancel={onCancelRemoval} />
         </PageSection>

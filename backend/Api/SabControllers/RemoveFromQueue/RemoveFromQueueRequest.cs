@@ -25,7 +25,11 @@ public class RemoveFromQueueRequest()
 
     private static IEnumerable<Guid> NzoIdsFromQueryParam(HttpContext httpContext)
     {
-        return httpContext.GetQueryParamValues("value").Select(Guid.Parse);
+        return httpContext.GetQueryParamValues("value")
+            .SelectMany(x => x.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Select(TryParseGuid)
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value);
     }
 
     private static async Task<List<Guid>> NzoIdsFromRequestBody(HttpContext httpContext, CancellationToken ct)
@@ -34,7 +38,7 @@ public class RemoveFromQueueRequest()
         {
             await using var stream = httpContext.Request.Body;
             var deserialized = await JsonSerializer.DeserializeAsync<RequestBody>(stream, cancellationToken: ct).ConfigureAwait(false);
-            return deserialized?.NzoIds ?? [];
+            return deserialized?.NzoIds.Concat(deserialized.CamelCaseNzoIds).ToList() ?? [];
         }
         catch
         {
@@ -42,9 +46,17 @@ public class RemoveFromQueueRequest()
         }
     }
 
+    private static Guid? TryParseGuid(string value)
+    {
+        return Guid.TryParse(value, out var guid) ? guid : null;
+    }
+
     private class RequestBody
     {
         [JsonPropertyName("nzo_ids")]
         public List<Guid> NzoIds { get; set; } = [];
+
+        [JsonPropertyName("nzoIds")]
+        public List<Guid> CamelCaseNzoIds { get; set; } = [];
     }
 }
