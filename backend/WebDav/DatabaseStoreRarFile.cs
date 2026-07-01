@@ -37,11 +37,14 @@ public class DatabaseStoreRarFile(
 
     private DavMultipartFileStream GetStream(DavRarFile rarFile)
     {
+        // Closed-range end byte from GetAndHeadHandlerPatch, used to cap prefetch.
+        var requestedEndByte = httpContext.Items["RequestedRangeEnd"] as long?;
         return new DavMultipartFileStream
         (
             rarFile.ToDavMultipartFileMeta().FileParts,
             usenetClient,
-            configManager.GetArticleBufferSize()
+            configManager.GetArticleBufferSize(),
+            requestedEndByte
         );
     }
 }

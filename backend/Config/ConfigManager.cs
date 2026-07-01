@@ -158,7 +158,7 @@ public class ConfigManager
     public TimeSpan GetStreamingSegmentTimeout()
     {
         var seconds = int.Parse(
-            StringUtil.EmptyToNull(GetConfigValue("usenet.streaming-segment-timeout"))
+            GetConfigValue("usenet.streaming-segment-timeout")
             ?? "8"
         );
         return TimeSpan.FromSeconds(seconds);
@@ -167,8 +167,16 @@ public class ConfigManager
     public int GetStreamingSegmentRetries()
     {
         return int.Parse(
-            StringUtil.EmptyToNull(GetConfigValue("usenet.streaming-segment-retries"))
+            GetConfigValue("usenet.streaming-segment-retries")
             ?? "3"
+        );
+    }
+
+    public int GetConnectionIdleTimeoutSeconds()
+    {
+        return int.Parse(
+            GetConfigValue("usenet.connection-idle-timeout-seconds")
+            ?? "120"
         );
     }
 
