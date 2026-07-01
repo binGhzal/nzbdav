@@ -78,7 +78,7 @@ function Body(props: ExplorePageData) {
                 <div>
                     {items.filter(x => x.isDirectory).map((x, index) =>
                         <div key={`${index}_dir_item`} className={getClassName(x)}>
-                            <Link to={getDirectoryPath(x.name)}>
+                            <Link to={getDirectoryPath(x.name)} discover="none" prefetch="none">
                                 <div className={styles["item-content"]}>
                                     <div className={styles["directory-icon"]} />
                                     <div className={styles["item-name"]}>{x.name}</div>
