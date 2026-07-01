@@ -90,6 +90,10 @@ if [ -z "${CONFIG_PATH}" ]; then
     export CONFIG_PATH="/config"
 fi
 
+mkdir -p /data
+chown "$PUID:$PGID" /data
+chmod 775 /data
+
 # Recursively update permissions to all $CONFIG_PATH files if needed
 chown "$PUID:$PGID" "$CONFIG_PATH"
 if [ -f "$CONFIG_PATH/db.sqlite" ]; then

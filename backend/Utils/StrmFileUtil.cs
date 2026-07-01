@@ -13,12 +13,14 @@ public static class StrmFileUtil
         // create necessary directories if they don't already exist
         var strmFilePath = GetStrmFilePath(configManager, davItem);
         var directoryName = Path.GetDirectoryName(strmFilePath);
+        var completedDownloadDir = configManager.GetStrmCompletedDownloadDir();
         if (directoryName != null)
-            await Task.Run(() => Directory.CreateDirectory(directoryName)).ConfigureAwait(false);
+            await Task.Run(() => FilePermissionUtil.CreateDirectory(directoryName, completedDownloadDir))
+                .ConfigureAwait(false);
 
         // create the strm file
         var targetUrl = GetStrmTargetUrl(configManager, davItem);
-        await File.WriteAllTextAsync(strmFilePath, targetUrl).ConfigureAwait(false);
+        await FilePermissionUtil.WriteAllTextAsync(strmFilePath, targetUrl).ConfigureAwait(false);
     }
 
     public static string GetStrmFilePath(ConfigManager configManager, DavItem davItem)

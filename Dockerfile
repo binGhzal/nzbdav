@@ -37,7 +37,7 @@ LABEL org.opencontainers.image.source=${REPO_URL}
 
 # Prepare environment
 WORKDIR /app
-RUN mkdir /config \
+RUN mkdir /config /data \
     && apk add --no-cache nodejs npm libc6-compat shadow su-exec bash curl tzdata
 
 # Copy frontend

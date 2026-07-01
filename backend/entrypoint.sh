@@ -14,5 +14,9 @@ if ! id appuser >/dev/null 2>&1; then
     adduser -D -H -u "$PUID" -G appgroup appuser
 fi
 
+mkdir -p /data
+chown "$PUID:$PGID" /data
+chmod 775 /data
+
 # Switch to new user and run app
 exec su-exec appuser ./NzbWebDAV
