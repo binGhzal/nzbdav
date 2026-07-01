@@ -22,10 +22,13 @@ public class AddFileRequest()
             context.Request.Form.Files["nzbFile"] ??
             context.Request.Form.Files["name"] ??
             throw new BadHttpRequestException("Invalid nzbFile/name param");
+        var fileName = AddNzbExtension(context.GetRequestParam("nzbname")) ?? file.FileName;
+        if (string.IsNullOrWhiteSpace(fileName))
+            throw new BadHttpRequestException("NZB filename could not be determined.");
 
         return new AddFileRequest()
         {
-            FileName = file.FileName,
+            FileName = fileName,
             ContentType = file.ContentType,
             NzbFileStream = file.OpenReadStream(),
             Category = context.GetRequestParam("cat") ?? configManager.GetManualUploadCategory(),
@@ -33,6 +36,13 @@ public class AddFileRequest()
             PostProcessing = MapPostProcessingOption(context.GetRequestParam("pp")),
             CancellationToken = context.RequestAborted
         };
+    }
+
+    private static string? AddNzbExtension(string? nzbName)
+    {
+        return nzbName == null ? null
+            : nzbName.EndsWith(".nzb", StringComparison.OrdinalIgnoreCase) ? nzbName
+            : $"{nzbName}.nzb";
     }
 
     protected static QueueItem.PriorityOption MapPriorityOption(string? priority)
