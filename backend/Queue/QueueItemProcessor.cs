@@ -194,7 +194,7 @@ public class QueueItemProcessor(
 
             // create strm files, if necessary
             if (configManager.GetImportStrategy() == "strm")
-                await new CreateStrmFilesPostProcessor(configManager, dbClient).CreateStrmFilesAsync()
+                await new CreateStrmFilesPostProcessor(configManager, dbClient).CreateStrmFilesAsync(mountFolder)
                     .ConfigureAwait(false);
 
             return mountFolder;
