@@ -13,7 +13,7 @@ public class RemoveUnlinkedFilesTask(
     ConfigManager configManager,
     WebsocketManager websocketManager,
     bool isDryRun
-) : BaseTask
+) : BaseTask(websocketManager, WebsocketTopic.CleanupTaskProgress)
 {
     private static List<string> _allRemovedPaths = [];
 
@@ -245,7 +245,7 @@ public class RemoveUnlinkedFilesTask(
         _allRemovedPaths = unlinkedFiles.Select(x => x.Path).ToList();
     }
 
-    private void Report(string message)
+    protected override void Report(string message)
     {
         var dryRun = isDryRun ? "Dry Run - " : string.Empty;
         _ = websocketManager.SendMessage(WebsocketTopic.CleanupTaskProgress, $"{dryRun}{message}");

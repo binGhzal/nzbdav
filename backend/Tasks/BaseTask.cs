@@ -1,8 +1,12 @@
 ﻿using NzbWebDAV.Utils;
+using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Tasks;
 
-public abstract class BaseTask
+public abstract class BaseTask(
+    WebsocketManager websocketManager,
+    WebsocketTopic reportTopic
+)
 {
     protected abstract Task ExecuteInternal();
     
@@ -10,6 +14,9 @@ public abstract class BaseTask
     private static Task? _runningTask;
 
     protected readonly CancellationToken CancellationToken = SigtermUtil.GetCancellationToken();
+
+    private static readonly Action<Action> Debounce = DebounceUtil.CreateDebounce();
+
 
     public async Task<bool> Execute()
     {
@@ -33,5 +40,15 @@ public abstract class BaseTask
         // and wait for it to finish.
         await task.ConfigureAwait(false);
         return true;
+    }
+
+    protected virtual void Report(string message)
+    {
+        _ = websocketManager.SendMessage(reportTopic, message);
+    }
+
+    protected void ReportDebounced(string message)
+    {
+        Debounce(() => Report(message));
     }
 }
