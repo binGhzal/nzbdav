@@ -1,11 +1,20 @@
-name: "Deploy Dependabot Images"
+name: "Publish Personal GHCR Image"
 
 on:
-  push:
-    branches:
-      - 'dependabot/**'
-
   workflow_dispatch:
+    inputs:
+      version:
+        description: "NZBDAV_VERSION value"
+        required: true
+        default: "beta"
+      publish_latest:
+        description: "Also publish the latest tag"
+        type: boolean
+        required: true
+        default: true
+  push:
+    tags:
+      - "v*"
 
 jobs:
   build-and-push:
@@ -35,15 +44,21 @@ jobs:
       - name: Set tags and NZBDAV_VERSION
         id: set_vars
         run: |
-          RAW_REF="${{ github.ref_name }}"
-          DOCKER_TAG=$(echo "$RAW_REF" \
-            | tr '[:upper:]' '[:lower:]' \
-            | sed -E 's#[^a-z0-9._-]+#-#g' \
-            | sed -E 's#(^-+|-+$)##g')
-          echo "DOCKER_TAG: $DOCKER_TAG"
-          echo "NZBDAV_VERSION=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-          GHCR_REPO=$(echo "ghcr.io/${{ github.repository }}-dependabot" | tr '[:upper:]' '[:lower:]')
-          echo "TAGS=${GHCR_REPO}:${DOCKER_TAG}" >> $GITHUB_OUTPUT
+          GHCR_REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+
+          echo "NZBDAV_VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          {
+            echo "TAGS<<EOF"
+            echo "${GHCR_REPO}:beta"
+            if [ "${{ github.event.inputs.publish_latest }}" != "false" ]; then
+              echo "${GHCR_REPO}:latest"
+            fi
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image (amd64 + arm64)
         uses: docker/build-push-action@v7

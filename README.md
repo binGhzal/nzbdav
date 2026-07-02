@@ -6,6 +6,8 @@
 
 NzbDav is a WebDAV server that allows you to mount and browse NZB documents as a virtual file system without downloading. It's designed to integrate with other media management tools, like Sonarr and Radarr, by providing a SABnzbd-compatible API. With it, you can build an infinite Plex or Jellyfin media library that streams directly from your usenet provider at maxed-out speeds, without using any storage space on your own server.
 
+This repository is the `binGhzal/nzbdav` personal fork. It publishes personal fork images only to GitHub Container Registry at `ghcr.io/binghzal/nzbdav` with `beta` and `latest` tags.
+
 Check the video below for a demo:
 
 https://github.com/user-attachments/assets/f14a0cf7-b19c-4b36-a909-59ca2a3771ef
@@ -26,12 +28,12 @@ https://github.com/user-attachments/assets/f14a0cf7-b19c-4b36-a909-59ca2a3771ef
 
 # Getting Started
 
-The easiest way to get started is by using the official Docker image.
+The easiest way to get started is by using the personal GHCR image.
 
 To try it out, run the following command to pull and run the image with port `3000` exposed:
 
 ```bash
-docker run --rm -it -p 3000:3000 nzbdav/nzbdav:latest
+docker run --rm -it -p 3000:3000 ghcr.io/binghzal/nzbdav:latest
 ```
 
 And if you would like to persist saved settings, attach a volume at `/config`
@@ -43,7 +45,7 @@ docker run --rm -it \
   -e PUID=1000 \
   -e PGID=1000 \
   -p 3000:3000 \
-  nzbdav/nzbdav:latest
+  ghcr.io/binghzal/nzbdav:latest
 ```
 After starting the container, be sure to navigate to the Settings page on the UI to finish setting up your usenet connection settings.
 
@@ -84,7 +86,7 @@ live under [`examples/nginx/`](examples/nginx/).
 
 * Many thanks to [@g0ldyy](https://github.com/g0ldyy), who kindly reported an auth-bypass vulnerability in nzbdav on 2026-03-17.
   * The vulnerability affected versions 0.2.46 through 0.6.1
-  * The dockerhub and ghcr images for these versions have since been patched, rebuilt, and republished as of 2026-03-18.
+  * The upstream dockerhub and ghcr images for these versions have since been patched, rebuilt, and republished as of 2026-03-18.
   * Simply **repull whichever image tag you are using to ensure your instance is patched.**
   * To confirm a patched version is running, look for a `+260317` suffix on the version displayed in nzbdav ui (example image below)
   * This is especially important if your instance is public facing and not behind vpn/sso.
@@ -95,4 +97,3 @@ live under [`examples/nginx/`](examples/nginx/).
 
 **NOTE:**
 **NZBDAV is intended for use with legally obtained content only. The project maintainers do not condone piracy and will not provide support for users suspected of engaging in copyright infringement.**
-
