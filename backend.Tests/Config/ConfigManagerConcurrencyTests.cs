@@ -1,12 +1,13 @@
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Models;
 
 namespace NzbWebDAV.Tests.Config;
 
 public class ConfigManagerConcurrencyTests
 {
     [Fact]
-    public void AutoQueueFileProcessingConcurrencyIsCpuBoundInsteadOfDownloadConnectionBound()
+    public void AutoQueueFileProcessingConcurrencyCanUseAllDownloadConnections()
     {
         var configManager = CreateConfigManager(
             ("usenet.max-download-connections", "200"),
@@ -17,12 +18,11 @@ public class ConfigManagerConcurrencyTests
 
         var concurrency = configManager.GetQueueFileProcessingConcurrency();
 
-        Assert.True(concurrency < configManager.GetMaxDownloadConnections());
-        Assert.InRange(concurrency, 1, 16);
+        Assert.Equal(configManager.GetMaxDownloadConnections(), concurrency);
     }
 
     [Fact]
-    public void ExplicitQueueFileProcessingConcurrencyIsClamped()
+    public void ExplicitQueueFileProcessingConcurrencyIsPreservedWithinSafetyLimit()
     {
         var configManager = CreateConfigManager(
             ("usenet.max-download-connections", "200"),
@@ -30,7 +30,35 @@ public class ConfigManagerConcurrencyTests
             ("queue.file-processing-concurrency", "128")
         );
 
-        Assert.Equal(64, configManager.GetQueueFileProcessingConcurrency());
+        Assert.Equal(128, configManager.GetQueueFileProcessingConcurrency());
+    }
+
+    [Fact]
+    public void ExplicitQueueFileProcessingConcurrencyCannotExceedSafetyLimit()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "400"),
+            ("usenet.adaptive-connections-enabled", "false"),
+            ("queue.file-processing-concurrency", "512")
+        );
+
+        Assert.Equal(256, configManager.GetQueueFileProcessingConcurrency());
+    }
+
+    [Fact]
+    public void AdaptiveQueueSizingIgnoresLowManualFallbacks()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "200"),
+            ("usenet.providers", CreateProviderConfig(100, 100)),
+            ("usenet.adaptive-connections-enabled", "true"),
+            ("queue.max-concurrent-downloads", "1"),
+            ("queue.file-processing-concurrency", "2")
+        );
+
+        Assert.Equal(200, configManager.GetAdaptiveMaxDownloadConnections());
+        Assert.Equal(4, configManager.GetAdaptiveMaxConcurrentQueueDownloads());
+        Assert.Equal(200, configManager.GetAdaptiveQueueFileProcessingConcurrency());
     }
 
     [Fact]
@@ -138,5 +166,24 @@ public class ConfigManagerConcurrencyTests
             .Select(x => new ConfigItem { ConfigName = x.Name, ConfigValue = x.Value })
             .ToList());
         return configManager;
+    }
+
+    private static string CreateProviderConfig(params int[] maxConnections)
+    {
+        var providers = maxConnections.Select((maxConnection, index) => new UsenetProviderConfig.ConnectionDetails
+        {
+            Type = ProviderType.Pooled,
+            Host = $"news{index}.example.invalid",
+            Port = 563,
+            UseSsl = true,
+            User = "user",
+            Pass = "pass",
+            MaxConnections = maxConnection,
+        });
+
+        return System.Text.Json.JsonSerializer.Serialize(new UsenetProviderConfig
+        {
+            Providers = providers.ToList(),
+        });
     }
 }

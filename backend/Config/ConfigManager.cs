@@ -13,8 +13,8 @@ namespace NzbWebDAV.Config;
 public class ConfigManager
 {
     public static readonly string AppVersion = EnvironmentUtil.GetVariable("NZBDAV_VERSION") ?? "unknown";
-    private const int MaxAutoQueueCpuConcurrency = 16;
-    private const int MaxQueueFileProcessingConcurrency = 64;
+    private const int MaxQueueFileProcessingConcurrency = 256;
+    private const int MaxAutoQueueDownloads = 4;
     private const int MaxHealthCheckConcurrency = 64;
     private const string CgroupCpuStatPath = "/sys/fs/cgroup/cpu.stat";
     private static readonly TimeSpan CpuSampleInterval = TimeSpan.FromSeconds(5);
@@ -174,8 +174,7 @@ public class ConfigManager
         if (!IsAdaptiveConnectionCountEnabled()) return maxDownloadConnections;
 
         var providerConnections = Math.Max(1, GetUsenetProviderConfig().TotalPooledConnections);
-        var cpuBasedConnections = Math.Clamp(Environment.ProcessorCount * 4, 4, 64);
-        var automaticTarget = Math.Min(maxDownloadConnections, Math.Min(providerConnections, cpuBasedConnections));
+        var automaticTarget = Math.Min(maxDownloadConnections, providerConnections);
         return ApplyRuntimePressureLimit(automaticTarget);
     }
 
@@ -224,18 +223,14 @@ public class ConfigManager
         var configValue = int.Parse(GetConfigValue("queue.max-concurrent-downloads") ?? "0");
         if (configValue > 0) return Math.Clamp(configValue, 1, 16);
 
-        var downloadConnections = Math.Max(1, GetMaxDownloadConnections());
-        var downloadBasedLimit = Math.Clamp(downloadConnections / 8 + 1, 1, 4);
-        var cpuBasedLimit = Math.Clamp(Environment.ProcessorCount / 4 + 1, 1, 4);
-        return Math.Min(downloadBasedLimit, cpuBasedLimit);
+        return GetAutomaticMaxConcurrentQueueDownloads(GetMaxDownloadConnections());
     }
 
     public int GetAdaptiveMaxConcurrentQueueDownloads()
     {
-        var maxConcurrentQueueDownloads = GetMaxConcurrentQueueDownloads();
-        return IsAdaptiveConnectionCountEnabled()
-            ? ApplyRuntimePressureLimit(maxConcurrentQueueDownloads)
-            : maxConcurrentQueueDownloads;
+        if (!IsAdaptiveConnectionCountEnabled()) return GetMaxConcurrentQueueDownloads();
+
+        return ApplyRuntimePressureLimit(GetAutomaticMaxConcurrentQueueDownloads(GetAdaptiveMaxDownloadConnections()));
     }
 
     public int GetQueueFileProcessingConcurrency()
@@ -243,22 +238,14 @@ public class ConfigManager
         var configValue = int.Parse(GetConfigValue("queue.file-processing-concurrency") ?? "0");
         if (configValue > 0) return Math.Clamp(configValue, 1, MaxQueueFileProcessingConcurrency);
 
-        var queueWorkers = Math.Max(1, GetMaxConcurrentQueueDownloads());
-        var perJobCpuBudget = (int)Math.Ceiling(GetQueueCpuConcurrencyBudget() / (double)queueWorkers);
-        var downloadConnections = Math.Max(1, GetMaxDownloadConnections());
-        return Math.Clamp(
-            Math.Min(perJobCpuBudget, downloadConnections),
-            1,
-            MaxQueueFileProcessingConcurrency
-        );
+        return GetAutomaticQueueFileProcessingConcurrency(GetMaxDownloadConnections());
     }
 
     public int GetAdaptiveQueueFileProcessingConcurrency()
     {
-        var queueFileProcessingConcurrency = GetQueueFileProcessingConcurrency();
         return IsAdaptiveConnectionCountEnabled()
-            ? ApplyRuntimePressureLimit(queueFileProcessingConcurrency)
-            : queueFileProcessingConcurrency;
+            ? GetAutomaticQueueFileProcessingConcurrency(GetAdaptiveMaxDownloadConnections())
+            : GetQueueFileProcessingConcurrency();
     }
 
     public long GetArticleCacheMaxBytes()
@@ -462,9 +449,14 @@ public class ConfigManager
             : healthCheckConcurrency;
     }
 
-    private static int GetQueueCpuConcurrencyBudget()
+    private static int GetAutomaticMaxConcurrentQueueDownloads(int downloadConnections)
     {
-        return Math.Clamp(Environment.ProcessorCount, 2, MaxAutoQueueCpuConcurrency);
+        return Math.Clamp((Math.Max(1, downloadConnections) + 49) / 50, 1, MaxAutoQueueDownloads);
+    }
+
+    private static int GetAutomaticQueueFileProcessingConcurrency(int downloadConnections)
+    {
+        return Math.Clamp(Math.Max(1, downloadConnections), 1, MaxQueueFileProcessingConcurrency);
     }
 
     private static int GetHealthCheckCpuConcurrencyLimit()

@@ -3,6 +3,7 @@ import styles from "./repairs.module.css"
 import { type Dispatch, type SetStateAction } from "react";
 import { className } from "~/utils/styling";
 import { isPositiveInteger } from "../usenet/usenet";
+import { parseArrConfig } from "../arrs/arr-config";
 
 type RepairsSettingsProps = {
     config: Record<string, string>
@@ -11,7 +12,7 @@ type RepairsSettingsProps = {
 
 export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) {
     const libraryDirConfig = config["media.library-dir"];
-    const arrConfig = JSON.parse(config["arr.instances"]);
+    const arrConfig = parseArrConfig(config["arr.instances"]);
     const areArrInstancesConfigured =
         (arrConfig.RadarrInstances?.length ?? 0) > 0 ||
         (arrConfig.SonarrInstances?.length ?? 0) > 0 ||

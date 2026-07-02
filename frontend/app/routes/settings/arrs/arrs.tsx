@@ -2,28 +2,12 @@ import { Button, Form, Card, InputGroup, Spinner } from "react-bootstrap";
 import styles from "./arrs.module.css"
 import { type Dispatch, type SetStateAction, useState, useCallback, useEffect } from "react";
 import { withUrlBase } from "~/utils/url-base";
+import { parseArrConfig, serializeArrConfig, type ArrConfig, type ConnectionDetails, type QueueRule } from "./arr-config";
 
 type ArrsSettingsProps = {
     config: Record<string, string>
     setNewConfig: Dispatch<SetStateAction<Record<string, string>>>
 };
-
-interface ConnectionDetails {
-    Host: string;
-    ApiKey: string;
-}
-
-interface QueueRule {
-    Message: string;
-    Action: number;
-}
-
-interface ArrConfig {
-    RadarrInstances: ConnectionDetails[];
-    SonarrInstances: ConnectionDetails[];
-    LidarrInstances: ConnectionDetails[];
-    QueueRules: QueueRule[];
-}
 
 const queueStatusMessages = [
     {
@@ -89,10 +73,10 @@ const queueStatusMessages = [
 ];
 
 export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
-    const arrConfig = JSON.parse(config["arr.instances"]);
+    const arrConfig = parseArrConfig(config["arr.instances"]);
 
     const updateConfig = useCallback((newArrConfig: ArrConfig) => {
-        setNewConfig({ ...config, "arr.instances": JSON.stringify(newArrConfig) });
+        setNewConfig({ ...config, "arr.instances": serializeArrConfig(newArrConfig) });
     }, [config, setNewConfig]);
 
     const addRadarrInstance = useCallback(() => {
@@ -406,7 +390,7 @@ export function isArrsSettingsUpdated(config: Record<string, string>, newConfig:
 
 export function isArrsSettingsValid(newConfig: Record<string, string>) {
     try {
-        const arrConfig: ArrConfig = JSON.parse(newConfig["arr.instances"] || "{}");
+        const arrConfig = parseArrConfig(newConfig["arr.instances"]);
 
         // Validate all Radarr instances
         for (const instance of arrConfig.RadarrInstances || []) {

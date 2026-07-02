@@ -67,8 +67,8 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                     checked={config["usenet.adaptive-connections-enabled"] === "true"}
                     onChange={e => setNewConfig({ ...config, "usenet.adaptive-connections-enabled": "" + e.target.checked })} />
                 <Form.Text id="adaptive-connections-enabled-help" muted>
-                    Automatically sizes queue and streaming article connections from runtime pressure and workload.
-                    The configured connection values are used as fallback ceilings.
+                    Automatically sizes queue and streaming article connections from runtime pressure and provider capacity.
+                    Max Download Connections remains the ceiling; queue fields below are manual fallbacks when adaptive sizing is off.
                 </Form.Text>
             </Form.Group>
             <hr />
@@ -83,7 +83,7 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                     value={config["queue.max-concurrent-downloads"]}
                     onChange={e => setNewConfig({ ...config, "queue.max-concurrent-downloads": e.target.value })} />
                 <Form.Text id="max-concurrent-queue-downloads-help" muted>
-                    Number of NZBs to process at the same time. Use 0 for automatic sizing based on download connections.
+                    Number of NZBs to process at the same time. Use 0 for automatic sizing. When adaptive sizing is on, NZBDav sizes this from available download connections.
                 </Form.Text>
             </Form.Group>
             <hr />
@@ -98,7 +98,7 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                     value={config["queue.file-processing-concurrency"]}
                     onChange={e => setNewConfig({ ...config, "queue.file-processing-concurrency": e.target.value })} />
                 <Form.Text id="file-processing-concurrency-help" muted>
-                    Number of file processors to run inside each active NZB. Use 0 for automatic CPU-based sizing.
+                    Number of file processors to run inside each active NZB. Use 0 for automatic sizing. When adaptive sizing is on, NZBDav sizes this from available download connections.
                 </Form.Text>
             </Form.Group>
             <hr />
@@ -275,7 +275,7 @@ function isValidMaxConcurrentQueueDownloads(value: string): boolean {
 function isValidFileProcessingConcurrency(value: string): boolean {
     if (value.trim() === "") return false;
     const num = Number(value);
-    return Number.isInteger(num) && num >= 0 && num <= 64;
+    return Number.isInteger(num) && num >= 0 && num <= 256;
 }
 
 function isValidArticleCacheMaxMegabytes(value: string): boolean {

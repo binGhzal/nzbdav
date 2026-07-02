@@ -12,7 +12,8 @@
 ### Performance
 
 * move `/content` recovery snapshot writes off the database save hot path into a debounced background writer.
-* make adaptive connection limits use configured values as ceilings while reacting to provider, CPU, memory, and thread-pool pressure.
+* make adaptive connection limits respect max-download ceilings while reacting to provider, CPU, memory, and thread-pool pressure.
+* let adaptive queue downloads fan out to the configured provider connection budget instead of low manual fallback values.
 * bound repair missing-segment metadata and article-cache pending-request metadata.
 * connect the frontend websocket bridge to the backend only while browser clients are subscribed.
 * stop forcing aggressive default thread-pool sizes; thread-pool minimum overrides are now opt-in via environment variables.
@@ -23,6 +24,7 @@
 * fix queue tab filtering by sending the backend `status` filter from the web UI.
 * fix settings save feedback so failed updates no longer show as saved.
 * fix settings tab state leakage by cloning defaults and saved/draft config state.
+* fix settings tabs crashing when saved Arr config is missing newer fields.
 * clear missing-segment health-check cache when Usenet provider settings change.
 * persist rclone VFS invalidations and retry failed RC forgets so mount views recover after RC outages or restarts.
 * mount the Library settings tab and make settings tabs URL-addressable.
