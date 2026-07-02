@@ -29,6 +29,7 @@
 
 * add backend and frontend verification gates before GHCR beta/latest image publishing.
 * require changelog updates on main pushes that publish pre-release images.
+* update CI setup actions to current Node runtime majors.
 
 ## [0.6.5](https://github.com/nzbdav-dev/nzbdav/compare/v0.6.4...v0.6.5) (2026-05-27)
 
