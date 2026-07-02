@@ -344,7 +344,7 @@ public class ConfigManager
         if (double.TryParse(value, CultureInfo.InvariantCulture, out var parsed) && parsed > 0)
             return Math.Clamp(parsed, 0.25, Math.Max(0.25, Environment.ProcessorCount));
 
-        return 1.00;
+        return 0.75;
     }
 
     private static double GetMemoryPressureMultiplier()
