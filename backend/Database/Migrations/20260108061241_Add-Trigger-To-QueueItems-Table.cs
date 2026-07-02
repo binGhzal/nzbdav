@@ -11,22 +11,13 @@ namespace NzbWebDAV.Database.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             // Create trigger to automatically add a BlobCleanupItem when a QueueItem is deleted
-            migrationBuilder.Sql(
-                """
-                CREATE TRIGGER TR_QueueItems_AddBlobCleanup
-                AFTER DELETE ON QueueItems
-                BEGIN
-                    INSERT INTO BlobCleanupItems (Id)
-                    VALUES (OLD.Id);
-                END
-                """
-            );
+            MigrationProvider.CreateQueueItemsBlobCleanupTrigger(migrationBuilder);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql("DROP TRIGGER IF EXISTS TR_QueueItems_AddBlobCleanup");
+            MigrationProvider.DropTrigger(migrationBuilder, "TR_QueueItems_AddBlobCleanup", "QueueItems");
         }
     }
 }

@@ -1,6 +1,6 @@
 import type { Route } from "./+types/route";
 import styles from "./route.module.css"
-import { Tabs, Tab, Button } from "react-bootstrap"
+import { Alert, Tabs, Tab, Button } from "react-bootstrap"
 import { backendClient } from "~/clients/backend-client.server";
 import { isUsenetSettingsUpdated, UsenetSettings } from "./usenet/usenet";
 import { isSabnzbdSettingsUpdated, isSabnzbdSettingsValid, SabnzbdSettings } from "./sabnzbd/sabnzbd";
@@ -94,6 +94,7 @@ function Body(props: BodyProps) {
     const [newConfig, setNewConfig] = useState({ ...props.config });
     const [isSaving, setIsSaving] = useState(false);
     const [isSaved, setIsSaved] = useState(false);
+    const [saveError, setSaveError] = useState<string | null>(null);
     const location = useLocation();
     const [activeTab, setActiveTab] = useState(() => getSettingsTab(new URLSearchParams(location.search).get("tab")));
 
@@ -139,6 +140,7 @@ function Body(props: BodyProps) {
     const onClear = useCallback(() => {
         setNewConfig({ ...config });
         setIsSaved(false);
+        setSaveError(null);
     }, [config, setNewConfig]);
 
     const onSelectTab = useCallback((tab: string | null) => {
@@ -153,6 +155,7 @@ function Body(props: BodyProps) {
     const onSave = useCallback(async () => {
         setIsSaving(true);
         setIsSaved(false);
+        setSaveError(null);
         try {
             const response = await fetch(withUrlBase("/settings/update"), {
                 method: "POST",
@@ -163,17 +166,23 @@ function Body(props: BodyProps) {
                     return form;
                 })()
             });
-            if (!response.ok) return;
+            if (!response.ok) {
+                setSaveError(`Failed to save settings (${response.status}).`);
+                return;
+            }
 
             setConfig({ ...newConfig });
             setIsSaved(true);
+        } catch (error) {
+            setSaveError(`Failed to save settings: ${error instanceof Error ? error.message : "unknown error"}.`);
         } finally {
             setIsSaving(false);
         }
-    }, [config, newConfig, setIsSaving, setIsSaved, setConfig]);
+    }, [config, newConfig, setIsSaving, setIsSaved, setConfig, setSaveError]);
 
     return (
         <div className={styles.container}>
+            {saveError && <Alert variant="danger">{saveError}</Alert>}
             <Tabs
                 activeKey={activeTab}
                 onSelect={onSelectTab}

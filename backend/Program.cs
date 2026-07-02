@@ -90,9 +90,10 @@ class Program
             .AddSingleton<StreamingConnectionLimiter>()
             .AddSingleton<UsenetStreamingClient>()
             .AddSingleton<QueueManager>()
+            .AddSingleton<HealthCheckService>()
             .AddHostedService<ContentIndexSnapshotWriterService>()
             .AddHostedService<ContentIndexRecoveryService>()
-            .AddHostedService<HealthCheckService>()
+            .AddHostedService(sp => sp.GetRequiredService<HealthCheckService>())
             .AddHostedService<ArrMonitoringService>()
             .AddHostedService<BlobCleanupService>()
             .AddHostedService<NzbBlobCleanupService>()
@@ -134,6 +135,7 @@ class Program
         // If the database file doesn't exist.
         // Then this is a new installation.
         // Do nothing.
+        if (!DavDatabaseContext.IsSqlite) return;
         if (!File.Exists(DavDatabaseContext.DatabaseFilePath)) return;
 
         // If there is no pending database migration,
@@ -185,6 +187,12 @@ class Program
         await configManager.LoadConfig().ConfigureAwait(false);
         if (configManager.IsDatabaseStartupVacuumEnabled())
         {
+            if (!DavDatabaseContext.IsSqlite)
+            {
+                Console.WriteLine("Skipping database vacuum because it is only supported by the SQLite provider.");
+                return;
+            }
+
             Console.Write("Performing database vacuum...");
             await using var databaseContext = new DavDatabaseContext();
             await databaseContext.Database.ExecuteSqlRawAsync("VACUUM;");

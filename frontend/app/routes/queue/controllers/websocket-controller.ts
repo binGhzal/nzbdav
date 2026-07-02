@@ -2,6 +2,7 @@ import { useCallback, useEffect } from "react";
 import type { HistoryEvents, QueueEvents } from "./events-controller";
 import { receiveMessage } from "~/utils/websocket-util";
 import { getWebsocketUrl } from "~/utils/url-base";
+import type { HistorySlot, QueueSlot } from "~/clients/backend-client.server";
 
 const topicNames = {
     queueItemStatus: 'qs',
@@ -26,16 +27,20 @@ export function initializeQueueHistoryWebsocket(
     historyEvents: HistoryEvents,
 ) {
     const onWebsocketMessage = useCallback((topic: string, message: string) => {
-        if (topic == topicNames.queueItemAdded)
-            queueEvents.onAddQueueSlot(JSON.parse(message));
+        if (topic == topicNames.queueItemAdded) {
+            const queueSlot = parseJsonMessage<QueueSlot>(message);
+            if (queueSlot) queueEvents.onAddQueueSlot(queueSlot);
+        }
         else if (topic == topicNames.queueItemRemoved)
             queueEvents.onRemoveQueueSlots(new Set<string>(message.split(',')));
         else if (topic == topicNames.queueItemStatus)
             queueEvents.onChangeQueueSlotStatus(message);
         else if (topic == topicNames.queueItemPercentage)
             queueEvents.onChangeQueueSlotPercentage(message);
-        else if (topic == topicNames.historyItemAdded)
-            historyEvents.onAddHistorySlot(JSON.parse(message));
+        else if (topic == topicNames.historyItemAdded) {
+            const historySlot = parseJsonMessage<HistorySlot>(message);
+            if (historySlot) historyEvents.onAddHistorySlot(historySlot);
+        }
         else if (topic == topicNames.historyItemRemoved)
             historyEvents.onRemoveHistorySlots(new Set<string>(message.split(',')));
     }, [
@@ -46,15 +51,37 @@ export function initializeQueueHistoryWebsocket(
     useEffect(() => {
         let ws: WebSocket;
         let disposed = false;
+        let reconnectDelayMs = 1000;
+        let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
         function connect() {
             ws = new WebSocket(getWebsocketUrl());
             ws.onmessage = receiveMessage(onWebsocketMessage);
-            ws.onopen = () => { ws.send(JSON.stringify(topicSubscriptions)); }
-            ws.onclose = () => { !disposed && setTimeout(() => connect(), 1000); };
+            ws.onopen = () => {
+                reconnectDelayMs = 1000;
+                ws.send(JSON.stringify(topicSubscriptions));
+            }
+            ws.onclose = () => {
+                if (disposed) return;
+                reconnectTimer = setTimeout(() => connect(), reconnectDelayMs);
+                reconnectDelayMs = Math.min(reconnectDelayMs * 2, 30000);
+            };
             ws.onerror = () => { ws.close() };
-            return () => { disposed = true; ws.close(); }
+            return () => {
+                disposed = true;
+                if (reconnectTimer) clearTimeout(reconnectTimer);
+                ws.close();
+            }
         }
 
         return connect();
     }, [onWebsocketMessage]);
+}
+
+function parseJsonMessage<T>(message: string): T | null {
+    try {
+        return JSON.parse(message) as T;
+    } catch (error) {
+        console.warn("Ignored invalid websocket message body", error);
+        return null;
+    }
 }

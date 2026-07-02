@@ -14,7 +14,6 @@ namespace NzbWebDAV.Database.Migrations
             migrationBuilder.AddColumn<DateTime>(
                 name: "CreatedAt",
                 table: "DavItems",
-                type: "TEXT",
                 nullable: false,
                 defaultValue: DateTime.MinValue); // this is `01/01/0001 00:00:00`
         }

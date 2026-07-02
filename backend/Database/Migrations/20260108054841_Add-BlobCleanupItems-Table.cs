@@ -15,7 +15,7 @@ namespace NzbWebDAV.Database.Migrations
                 name: "BlobCleanupItems",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false)
+                    Id = table.Column<Guid>(nullable: false)
                 },
                 constraints: table =>
                 {

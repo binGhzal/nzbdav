@@ -135,7 +135,13 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
                     return;
 
                 item.NextHealthCheck = urgent;
-                await dbContext.SaveChangesAsync().ConfigureAwait(false);
+                var dbClient = new DavDatabaseClient(dbContext);
+                await dbClient.EnqueueWorkerJobAsync(
+                        WorkerJob.JobKind.Repair,
+                        davItemId,
+                        priority: 1,
+                        now: DateTimeOffset.UtcNow)
+                    .ConfigureAwait(false);
                 Log.Information("Scheduled dynamic repair for {FilePath}", item.Path);
             }
             catch (Exception ex)

@@ -14,6 +14,8 @@ namespace NzbWebDAV.Services;
 /// </summary>
 public class NzbBlobCleanupService : BackgroundService
 {
+    private const int BatchSize = 100;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -22,19 +24,19 @@ public class NzbBlobCleanupService : BackgroundService
             {
                 await using var dbContext = new DavDatabaseContext();
 
-                // Get the first item from the queue
-                var cleanupItem = await dbContext.NzbBlobCleanupItems
-                    .FirstOrDefaultAsync(stoppingToken)
+                var cleanupItems = await dbContext.NzbBlobCleanupItems
+                    .Take(BatchSize)
+                    .ToListAsync(stoppingToken)
                     .ConfigureAwait(false);
 
                 // If no items in queue, wait 10 seconds before checking again
-                if (cleanupItem == null)
+                if (cleanupItems.Count == 0)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
                     continue;
                 }
 
-                var blobId = cleanupItem.Id;
+                var blobIds = cleanupItems.Select(x => x.Id).ToList();
 
                 // Use a serializable (BEGIN IMMEDIATE) transaction so that the three
                 // reference checks and the removal of the cleanup item are atomic.
@@ -49,34 +51,51 @@ public class NzbBlobCleanupService : BackgroundService
                     .BeginTransactionAsync(IsolationLevel.Serializable, stoppingToken)
                     .ConfigureAwait(false);
 
-                // Only delete the blob if it is no longer referenced anywhere.
-                // QueueItem.Id IS the NZB blob ID (the blob is stored at that GUID).
-                var isReferencedByQueue = await dbContext.QueueItems
-                    .AnyAsync(x => x.Id == blobId, stoppingToken)
+                var queueRefs = await dbContext.QueueItems
+                    .Where(x => blobIds.Contains(x.Id))
+                    .Select(x => x.Id)
+                    .ToListAsync(stoppingToken)
                     .ConfigureAwait(false);
 
-                var isReferencedByHistory = await dbContext.HistoryItems
-                    .AnyAsync(x => x.NzbBlobId == blobId, stoppingToken)
+                var historyRefs = await dbContext.HistoryItems
+                    .Where(x => x.NzbBlobId != null && blobIds.Contains(x.NzbBlobId.Value))
+                    .Select(x => x.NzbBlobId!.Value)
+                    .ToListAsync(stoppingToken)
                     .ConfigureAwait(false);
 
-                var isReferencedByDavItems = await dbContext.Items
-                    .AnyAsync(x => x.NzbBlobId == blobId, stoppingToken)
+                var davRefs = await dbContext.Items
+                    .Where(x => x.NzbBlobId != null && blobIds.Contains(x.NzbBlobId.Value))
+                    .Select(x => x.NzbBlobId!.Value)
+                    .ToListAsync(stoppingToken)
                     .ConfigureAwait(false);
 
-                if (!isReferencedByQueue && !isReferencedByHistory && !isReferencedByDavItems)
+                var referencedIds = queueRefs
+                    .Concat(historyRefs)
+                    .Concat(davRefs)
+                    .ToHashSet();
+                var unreferencedBlobIds = blobIds
+                    .Where(x => !referencedIds.Contains(x))
+                    .ToList();
+
+                foreach (var blobId in unreferencedBlobIds)
                 {
                     // Delete the blob before SaveChangesAsync so that if SaveChangesAsync
                     // fails, the cleanup item remains in the DB and the service retries.
                     // On retry, BlobStore.Delete succeeds even if the file is already gone.
                     BlobStore.Delete(blobId);
-
-                    var nzbName = await dbContext.NzbNames.FindAsync([blobId], stoppingToken).ConfigureAwait(false);
-                    if (nzbName != null)
-                        dbContext.NzbNames.Remove(nzbName);
                 }
 
-                // Remove the cleanup queue item and commit.
-                dbContext.NzbBlobCleanupItems.Remove(cleanupItem);
+                if (unreferencedBlobIds.Count > 0)
+                {
+                    var nzbNames = await dbContext.NzbNames
+                        .Where(x => unreferencedBlobIds.Contains(x.Id))
+                        .ToListAsync(stoppingToken)
+                        .ConfigureAwait(false);
+                    dbContext.NzbNames.RemoveRange(nzbNames);
+                }
+
+                // Remove the cleanup queue items and commit.
+                dbContext.NzbBlobCleanupItems.RemoveRange(cleanupItems);
                 await dbContext.SaveChangesAsync(stoppingToken).ConfigureAwait(false);
                 await tx.CommitAsync(stoppingToken).ConfigureAwait(false);
 

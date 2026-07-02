@@ -71,12 +71,26 @@ public class WrappingNntpClient(INntpClient usenetClient) : NntpClient
         _usenetClient.DecodedArticleAsync(segmentId, exclusiveConnection, cancellationToken);
 
 
-    protected void ReplaceUnderlyingClient(INntpClient usenetClient)
+    protected void ReplaceUnderlyingClient(INntpClient usenetClient, TimeSpan? drainDelay = null)
     {
-        var old = _usenetClient;
-        _usenetClient = usenetClient;
+        var old = Interlocked.Exchange(ref _usenetClient, usenetClient);
         if (old is IDisposable disposable)
+            DisposeAfterDrain(disposable, drainDelay ?? TimeSpan.Zero);
+    }
+
+    private static void DisposeAfterDrain(IDisposable disposable, TimeSpan drainDelay)
+    {
+        if (drainDelay <= TimeSpan.Zero)
+        {
             disposable.Dispose();
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(drainDelay).ConfigureAwait(false);
+            disposable.Dispose();
+        });
     }
 
     public override void Dispose()

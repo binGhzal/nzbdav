@@ -22,7 +22,9 @@ namespace NzbWebDAV.Services;
 public class HealthCheckService : BackgroundService
 {
     private static readonly TimeSpan AutoRepairRetryDelay = TimeSpan.FromHours(6);
+    private static readonly TimeSpan WorkerLeaseDuration = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan MissingSegmentCacheTtl = TimeSpan.FromHours(6);
+    private const int WorkerMaxAttempts = 3;
     private const int MaxMissingSegmentCacheEntries = 100_000;
 
     private readonly ConfigManager _configManager;
@@ -30,6 +32,8 @@ public class HealthCheckService : BackgroundService
     private readonly WebsocketManager _websocketManager;
     private readonly object _activeHealthChecksLock = new();
     private readonly HashSet<Guid> _activeHealthChecks = [];
+    private int _activeVerificationJobs;
+    private int _activeRepairJobs;
 
     private static readonly Dictionary<string, DateTimeOffset> _missingSegmentIds = [];
 
@@ -69,14 +73,28 @@ public class HealthCheckService : BackgroundService
                 var itemConcurrency = GetHealthCheckItemConcurrency(segmentConcurrency);
                 var workerSegmentConcurrency = Math.Max(1, segmentConcurrency / itemConcurrency);
 
-                while (GetActiveHealthCheckCount() < itemConcurrency)
+                var activeVerificationJobs = Volatile.Read(ref _activeVerificationJobs);
+                while (activeVerificationJobs < itemConcurrency)
                 {
-                    var davItemId = await GetNextHealthCheckItemId(stoppingToken).ConfigureAwait(false);
-                    if (davItemId == null) break;
-                    if (!TryMarkHealthCheckActive(davItemId.Value)) continue;
+                    var verifyJob = await LeaseNextVerificationJobAsync(stoppingToken).ConfigureAwait(false);
+                    if (verifyJob == null) break;
+                    if (!TryMarkHealthCheckActive(verifyJob.TargetId)) continue;
 
                     startedWorker = true;
-                    _ = RunHealthCheckWorkerAsync(davItemId.Value, workerSegmentConcurrency, stoppingToken);
+                    activeVerificationJobs++;
+                    _ = RunVerificationWorkerAsync(verifyJob, workerSegmentConcurrency, stoppingToken);
+                }
+
+                var activeRepairJobs = Volatile.Read(ref _activeRepairJobs);
+                while (activeRepairJobs < itemConcurrency)
+                {
+                    var repairJob = await LeaseNextRepairJobAsync(stoppingToken).ConfigureAwait(false);
+                    if (repairJob == null) break;
+                    if (!TryMarkHealthCheckActive(repairJob.TargetId)) continue;
+
+                    startedWorker = true;
+                    activeRepairJobs++;
+                    _ = RunRepairWorkerAsync(repairJob, stoppingToken);
                 }
 
                 var delay = startedWorker
@@ -134,7 +152,14 @@ public class HealthCheckService : BackgroundService
         }
     }
 
-    private async Task<Guid?> GetNextHealthCheckItemId(CancellationToken ct)
+    public WorkerSnapshot GetWorkerSnapshot()
+    {
+        return new WorkerSnapshot(
+            VerifyActive: Volatile.Read(ref _activeVerificationJobs),
+            RepairActive: Volatile.Read(ref _activeRepairJobs));
+    }
+
+    private async Task<WorkerJob?> LeaseNextVerificationJobAsync(CancellationToken ct)
     {
         await using var dbContext = new DavDatabaseContext();
         var dbClient = new DavDatabaseClient(dbContext);
@@ -146,35 +171,136 @@ public class HealthCheckService : BackgroundService
         if (activeHealthCheckIds.Length > 0)
             query = query.Where(x => !activeHealthCheckIds.Contains(x.Id));
 
-        return await query
-            .Select(x => (Guid?)x.Id)
-            .FirstOrDefaultAsync(ct)
+        var dueItemIds = await query
+            .Select(x => x.Id)
+            .Take(16)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        foreach (var davItemId in dueItemIds)
+            await dbClient.EnqueueWorkerJobAsync(
+                    WorkerJob.JobKind.Verify,
+                    davItemId,
+                    priority: 0,
+                    now: currentDateTime,
+                    ct: ct)
+                .ConfigureAwait(false);
+
+        return await dbClient.LeaseNextWorkerJobAsync(
+                WorkerJob.JobKind.Verify,
+                owner: $"{Environment.MachineName}:{Environment.ProcessId}:verify",
+                leaseDuration: WorkerLeaseDuration,
+                now: currentDateTime,
+                ct: ct)
             .ConfigureAwait(false);
     }
 
-    private async Task RunHealthCheckWorkerAsync(Guid davItemId, int segmentConcurrency, CancellationToken ct)
+    private static async Task<WorkerJob?> LeaseNextRepairJobAsync(CancellationToken ct)
     {
+        await using var dbContext = new DavDatabaseContext();
+        var dbClient = new DavDatabaseClient(dbContext);
+        return await dbClient.LeaseNextWorkerJobAsync(
+                WorkerJob.JobKind.Repair,
+                owner: $"{Environment.MachineName}:{Environment.ProcessId}:repair",
+                leaseDuration: WorkerLeaseDuration,
+                ct: ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task RunVerificationWorkerAsync(WorkerJob workerJob, int segmentConcurrency, CancellationToken ct)
+    {
+        Interlocked.Increment(ref _activeVerificationJobs);
         try
         {
             await using var dbContext = new DavDatabaseContext();
             var dbClient = new DavDatabaseClient(dbContext);
             var davItem = await dbContext.Items
-                .FirstOrDefaultAsync(x => x.Id == davItemId, ct)
+                .FirstOrDefaultAsync(x => x.Id == workerJob.TargetId, ct)
                 .ConfigureAwait(false);
-            if (davItem == null) return;
+            dbContext.WorkerJobs.Attach(workerJob);
+            if (davItem == null)
+            {
+                await dbClient.CompleteWorkerJobAsync(workerJob, ct: ct).ConfigureAwait(false);
+                return;
+            }
 
             await PerformHealthCheck(davItem, dbClient, segmentConcurrency, ct).ConfigureAwait(false);
+            await dbClient.CompleteWorkerJobAsync(workerJob, ct: ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
         {
         }
         catch (Exception e)
         {
-            Log.Error(e, "Unexpected error performing background health check for {DavItemId}: {Message}", davItemId, e.Message);
+            Log.Error(e, "Unexpected error performing background health check for {DavItemId}: {Message}", workerJob.TargetId, e.Message);
+            await FailLeasedWorkerJobAsync(workerJob, e, WorkerJob.JobKind.Verify, ct).ConfigureAwait(false);
         }
         finally
         {
-            ClearHealthCheckActive(davItemId);
+            Interlocked.Decrement(ref _activeVerificationJobs);
+            ClearHealthCheckActive(workerJob.TargetId);
+        }
+    }
+
+    private async Task RunRepairWorkerAsync(WorkerJob workerJob, CancellationToken ct)
+    {
+        Interlocked.Increment(ref _activeRepairJobs);
+        try
+        {
+            await using var dbContext = new DavDatabaseContext();
+            var dbClient = new DavDatabaseClient(dbContext);
+            var davItem = await dbContext.Items
+                .FirstOrDefaultAsync(x => x.Id == workerJob.TargetId, ct)
+                .ConfigureAwait(false);
+            dbContext.WorkerJobs.Attach(workerJob);
+            if (davItem == null)
+            {
+                await dbClient.CompleteWorkerJobAsync(workerJob, ct: ct).ConfigureAwait(false);
+                return;
+            }
+
+            await Repair(davItem, dbClient, ct).ConfigureAwait(false);
+            await dbClient.CompleteWorkerJobAsync(workerJob, ct: ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
+        {
+        }
+        catch (Exception e)
+        {
+            Log.Error(e, "Unexpected error performing background repair for {DavItemId}: {Message}", workerJob.TargetId, e.Message);
+            await FailLeasedWorkerJobAsync(workerJob, e, WorkerJob.JobKind.Repair, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _activeRepairJobs);
+            ClearHealthCheckActive(workerJob.TargetId);
+        }
+    }
+
+    private static async Task FailLeasedWorkerJobAsync
+    (
+        WorkerJob workerJob,
+        Exception exception,
+        WorkerJob.JobKind kind,
+        CancellationToken ct
+    )
+    {
+        try
+        {
+            await using var dbContext = new DavDatabaseContext();
+            dbContext.WorkerJobs.Attach(workerJob);
+            var dbClient = new DavDatabaseClient(dbContext);
+            await dbClient.FailWorkerJobAsync(
+                    workerJob,
+                    error: exception.Message,
+                    nextAttemptAt: DateTimeOffset.UtcNow.AddMinutes(kind == WorkerJob.JobKind.Repair ? 15 : 5),
+                    maxAttempts: WorkerMaxAttempts,
+                    ct: ct)
+                .ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            Log.Warning(e, "Failed to update {WorkerKind} worker job after error: {Message}", kind, e.Message);
         }
     }
 
@@ -220,7 +346,7 @@ public class HealthCheckService : BackgroundService
 
             // perform health check
             var progress = progressHook.ToPercentage(segments.Count);
-            await _usenetClient.CheckAllSegmentsAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
+            await RunVerificationAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
 
@@ -247,9 +373,38 @@ public class HealthCheckService : BackgroundService
             if (FilenameUtil.IsImportantFileType(davItem.Name))
                 AddCachedMissingSegmentIds(NzbSegmentIdSet.Decode(e.SegmentId));
 
-            // when usenet article is missing, perform repairs
-            await Repair(davItem, dbClient, ct).ConfigureAwait(false);
+            var utcNow = DateTimeOffset.UtcNow;
+            davItem.LastHealthCheck = utcNow;
+            davItem.NextHealthCheck = utcNow + AutoRepairRetryDelay;
+            dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+            {
+                Id = Guid.NewGuid(),
+                DavItemId = davItem.Id,
+                Path = davItem.Path,
+                CreatedAt = utcNow,
+                Result = HealthCheckResult.HealthResult.Unhealthy,
+                RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
+                Message = "File had missing articles. Queued automatic repair."
+            }));
+            await dbClient.EnqueueWorkerJobAsync(
+                    WorkerJob.JobKind.Repair,
+                    davItem.Id,
+                    priority: 0,
+                    now: utcNow,
+                    ct: ct)
+                .ConfigureAwait(false);
         }
+    }
+
+    private async Task RunVerificationAsync
+    (
+        List<string> segments,
+        int concurrency,
+        IProgress<int> progress,
+        CancellationToken ct
+    )
+    {
+        await _usenetClient.CheckAllSegmentsAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
     }
 
     private async Task UpdateReleaseDate(DavItem davItem, List<string> segments, CancellationToken ct)
@@ -546,4 +701,6 @@ public class HealthCheckService : BackgroundService
         foreach (var segmentId in oldestSegmentIds)
             _missingSegmentIds.Remove(segmentId);
     }
+
+    public sealed record WorkerSnapshot(int VerifyActive, int RepairActive);
 }

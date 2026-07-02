@@ -35,6 +35,9 @@ jobs:
       - name: Restore backend
         run: dotnet restore backend.Tests/backend.Tests.csproj
 
+      - name: Scan NuGet vulnerabilities
+        run: dotnet list backend.Tests/backend.Tests.csproj package --vulnerable --include-transitive
+
       - name: Test backend
         run: dotnet test backend.Tests/backend.Tests.csproj --configuration Release --no-restore
 
@@ -49,9 +52,17 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Scan npm vulnerabilities
+        working-directory: frontend
+        run: npm audit --audit-level=moderate
+
       - name: Typecheck frontend
         working-directory: frontend
         run: npm run typecheck
+
+      - name: Test frontend
+        working-directory: frontend
+        run: npm run test
 
       - name: Build frontend
         working-directory: frontend
@@ -60,6 +71,35 @@ jobs:
       - name: Build frontend server
         working-directory: frontend
         run: npm run build:server
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke test frontend server
+        working-directory: frontend
+        run: npm run test:e2e
+
+      - name: Build Docker image
+        run: docker build -t nzbdav:ci .
+
+      - name: Test migration failure exits nonzero
+        run: |
+          set +e
+          docker run --rm \
+            -e CONFIG_PATH=/dev/null \
+            -e FRONTEND_BACKEND_API_KEY=ci-entrypoint-test \
+            nzbdav:ci >/tmp/nzbdav-entrypoint.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/nzbdav-entrypoint.log
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::Container exited successfully after a forced migration failure."
+            exit 1
+          fi
+
+      - name: Check whitespace
+        run: git diff --check
 
   build-and-push:
     needs: verify
@@ -99,6 +139,7 @@ jobs:
           {
             echo "TAGS<<EOF"
             echo "${GHCR_REPO}:beta"
+            echo "${GHCR_REPO}:sha-${GITHUB_SHA}"
             if [ "${{ github.event.inputs.publish_latest }}" != "false" ]; then
               echo "${GHCR_REPO}:latest"
             fi

@@ -7,7 +7,12 @@
 * add queue status filters, page-size selection, and pause/resume controls to the web UI.
 * add backend-backed queue sorting by name, category, status, and size in the web UI and SAB-compatible queue endpoint.
 * expose runtime memory, GC, thread-pool, queue, and streaming observability in status APIs.
+* expose rclone invalidation backlog and provider diagnostic state in status/fullstatus APIs.
+* expose download, verify, and repair worker queue status in status/fullstatus APIs.
+* add frontend Vitest coverage and Playwright frontend-server smoke coverage.
 * run background health checks and repair workers concurrently while retaining shared NNTP connection limits.
+* persist download, verify, and repair work as leased durable jobs with retry and quarantine status.
+* add optional PostgreSQL database provider support for new installs.
 
 ### Performance
 
@@ -18,6 +23,10 @@
 * connect the frontend websocket bridge to the backend only while browser clients are subscribed.
 * stop forcing aggressive default thread-pool sizes; thread-pool minimum overrides are now opt-in via environment variables.
 * add a queue-selection database index for active queue worker scans.
+* enable SQLite WAL, busy timeout, shared-cache connection pooling, and no-tracking reads on hot queue/history/status paths.
+* batch blob, NZB, history, and DAV cleanup workers to drain backlogs with fewer database round-trips.
+* add shared article-cache budget accounting across concurrent queue downloads.
+* drain replaced Usenet provider clients after config reloads instead of disposing active clients immediately.
 
 ### Bug Fixes
 
@@ -27,13 +36,22 @@
 * fix settings tabs crashing when saved Arr config is missing newer fields.
 * clear missing-segment health-check cache when Usenet provider settings change.
 * persist rclone VFS invalidations and retry failed RC forgets so mount views recover after RC outages or restarts.
+* verify rclone `vfs/forget` confirmations before deleting invalidation outbox rows.
+* refresh content snapshots after raw cleanup/delete operations so intentionally removed files are not restored on recovery.
+* apply WebDAV range-end prefetch protection to `/view` streaming responses.
+* clamp SAB queue/history pagination, reject malformed `nzo_ids` with `400`, and report completed queue items as `100%`.
+* surface visible save/remove/pause errors in the settings, queue, and history web UI.
 * mount the Library settings tab and make settings tabs URL-addressable.
+* make historical migrations provider-aware so PostgreSQL can build a fresh schema.
 
 ### CI
 
 * add backend and frontend verification gates before GHCR beta/latest image publishing.
+* publish immutable `sha-<commit>` GHCR tags alongside beta/latest release tags.
+* require npm/NuGet vulnerability scans, Docker image build, migration failure smoke, Playwright smoke, and whitespace checks before release images.
 * require changelog updates on main pushes that publish pre-release images.
 * update CI setup actions to current Node runtime majors.
+* add a PostgreSQL migration smoke test against `postgres:16-alpine`.
 
 ## [0.6.5](https://github.com/nzbdav-dev/nzbdav/compare/v0.6.4...v0.6.5) (2026-05-27)
 

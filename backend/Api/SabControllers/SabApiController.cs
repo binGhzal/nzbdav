@@ -35,7 +35,8 @@ public class SabApiController(
     ConfigManager configManager,
     QueueManager queueManager,
     WebsocketManager websocketManager,
-    ActiveStreamTracker activeStreamTracker
+    ActiveStreamTracker activeStreamTracker,
+    HealthCheckService healthCheckService
 ) : ControllerBase
 {
     [HttpGet]
@@ -82,7 +83,8 @@ public class SabApiController(
                     HttpContext, configManager);
             case "status":
                 return new GetStatusController(
-                    HttpContext, dbClient, configManager, queueManager, activeStreamTracker);
+                    HttpContext, dbClient, configManager, queueManager, activeStreamTracker,
+                    healthCheckService);
             case "get_cats":
                 return new GetCategoriesController(
                     HttpContext, configManager);
@@ -100,7 +102,8 @@ public class SabApiController(
                     HttpContext, dbClient, configManager);
             case "fullstatus":
                 return new GetFullStatusController(
-                    HttpContext, dbClient, configManager, queueManager, activeStreamTracker);
+                    HttpContext, dbClient, configManager, queueManager, activeStreamTracker,
+                    healthCheckService);
             case "pause":
                 return new PauseResumeQueueController(
                     HttpContext, dbClient, queueManager, configManager, isPaused: true);

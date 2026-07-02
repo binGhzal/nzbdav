@@ -15,8 +15,8 @@ namespace NzbWebDAV.Database.Migrations
                 name: "QueueNzbContents",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    NzbContents = table.Column<string>(type: "TEXT", nullable: false)
+                    Id = table.Column<Guid>(nullable: false),
+                    NzbContents = table.Column<string>(nullable: false)
                 },
                 constraints: table =>
                 {
@@ -31,9 +31,9 @@ namespace NzbWebDAV.Database.Migrations
 
             // Copy existing NzbContents from QueueItems to QueueNzbContents
             migrationBuilder.Sql(@"
-                INSERT INTO QueueNzbContents (Id, NzbContents)
-                SELECT Id, NzbContents FROM QueueItems
-                WHERE NzbContents IS NOT NULL
+                INSERT INTO ""QueueNzbContents"" (""Id"", ""NzbContents"")
+                SELECT ""Id"", ""NzbContents"" FROM ""QueueItems""
+                WHERE ""NzbContents"" IS NOT NULL
             ");
 
             
@@ -48,19 +48,18 @@ namespace NzbWebDAV.Database.Migrations
             migrationBuilder.AddColumn<string>(
                 name: "NzbContents",
                 table: "QueueItems",
-                type: "TEXT",
                 nullable: false,
                 defaultValue: "");
             
             // Populate the re-introduced column from QueueNzbContents
             migrationBuilder.Sql(@"
-                UPDATE QueueItems
-                SET NzbContents = (
-                    SELECT q.NzbContents
-                    FROM QueueNzbContents q
-                    WHERE q.Id = QueueItems.Id
+                UPDATE ""QueueItems""
+                SET ""NzbContents"" = (
+                    SELECT q.""NzbContents""
+                    FROM ""QueueNzbContents"" q
+                    WHERE q.""Id"" = ""QueueItems"".""Id""
                 )
-                WHERE Id IN (SELECT Id FROM QueueNzbContents);
+                WHERE ""Id"" IN (SELECT ""Id"" FROM ""QueueNzbContents"");
             ");
             
             migrationBuilder.DropTable(

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Clients.Rclone;
+using NzbWebDAV.Clients.Rclone.Models;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Utils;
@@ -52,7 +53,19 @@ public class RcloneInvalidationService : BackgroundService
                 var result = await RcloneClient.ForgetVfsPaths(paths).ConfigureAwait(false);
                 if (result.Success)
                 {
-                    dbContext.RcloneInvalidationItems.RemoveRange(items);
+                    var forgottenItems = GetSuccessfullyForgottenItems(items, result);
+                    var forgottenIds = forgottenItems.Select(x => x.Id).ToHashSet();
+                    var unverifiedItems = items
+                        .Where(x => !forgottenIds.Contains(x.Id))
+                        .ToList();
+
+                    dbContext.RcloneInvalidationItems.RemoveRange(forgottenItems);
+                    if (unverifiedItems.Count > 0)
+                    {
+                        var unverifiedError = GetUnverifiedForgetError(paths, result);
+                        Reschedule(unverifiedItems, unverifiedError, DateTimeOffset.UtcNow);
+                    }
+
                     await dbContext.SaveChangesAsync(stoppingToken).ConfigureAwait(false);
                     continue;
                 }
@@ -73,6 +86,30 @@ public class RcloneInvalidationService : BackgroundService
                 await Task.Delay(ErrorDelay, stoppingToken).ConfigureAwait(false);
             }
         }
+    }
+
+    public static IReadOnlyList<RcloneInvalidationItem> GetSuccessfullyForgottenItems
+    (
+        List<RcloneInvalidationItem> items,
+        VfsForgetResponse response
+    )
+    {
+        if (!response.Success || response.Forgotten is not { Count: > 0 }) return [];
+
+        var forgottenPaths = response.Forgotten.ToHashSet(StringComparer.Ordinal);
+        return items
+            .Where(x => forgottenPaths.Contains(x.Path))
+            .ToList();
+    }
+
+    private static string GetUnverifiedForgetError(IReadOnlyCollection<string> requestedPaths, VfsForgetResponse response)
+    {
+        if (response.Forgotten is not { Count: > 0 })
+            return "rclone vfs/forget succeeded without confirming forgotten paths";
+
+        var forgottenPaths = response.Forgotten.ToHashSet(StringComparer.Ordinal);
+        var missingCount = requestedPaths.Count(x => !forgottenPaths.Contains(x));
+        return $"rclone vfs/forget did not confirm {missingCount} requested path(s)";
     }
 
     private static void Reschedule(List<RcloneInvalidationItem> items, string error, DateTimeOffset now)

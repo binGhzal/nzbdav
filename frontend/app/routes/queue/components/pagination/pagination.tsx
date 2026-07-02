@@ -64,6 +64,7 @@ export const Pagination = memo(({
                     options={pageOptions}
                     value={String(pageNumber)}
                     onChange={handleDropdownChange}
+                    ariaLabel="Page number"
                 />
                 <span className={styles.pageText}>of {totalPages}</span>
             </div>
@@ -75,6 +76,7 @@ export const Pagination = memo(({
                     options={pageSizeOptionValues}
                     value={String(pageSize)}
                     onChange={handlePageSizeChange}
+                    ariaLabel="Rows per page"
                 />
             </div>
 

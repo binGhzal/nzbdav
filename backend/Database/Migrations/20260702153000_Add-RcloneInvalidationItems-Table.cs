@@ -17,13 +17,13 @@ namespace NzbWebDAV.Database.Migrations
                 name: "RcloneInvalidationItems",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    Path = table.Column<string>(type: "TEXT", nullable: false),
-                    CreatedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    NextAttemptAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    LastAttemptAt = table.Column<long>(type: "INTEGER", nullable: true),
-                    Attempts = table.Column<int>(type: "INTEGER", nullable: false),
-                    LastError = table.Column<string>(type: "TEXT", maxLength: 1024, nullable: true)
+                    Id = table.Column<Guid>(nullable: false),
+                    Path = table.Column<string>(nullable: false),
+                    CreatedAt = table.Column<long>(nullable: false),
+                    NextAttemptAt = table.Column<long>(nullable: false),
+                    LastAttemptAt = table.Column<long>(nullable: true),
+                    Attempts = table.Column<int>(nullable: false),
+                    LastError = table.Column<string>(maxLength: 1024, nullable: true)
                 },
                 constraints: table =>
                 {

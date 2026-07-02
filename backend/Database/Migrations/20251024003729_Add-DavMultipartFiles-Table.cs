@@ -15,8 +15,8 @@ namespace NzbWebDAV.Database.Migrations
                 name: "DavMultipartFiles",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    Metadata = table.Column<string>(type: "TEXT", nullable: false)
+                    Id = table.Column<Guid>(nullable: false),
+                    Metadata = table.Column<string>(nullable: false)
                 },
                 constraints: table =>
                 {

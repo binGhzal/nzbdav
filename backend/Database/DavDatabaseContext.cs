@@ -1,7 +1,9 @@
 ﻿using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NzbWebDAV.Clients.Rclone;
@@ -18,11 +20,41 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
 {
     public static string ConfigPath => EnvironmentUtil.GetVariable("CONFIG_PATH") ?? "/config";
     public static string DatabaseFilePath => Path.Join(ConfigPath, "db.sqlite");
+    public static string DatabaseProvider => EnvironmentUtil.GetVariable("NZBDAV_DATABASE_PROVIDER") ?? "sqlite";
+    public static bool IsSqlite => DatabaseProvider.Equals("sqlite", StringComparison.OrdinalIgnoreCase);
+    public static bool IsPostgres => DatabaseProvider.Equals("postgres", StringComparison.OrdinalIgnoreCase)
+                                    || DatabaseProvider.Equals("postgresql", StringComparison.OrdinalIgnoreCase);
 
     private static DbContextOptions<DavDatabaseContext> CreateOptions()
     {
-        return new DbContextOptionsBuilder<DavDatabaseContext>()
-            .UseSqlite($"Data Source={DatabaseFilePath}")
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>();
+
+        if (IsPostgres)
+        {
+            var postgresConnectionString = EnvironmentUtil.GetRequiredVariable("NZBDAV_DATABASE_CONNECTION_STRING");
+            return options
+                .UseNpgsql(postgresConnectionString)
+                .ConfigureWarnings(warnings =>
+                    warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
+                .AddInterceptors(new ContentIndexSnapshotInterceptor())
+                .Options;
+        }
+
+        if (!IsSqlite)
+            throw new InvalidOperationException(
+                "Unsupported database provider. Set NZBDAV_DATABASE_PROVIDER to 'sqlite' or 'postgres'.");
+
+        var sqliteConnectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = DatabaseFilePath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            Cache = SqliteCacheMode.Shared,
+            Pooling = true,
+            DefaultTimeout = 30
+        }.ToString();
+
+        return options
+            .UseSqlite(sqliteConnectionString)
             .AddInterceptors(new SqliteForeignKeyEnabler(), new ContentIndexSnapshotInterceptor())
             .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
             .Options;
@@ -46,6 +78,7 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
     public DbSet<NzbName> NzbNames => Set<NzbName>();
     public DbSet<NzbBlobCleanupItem> NzbBlobCleanupItems => Set<NzbBlobCleanupItem>();
     public DbSet<RcloneInvalidationItem> RcloneInvalidationItems => Set<RcloneInvalidationItem>();
+    public DbSet<WorkerJob> WorkerJobs => Set<WorkerJob>();
 
     // blob items
     public List<DavNzbFile> BlobNzbFiles = [];
@@ -443,6 +476,86 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
                 .IsRequired();
 
             e.Property(i => i.Count);
+        });
+
+        // WorkerJob
+        b.Entity<WorkerJob>(e =>
+        {
+            e.ToTable("WorkerJobs");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedNever();
+
+            e.Property(i => i.Kind)
+                .HasConversion<int>()
+                .IsRequired();
+
+            e.Property(i => i.Status)
+                .HasConversion<int>()
+                .IsRequired();
+
+            e.Property(i => i.TargetId)
+                .ValueGeneratedNever()
+                .IsRequired();
+
+            e.Property(i => i.Priority)
+                .IsRequired();
+
+            e.Property(i => i.Attempts)
+                .IsRequired();
+
+            e.Property(i => i.CreatedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.Property(i => i.UpdatedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.Property(i => i.AvailableAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.Property(i => i.LeaseExpiresAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                    x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null
+                );
+
+            e.Property(i => i.CompletedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                    x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null
+                );
+
+            e.Property(i => i.LeaseOwner)
+                .HasMaxLength(255);
+
+            e.Property(i => i.LastError)
+                .HasMaxLength(1024);
+
+            e.Property(i => i.PayloadJson);
+
+            e.HasIndex(i => new { i.Kind, i.TargetId })
+                .IsUnique();
+
+            e.HasIndex(i => new { i.Kind, i.Status, i.AvailableAt, i.LeaseExpiresAt, i.Priority, i.CreatedAt })
+                .IsUnique(false);
         });
 
         // ConfigItem

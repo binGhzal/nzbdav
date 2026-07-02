@@ -8,9 +8,10 @@ export type SimpleDropdownProps = {
     value?: string,
     onChange?: (value: string) => void,
     valueRef?: React.RefObject<string>,
+    ariaLabel?: string,
 }
 
-export const SimpleDropdown = memo(({ type, options, value, onChange, valueRef }: SimpleDropdownProps) => {
+export const SimpleDropdown = memo(({ type, options, value, onChange, valueRef, ariaLabel }: SimpleDropdownProps) => {
     // validation
     if (!valueRef && (!value || !onChange)) {
         throw new Error("SimpleDropdown requires either the valueRef prop or both the value and onChange props.")
@@ -52,7 +53,19 @@ export const SimpleDropdown = memo(({ type, options, value, onChange, valueRef }
     const handleOptionClick = useCallback((option: string) => {
         handleSelectedOptionChange(option);
         setIsOpen(false);
-    }, [onChange]);
+    }, [handleSelectedOptionChange]);
+
+    const handleSelectedKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        toggleDropdown();
+    }, [toggleDropdown]);
+
+    const handleOptionKeyDown = useCallback((option: string, e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        handleOptionClick(option);
+    }, [handleOptionClick]);
 
     const handleNativeChange = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
         handleSelectedOptionChange(e.target.value);
@@ -79,23 +92,38 @@ export const SimpleDropdown = memo(({ type, options, value, onChange, valueRef }
     return (
         <div className={containerClassNames} ref={dropdownRef}>
             {/* hidden native select for mobile devices */}
-            <select className={styles.nativeSelect} value={renderedValue} onChange={handleNativeChange}>
+            <select className={styles.nativeSelect} value={renderedValue} onChange={handleNativeChange} aria-label={ariaLabel}>
                 {options.map(option => (
                     <option key={option} value={option}>{option}</option>
                 ))}
             </select>
 
             {/* styled visible dropdown box */}
-            <div className={styles.selected} onClick={toggleDropdown}>
+            <div
+                className={styles.selected}
+                onClick={toggleDropdown}
+                onKeyDown={handleSelectedKeyDown}
+                role="button"
+                tabIndex={0}
+                aria-label={ariaLabel}
+                aria-haspopup="listbox"
+                aria-expanded={isOpen}>
                 {renderedValue}
                 <span className={styles.arrow}></span>
             </div>
 
             {/* styled dropdown selection options for desktop devices */}
             {isOpen && (
-                <div className={classNames([styles.dropdown, openAbove && styles.openAbove])}>
+                <div className={classNames([styles.dropdown, openAbove && styles.openAbove])} role="listbox" aria-label={ariaLabel}>
                     {options.map(option => (
-                        <div key={option} className={styles.option} onClick={() => handleOptionClick(option)}>
+                        <div
+                            key={option}
+                            className={styles.option}
+                            onClick={() => handleOptionClick(option)}
+                            onKeyDown={(e) => handleOptionKeyDown(option, e)}
+                            role="option"
+                            tabIndex={0}
+                            aria-selected={option === renderedValue}>
                             {option}
                         </div>
                     ))}

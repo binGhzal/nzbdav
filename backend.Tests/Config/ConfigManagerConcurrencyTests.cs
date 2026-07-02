@@ -57,8 +57,36 @@ public class ConfigManagerConcurrencyTests
         );
 
         Assert.Equal(200, configManager.GetAdaptiveMaxDownloadConnections());
-        Assert.Equal(4, configManager.GetAdaptiveMaxConcurrentQueueDownloads());
+        Assert.Equal(GetExpectedAutomaticQueueWorkers(200), configManager.GetAdaptiveMaxConcurrentQueueDownloads());
         Assert.Equal(200, configManager.GetAdaptiveQueueFileProcessingConcurrency());
+    }
+
+    [Fact]
+    public void AdaptiveDownloadConnectionsUseProviderCapacityWhenManualFallbackIsLow()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "15"),
+            ("usenet.providers", CreateProviderConfig(100, 100)),
+            ("usenet.adaptive-connections-enabled", "true"),
+            ("queue.max-concurrent-downloads", "1"),
+            ("queue.file-processing-concurrency", "2")
+        );
+
+        Assert.Equal(200, configManager.GetAdaptiveMaxDownloadConnections());
+        Assert.Equal(GetExpectedAutomaticQueueWorkers(200), configManager.GetAdaptiveMaxConcurrentQueueDownloads());
+        Assert.Equal(200, configManager.GetAdaptiveQueueFileProcessingConcurrency());
+    }
+
+    [Fact]
+    public void AutomaticQueueWorkersScaleWithConnectionsAndCores()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "200"),
+            ("usenet.adaptive-connections-enabled", "false"),
+            ("queue.max-concurrent-downloads", "0")
+        );
+
+        Assert.Equal(GetExpectedAutomaticQueueWorkers(200), configManager.GetMaxConcurrentQueueDownloads());
     }
 
     [Fact]
@@ -89,7 +117,20 @@ public class ConfigManagerConcurrencyTests
     }
 
     [Fact]
-    public void AutoTotalStreamingConnectionsAreCpuBoundInsteadOfPerStreamMultiplied()
+    public void AdaptiveHealthCheckConcurrencyUsesProviderCapacityWhenManualFallbackIsLow()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "15"),
+            ("usenet.providers", CreateProviderConfig(100, 100)),
+            ("usenet.adaptive-connections-enabled", "true"),
+            ("repair.healthcheck-concurrency", "64")
+        );
+
+        Assert.Equal(Math.Min(64, Environment.ProcessorCount * 2), configManager.GetAdaptiveHealthCheckConcurrency());
+    }
+
+    [Fact]
+    public void AutoTotalStreamingConnectionsAreCpuAndConnectionBound()
     {
         var configManager = CreateConfigManager(
             ("usenet.max-download-connections", "200"),
@@ -101,8 +142,28 @@ public class ConfigManagerConcurrencyTests
 
         var totalStreamingConnections = configManager.GetMaxTotalStreamingConnections();
 
-        Assert.True(totalStreamingConnections < configManager.GetMaxStreamingConnections());
-        Assert.InRange(totalStreamingConnections, 1, 8);
+        Assert.Equal(GetExpectedAutomaticStreamingConnectionBudget(200), totalStreamingConnections);
+        Assert.InRange(totalStreamingConnections, 1, GetExpectedAutomaticStreamingConnectionBudget(200));
+    }
+
+    [Fact]
+    public void AdaptiveTotalStreamingConnectionsUseProviderCapacityWhenManualFallbackIsLow()
+    {
+        if (Environment.ProcessorCount < 3) return;
+
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "15"),
+            ("usenet.providers", CreateProviderConfig(100, 100)),
+            ("usenet.adaptive-connections-enabled", "true"),
+            ("usenet.article-buffer-size", "40"),
+            ("usenet.max-streaming-connections", "0"),
+            ("usenet.max-total-streaming-connections", "0")
+        );
+
+        var totalStreamingConnections = configManager.GetMaxTotalStreamingConnections();
+
+        Assert.True(totalStreamingConnections > 10);
+        Assert.InRange(totalStreamingConnections, 1, 200);
     }
 
     [Fact]
@@ -115,6 +176,24 @@ public class ConfigManagerConcurrencyTests
         );
 
         Assert.Equal(128, configManager.GetMaxTotalStreamingConnections());
+    }
+
+    [Fact]
+    public void DefaultCpuPressureTargetAllowsOneCoreOnMulticoreHosts()
+    {
+        if (Environment.ProcessorCount < 2) return;
+
+        var original = Environment.GetEnvironmentVariable("NZBDAV_ADAPTIVE_CPU_TARGET_CORES");
+        try
+        {
+            Environment.SetEnvironmentVariable("NZBDAV_ADAPTIVE_CPU_TARGET_CORES", null);
+
+            Assert.Equal(1.00, ConfigManager.GetCpuPressureMultiplier(1.00));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NZBDAV_ADAPTIVE_CPU_TARGET_CORES", original);
+        }
     }
 
     [Fact]
@@ -185,5 +264,18 @@ public class ConfigManagerConcurrencyTests
         {
             Providers = providers.ToList(),
         });
+    }
+
+    private static int GetExpectedAutomaticQueueWorkers(int downloadConnections)
+    {
+        var connectionBased = (Math.Max(1, downloadConnections) + 24) / 25;
+        var coreBased = Math.Max(1, Environment.ProcessorCount);
+        return Math.Clamp(Math.Min(connectionBased, coreBased), 1, 16);
+    }
+
+    private static int GetExpectedAutomaticStreamingConnectionBudget(int downloadConnections)
+    {
+        var cpuBased = Math.Clamp(Environment.ProcessorCount * 4, 4, 64);
+        return Math.Clamp(Math.Min(cpuBased, Math.Max(1, downloadConnections)), 1, 128);
     }
 }

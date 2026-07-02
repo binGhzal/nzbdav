@@ -394,6 +394,7 @@ public sealed class ContentIndexDatabaseFixture : IAsyncLifetime
         await dbContext.Database.MigrateAsync();
         await dbContext.HealthCheckResults.ExecuteDeleteAsync();
         await dbContext.HealthCheckStats.ExecuteDeleteAsync();
+        await dbContext.WorkerJobs.ExecuteDeleteAsync();
         await dbContext.QueueNzbContents.ExecuteDeleteAsync();
         await dbContext.QueueItems.ExecuteDeleteAsync();
         await dbContext.RcloneInvalidationItems.ExecuteDeleteAsync();

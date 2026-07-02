@@ -52,12 +52,18 @@ public sealed class FakeNntpClient : NntpClient
     private int _decodedArticleCallCount;
     private int _headCallCount;
     private int _statCallCount;
+    private readonly Action? _onDispose;
 
     public int GetYencHeadersCallCount => Volatile.Read(ref _getYencHeadersCallCount);
     public int DecodedBodyCallCount => Volatile.Read(ref _decodedBodyCallCount);
     public int DecodedArticleCallCount => Volatile.Read(ref _decodedArticleCallCount);
     public int HeadCallCount => Volatile.Read(ref _headCallCount);
     public int StatCallCount => Volatile.Read(ref _statCallCount);
+
+    public FakeNntpClient(Action? onDispose = null)
+    {
+        _onDispose = onDispose;
+    }
 
     public FakeNntpClient AddSegment(string segmentId, byte[] bytes, long partOffset = 0)
     {
@@ -184,6 +190,7 @@ public sealed class FakeNntpClient : NntpClient
 
     public override void Dispose()
     {
+        _onDispose?.Invoke();
         GC.SuppressFinalize(this);
     }
 

@@ -34,6 +34,7 @@ public sealed class StreamingConnectionLimiter : IConnectionLimiter, IDisposable
             || e.ChangedConfig.ContainsKey("usenet.max-streaming-connections")
             || e.ChangedConfig.ContainsKey("usenet.article-buffer-size")
             || e.ChangedConfig.ContainsKey("usenet.max-download-connections")
+            || e.ChangedConfig.ContainsKey("usenet.providers")
             || e.ChangedConfig.ContainsKey("usenet.adaptive-connections-enabled"))
         {
             RefreshMaxAllowedConnections();
@@ -55,4 +56,3 @@ public sealed class StreamingConnectionLimiter : IConnectionLimiter, IDisposable
         _semaphore.Dispose();
     }
 }
-

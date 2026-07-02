@@ -14,7 +14,7 @@ public class ConfigManager
 {
     public static readonly string AppVersion = EnvironmentUtil.GetVariable("NZBDAV_VERSION") ?? "unknown";
     private const int MaxQueueFileProcessingConcurrency = 256;
-    private const int MaxAutoQueueDownloads = 4;
+    private const int MaxAutoQueueDownloads = 16;
     private const int MaxHealthCheckConcurrency = 64;
     private const string CgroupCpuStatPath = "/sys/fs/cgroup/cpu.stat";
     private static readonly TimeSpan CpuSampleInterval = TimeSpan.FromSeconds(5);
@@ -150,7 +150,7 @@ public class ConfigManager
     {
         return int.Parse(
             GetConfigValue("usenet.max-download-connections")
-            ?? Math.Min(GetUsenetProviderConfig().TotalPooledConnections, 15).ToString()
+            ?? GetUsenetProviderConfig().TotalPooledConnections.ToString(CultureInfo.InvariantCulture)
         );
     }
 
@@ -170,12 +170,10 @@ public class ConfigManager
 
     public int GetAdaptiveMaxDownloadConnections()
     {
-        var maxDownloadConnections = Math.Max(1, GetMaxDownloadConnections());
-        if (!IsAdaptiveConnectionCountEnabled()) return maxDownloadConnections;
+        var manualFallback = Math.Max(1, GetMaxDownloadConnections());
+        if (!IsAdaptiveConnectionCountEnabled()) return manualFallback;
 
-        var providerConnections = Math.Max(1, GetUsenetProviderConfig().TotalPooledConnections);
-        var automaticTarget = Math.Min(maxDownloadConnections, providerConnections);
-        return ApplyRuntimePressureLimit(automaticTarget);
+        return ApplyRuntimePressureLimit(GetAutomaticDownloadConnectionBudget());
     }
 
     public int GetAdaptiveMaxStreamingConnections()
@@ -192,7 +190,7 @@ public class ConfigManager
         if (configValue > 0) return Math.Clamp(configValue, 1, 64);
 
         var articleBufferSize = Math.Max(1, GetArticleBufferSize());
-        return Math.Min(articleBufferSize, Math.Max(1, GetMaxDownloadConnections()));
+        return Math.Min(articleBufferSize, GetAutomaticDownloadConnectionBudget());
     }
 
     public int GetMaxTotalStreamingConnections()
@@ -201,10 +199,11 @@ public class ConfigManager
         if (configValue > 0) return Math.Clamp(configValue, 1, 128);
 
         var perStreamConnections = Math.Max(1, GetMaxStreamingConnections());
-        var cpuBasedLimit = Math.Clamp(Environment.ProcessorCount / 2, 2, 8);
-        var downloadConnections = Math.Max(1, GetMaxDownloadConnections());
+        var cpuBasedLimit = GetStreamingCpuConcurrencyLimit();
+        var downloadConnections = GetAutomaticDownloadConnectionBudget();
+        var activeStreamFanoutLimit = perStreamConnections * Math.Max(2, Environment.ProcessorCount);
         return Math.Clamp(
-            Math.Min(Math.Min(perStreamConnections * 2, cpuBasedLimit), downloadConnections),
+            Math.Min(Math.Min(activeStreamFanoutLimit, cpuBasedLimit), downloadConnections),
             1,
             128
         );
@@ -364,7 +363,10 @@ public class ConfigManager
         if (double.TryParse(value, CultureInfo.InvariantCulture, out var parsed) && parsed > 0)
             return Math.Clamp(parsed, 0.25, Math.Max(0.25, Environment.ProcessorCount));
 
-        return 0.75;
+        var processorCount = Math.Max(1, Environment.ProcessorCount);
+        if (processorCount == 1) return 0.75;
+
+        return Math.Clamp(processorCount * 0.75, 2.0, processorCount);
     }
 
     private static double GetMemoryPressureMultiplier()
@@ -443,7 +445,7 @@ public class ConfigManager
             Math.Max(1, GetHealthCheckConcurrency()),
             GetHealthCheckCpuConcurrencyLimit()
         );
-        healthCheckConcurrency = Math.Min(healthCheckConcurrency, Math.Max(1, GetMaxDownloadConnections()));
+        healthCheckConcurrency = Math.Min(healthCheckConcurrency, GetAutomaticDownloadConnectionBudget());
         return IsAdaptiveConnectionCountEnabled()
             ? ApplyRuntimePressureLimit(healthCheckConcurrency)
             : healthCheckConcurrency;
@@ -451,7 +453,9 @@ public class ConfigManager
 
     private static int GetAutomaticMaxConcurrentQueueDownloads(int downloadConnections)
     {
-        return Math.Clamp((Math.Max(1, downloadConnections) + 49) / 50, 1, MaxAutoQueueDownloads);
+        var connectionBased = (Math.Max(1, downloadConnections) + 24) / 25;
+        var coreBased = Math.Max(1, Environment.ProcessorCount);
+        return Math.Clamp(Math.Min(connectionBased, coreBased), 1, MaxAutoQueueDownloads);
     }
 
     private static int GetAutomaticQueueFileProcessingConcurrency(int downloadConnections)
@@ -459,9 +463,23 @@ public class ConfigManager
         return Math.Clamp(Math.Max(1, downloadConnections), 1, MaxQueueFileProcessingConcurrency);
     }
 
+    private int GetAutomaticDownloadConnectionBudget()
+    {
+        var configuredProviderConnections = GetUsenetProviderConfig().ConfiguredPooledConnections;
+        if (IsAdaptiveConnectionCountEnabled() && configuredProviderConnections > 0)
+            return configuredProviderConnections;
+
+        return Math.Max(1, GetMaxDownloadConnections());
+    }
+
     private static int GetHealthCheckCpuConcurrencyLimit()
     {
         return Math.Clamp(Environment.ProcessorCount * 2, 2, MaxHealthCheckConcurrency);
+    }
+
+    private static int GetStreamingCpuConcurrencyLimit()
+    {
+        return Math.Clamp(Environment.ProcessorCount * 4, 4, 64);
     }
 
     public int GetConnectionIdleTimeoutSeconds()

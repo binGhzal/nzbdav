@@ -14,10 +14,10 @@ namespace NzbWebDAV.Database.Migrations
                 name: "Accounts",
                 columns: table => new
                 {
-                    Type = table.Column<int>(type: "INTEGER", nullable: false),
-                    Username = table.Column<string>(type: "TEXT", maxLength: 255, nullable: false),
-                    PasswordHash = table.Column<string>(type: "TEXT", nullable: false),
-                    RandomSalt = table.Column<string>(type: "TEXT", nullable: false)
+                    Type = table.Column<int>(nullable: false),
+                    Username = table.Column<string>(maxLength: 255, nullable: false),
+                    PasswordHash = table.Column<string>(nullable: false),
+                    RandomSalt = table.Column<string>(nullable: false)
                 },
                 constraints: table =>
                 {

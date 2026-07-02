@@ -74,6 +74,8 @@ services:
       # Change these IDs to match your Docker user that you got from above
       - PUID=1000
       - PGID=1000
+      # SQLite is the default database provider and writes /config/db.sqlite.
+      - NZBDAV_DATABASE_PROVIDER=sqlite
     volumes:
       - ./config:/config
       - /mnt:/mnt
@@ -105,6 +107,20 @@ Set your username and password.
 
 * **Set WebDAV Password:** Create a password (you will need this for Rclone).
 * **Enforce Read-Only:** Uncheck it if you'd like to delete files from terminal. Otherwise, leave it checked.
+
+**D. Database Settings**
+
+SQLite is the default and remains the simplest deployment mode. It stores the database at `/config/db.sqlite`.
+
+PostgreSQL is supported for new installs by setting:
+
+```yaml
+environment:
+  - NZBDAV_DATABASE_PROVIDER=postgres
+  - NZBDAV_DATABASE_CONNECTION_STRING=Host=postgres;Port=5432;Database=nzbdav;Username=nzbdav;Password=replace-with-db-password
+```
+
+The SQLite database download/backup path only applies to SQLite. Moving existing data from SQLite to PostgreSQL is not automated yet; plan a manual export/import if you switch providers after running NZBDav.
 
 ### 3. Speed Tuning (Optional)
 
@@ -201,12 +217,18 @@ nzbdav_rclone:
     nzbdav:
       condition: service_healthy
       restart: true
-  # Optimized mounting flags for streaming
+  # Optimized mounting flags for streaming.
+  # RC is required so NZBDav can invalidate rclone VFS cache entries after
+  # imports, deletes, repairs, and library changes.
   # 0M buffer size prevents large per-open-file RAM buffering
   # Parallel VFS chunk streams improve high-latency read throughput
   # 512M read-ahead is disk-backed when vfs-cache-mode=full
   command: >
     mount nzbdav: /mnt/remote/nzbdav
+      --rc
+      --rc-addr=:5572
+      --rc-user=nzbdav
+      --rc-pass=replace-with-long-random-password
       --uid=1000
       --gid=1000
       --allow-other
@@ -223,6 +245,14 @@ nzbdav_rclone:
       --dir-cache-time=20s
 ```
 
+After the sidecar starts, enable rclone remote control in NZBDav:
+
+* **Settings** > **Rclone**
+* **Remote Control:** enabled
+* **Host:** `http://nzbdav_rclone:5572`
+* **Username:** `nzbdav`
+* **Password:** the same value you used in `--rc-pass`
+
 Start `nzbdav_rclone`
 ```bash
 $ docker compose up -d nzbdav_rclone
@@ -238,6 +268,46 @@ Check out the mount is working
 ls -la /mnt/remote/nzbdav
 # Should show: .ids, completed-symlinks, content, nzbs
 ```
+
+#### Mount Health And Fail-Closed Behavior
+
+Media apps should depend on the rclone mount being healthy, not just the
+NZBDav container being started. Otherwise Plex/Radarr/Sonarr can scan an
+empty host directory while rclone is restarting and treat the whole library
+as deleted.
+
+Recommended guardrails:
+
+* Add a healthcheck to the rclone sidecar that verifies both RC and the
+  mounted NZBDav root:
+
+```yaml
+healthcheck:
+  test:
+    - CMD-SHELL
+    - >
+      rclone rc --rc-addr=http://127.0.0.1:5572 --rc-user=nzbdav --rc-pass=replace-with-long-random-password core/version >/dev/null
+      && test -d /mnt/remote/nzbdav/.ids
+      && test -d /mnt/remote/nzbdav/content
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+```
+
+* Make Plex/Radarr/Sonarr/Lidarr depend on that healthcheck before scanning
+  the mounted library:
+
+```yaml
+depends_on:
+  nzbdav_rclone:
+    condition: service_healthy
+    restart: true
+```
+
+* Mount media apps to the rclone mount path itself, not to an always-present
+  empty fallback directory. If the mount is unhealthy, the app should fail
+  closed instead of scanning stale or empty content.
 
 #### Understanding the Flags
 * **`--links`**: **Crucial**. This allows `*.rclonelink` files within the webdav to be translated to symlinks when mounted onto your filesystem.

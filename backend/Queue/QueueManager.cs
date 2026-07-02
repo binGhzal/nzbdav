@@ -11,6 +11,9 @@ namespace NzbWebDAV.Queue;
 
 public class QueueManager : IDisposable
 {
+    private static readonly TimeSpan DownloadWorkerLeaseDuration = TimeSpan.FromMinutes(15);
+    private const int DownloadWorkerRetryMaxAttempts = int.MaxValue;
+
     private readonly Dictionary<Guid, InProgressQueueItem> _inProgressQueueItems = new();
 
     private readonly UsenetStreamingClient _usenetClient;
@@ -176,7 +179,12 @@ public class QueueManager : IDisposable
 
             var dbContext = new DavDatabaseContext();
             var dbClient = new DavDatabaseClient(dbContext);
-            var topItem = await dbClient.GetTopQueueItem(activeIds, ct).ConfigureAwait(false);
+            var topItem = await dbClient.LeaseTopQueueItemAsync(
+                    activeIds,
+                    owner: $"{Environment.MachineName}:{Environment.ProcessId}:download",
+                    leaseDuration: DownloadWorkerLeaseDuration,
+                    ct: ct)
+                .ConfigureAwait(false);
             if (topItem.queueItem is null)
             {
                 await dbContext.DisposeAsync().ConfigureAwait(false);
@@ -193,6 +201,7 @@ public class QueueManager : IDisposable
                 cachingUsenetClient,
                 topItem.queueItem,
                 topItem.queueNzbStream,
+                topItem.workerJob!,
                 queueItemCancellationTokenSource);
 
             lock (_inProgressQueueItemsLock)
@@ -223,6 +232,7 @@ public class QueueManager : IDisposable
         ArticleCachingNntpClient usenetClient,
         QueueItem queueItem,
         Stream? queueNzbStream,
+        WorkerJob workerJob,
         CancellationTokenSource cts
     )
     {
@@ -234,7 +244,8 @@ public class QueueManager : IDisposable
             CancellationTokenSource = cts,
             DbContext = dbContext,
             NzbStream = queueNzbStream,
-            UsenetClient = usenetClient
+            UsenetClient = usenetClient,
+            WorkerJob = workerJob
         };
         inProgressQueueItem.ProcessingTask = RunQueueItemAsync(inProgressQueueItem, dbClient, progressHook);
         var debounce = DebounceUtil.CreateDebounce();
@@ -257,7 +268,7 @@ public class QueueManager : IDisposable
     {
         try
         {
-            await new QueueItemProcessor(
+            var outcome = await new QueueItemProcessor(
                 inProgressQueueItem.QueueItem,
                 inProgressQueueItem.NzbStream,
                 dbClient,
@@ -267,6 +278,8 @@ public class QueueManager : IDisposable
                 progressHook,
                 inProgressQueueItem.CancellationTokenSource.Token
             ).ProcessAsync().ConfigureAwait(false);
+            await UpdateDownloadWorkerJobAsync(inProgressQueueItem, dbClient, outcome)
+                .ConfigureAwait(false);
         }
         finally
         {
@@ -277,6 +290,33 @@ public class QueueManager : IDisposable
 
             await inProgressQueueItem.DisposeAsync().ConfigureAwait(false);
             AwakenQueue();
+        }
+    }
+
+    private static async Task UpdateDownloadWorkerJobAsync
+    (
+        InProgressQueueItem inProgressQueueItem,
+        DavDatabaseClient dbClient,
+        QueueItemProcessor.ProcessingOutcome outcome
+    )
+    {
+        if (outcome == QueueItemProcessor.ProcessingOutcome.Completed)
+        {
+            await dbClient.CompleteWorkerJobAsync(inProgressQueueItem.WorkerJob).ConfigureAwait(false);
+            return;
+        }
+
+        if (outcome == QueueItemProcessor.ProcessingOutcome.RetryScheduled)
+        {
+            var nextAttemptAt = inProgressQueueItem.QueueItem.PauseUntil.HasValue
+                ? new DateTimeOffset(inProgressQueueItem.QueueItem.PauseUntil.Value)
+                : DateTimeOffset.UtcNow.AddMinutes(1);
+            await dbClient.FailWorkerJobAsync(
+                    inProgressQueueItem.WorkerJob,
+                    error: "Download retry scheduled.",
+                    nextAttemptAt: nextAttemptAt,
+                    maxAttempts: DownloadWorkerRetryMaxAttempts)
+                .ConfigureAwait(false);
         }
     }
 
@@ -303,6 +343,7 @@ public class QueueManager : IDisposable
         public required DavDatabaseContext DbContext { get; init; }
         public Stream? NzbStream { get; init; }
         public required ArticleCachingNntpClient UsenetClient { get; init; }
+        public required WorkerJob WorkerJob { get; init; }
 
         public async ValueTask DisposeAsync()
         {

@@ -13,16 +13,25 @@ namespace NzbWebDAV.Database.Migrations
             migrationBuilder.AddColumn<string>(
                 name: "IdPrefix",
                 table: "DavItems",
-                type: "TEXT",
                 nullable: false,
                 defaultValue: "");
 
-            migrationBuilder.Sql(
-                """
-                UPDATE DavItems
-                SET IdPrefix = lower(substr(Id, 1, 5));
-                """
-            );
+            if (MigrationProvider.IsPostgreSql(migrationBuilder))
+            {
+                migrationBuilder.Sql(
+                    """
+                    UPDATE "DavItems"
+                    SET "IdPrefix" = lower(substr("Id"::text, 1, 5));
+                    """);
+            }
+            else
+            {
+                migrationBuilder.Sql(
+                    """
+                    UPDATE "DavItems"
+                    SET "IdPrefix" = lower(substr("Id", 1, 5));
+                    """);
+            }
 
             migrationBuilder.CreateIndex(
                 name: "IX_DavItems_IdPrefix_Type",

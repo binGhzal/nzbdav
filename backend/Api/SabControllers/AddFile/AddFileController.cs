@@ -79,7 +79,13 @@ public class AddFileController(
             dbClient.Ctx.QueueItems.Add(queueItem);
             dbClient.Ctx.NzbNames.Add(nzbName);
             dbClient.Ctx.EnqueueRcloneVfsForgetPaths(["/nzbs"]);
-            await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
+            await dbClient.EnqueueWorkerJobAsync(
+                    WorkerJob.JobKind.Download,
+                    queueItem.Id,
+                    (int)queueItem.Priority,
+                    now: DateTimeOffset.UtcNow,
+                    ct: request.CancellationToken)
+                .ConfigureAwait(false);
         }
         catch
         {

@@ -13,19 +13,16 @@ namespace NzbWebDAV.Database.Migrations
             migrationBuilder.AddColumn<long>(
                 name: "LastHealthCheck",
                 table: "DavItems",
-                type: "INTEGER",
                 nullable: true);
 
             migrationBuilder.AddColumn<long>(
                 name: "NextHealthCheck",
                 table: "DavItems",
-                type: "INTEGER",
                 nullable: true);
 
             migrationBuilder.AddColumn<long>(
                 name: "ReleaseDate",
                 table: "DavItems",
-                type: "INTEGER",
                 nullable: true);
         }
 

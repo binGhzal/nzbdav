@@ -1,6 +1,5 @@
 ﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
-using NzbWebDAV.Database.Models;
 
 #nullable disable
 
@@ -16,11 +15,11 @@ namespace NzbWebDAV.Database.Migrations
                 name: "DavItems",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    ParentId = table.Column<Guid>(type: "TEXT", nullable: true),
-                    Name = table.Column<string>(type: "TEXT", maxLength: 255, nullable: false),
-                    FileSize = table.Column<long>(type: "INTEGER", nullable: true),
-                    Type = table.Column<int>(type: "INTEGER", nullable: false)
+                    Id = table.Column<Guid>(nullable: false),
+                    ParentId = table.Column<Guid>(nullable: true),
+                    Name = table.Column<string>(maxLength: 255, nullable: false),
+                    FileSize = table.Column<long>(nullable: true),
+                    Type = table.Column<int>(nullable: false)
                 },
                 constraints: table =>
                 {
@@ -37,15 +36,15 @@ namespace NzbWebDAV.Database.Migrations
                 name: "HistoryItems",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false),
-                    FileName = table.Column<string>(type: "TEXT", nullable: false),
-                    JobName = table.Column<string>(type: "TEXT", nullable: false),
-                    Category = table.Column<string>(type: "TEXT", nullable: false),
-                    DownloadStatus = table.Column<int>(type: "INTEGER", nullable: false),
-                    TotalSegmentBytes = table.Column<long>(type: "INTEGER", nullable: false),
-                    DownloadTimeSeconds = table.Column<int>(type: "INTEGER", nullable: false),
-                    FailMessage = table.Column<string>(type: "TEXT", nullable: true)
+                    Id = table.Column<Guid>(nullable: false),
+                    CreatedAt = table.Column<DateTime>(nullable: false),
+                    FileName = table.Column<string>(nullable: false),
+                    JobName = table.Column<string>(nullable: false),
+                    Category = table.Column<string>(nullable: false),
+                    DownloadStatus = table.Column<int>(nullable: false),
+                    TotalSegmentBytes = table.Column<long>(nullable: false),
+                    DownloadTimeSeconds = table.Column<int>(nullable: false),
+                    FailMessage = table.Column<string>(nullable: true)
                 },
                 constraints: table =>
                 {
@@ -56,17 +55,17 @@ namespace NzbWebDAV.Database.Migrations
                 name: "QueueItems",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false),
-                    FileName = table.Column<string>(type: "TEXT", nullable: false),
-                    JobName = table.Column<string>(type: "TEXT", nullable: false),
-                    NzbContents = table.Column<string>(type: "TEXT", nullable: false),
-                    NzbFileSize = table.Column<long>(type: "INTEGER", nullable: false),
-                    TotalSegmentBytes = table.Column<long>(type: "INTEGER", nullable: false),
-                    Category = table.Column<string>(type: "TEXT", nullable: false),
-                    Priority = table.Column<int>(type: "INTEGER", nullable: false),
-                    PostProcessing = table.Column<int>(type: "INTEGER", nullable: false),
-                    PauseUntil = table.Column<DateTime>(type: "TEXT", nullable: true)
+                    Id = table.Column<Guid>(nullable: false),
+                    CreatedAt = table.Column<DateTime>(nullable: false),
+                    FileName = table.Column<string>(nullable: false),
+                    JobName = table.Column<string>(nullable: false),
+                    NzbContents = table.Column<string>(nullable: false),
+                    NzbFileSize = table.Column<long>(nullable: false),
+                    TotalSegmentBytes = table.Column<long>(nullable: false),
+                    Category = table.Column<string>(nullable: false),
+                    Priority = table.Column<int>(nullable: false),
+                    PostProcessing = table.Column<int>(nullable: false),
+                    PauseUntil = table.Column<DateTime>(nullable: true)
                 },
                 constraints: table =>
                 {
@@ -77,8 +76,8 @@ namespace NzbWebDAV.Database.Migrations
                 name: "DavNzbFiles",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    SegmentIds = table.Column<string>(type: "TEXT", nullable: false)
+                    Id = table.Column<Guid>(nullable: false),
+                    SegmentIds = table.Column<string>(nullable: false)
                 },
                 constraints: table =>
                 {
@@ -95,8 +94,8 @@ namespace NzbWebDAV.Database.Migrations
                 name: "DavRarFiles",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    RarParts = table.Column<string>(type: "TEXT", nullable: false)
+                    Id = table.Column<Guid>(nullable: false),
+                    RarParts = table.Column<string>(nullable: false)
                 },
                 constraints: table =>
                 {
@@ -161,45 +160,15 @@ namespace NzbWebDAV.Database.Migrations
                 table: "QueueItems",
                 columns: new[] { "Priority", "CreatedAt" });
 
-            migrationBuilder.InsertData(
-                table: "DavItems",
-                columns: new[] { "Id", "ParentId", "Name", "FileSize", "Type" },
-                values: new object[,]
-                {
-                    {
-                        // Root
-                        Guid.Parse("00000000-0000-0000-0000-000000000000"),
-                        null,
-                        "/",
-                        null,
-                        1, // Directory
-                    },
-                    {
-                        // NzbFolder
-                        Guid.Parse("00000000-0000-0000-0000-000000000001"),
-                        Guid.Parse("00000000-0000-0000-0000-000000000000"),
-                        "nzbs",
-                        null,
-                        1, // Directory
-                    },
-                    {
-                        // ContentFolder
-                        DavItem.ContentFolder.Id,
-                        Guid.Parse("00000000-0000-0000-0000-000000000000"),
-                        "content",
-                        null,
-                        1, // Directory
-                    },
-                    {
-                        // SymlinkFolder
-                        DavItem.SymlinkFolder.Id,
-                        Guid.Parse("00000000-0000-0000-0000-000000000000"),
-                        "completed-symlinks",
-                        null,
-                        2, // Symlink-Root
-                    }
-                }
-            );
+            migrationBuilder.Sql(
+                """
+                INSERT INTO "DavItems" ("Id", "ParentId", "Name", "FileSize", "Type")
+                VALUES
+                    ('00000000-0000-0000-0000-000000000000', NULL, '/', NULL, 1),
+                    ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000000', 'nzbs', NULL, 1),
+                    ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000000', 'content', NULL, 1),
+                    ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000000', 'completed-symlinks', NULL, 2);
+                """);
         }
 
         /// <inheritdoc />

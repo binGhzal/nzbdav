@@ -18,7 +18,8 @@ namespace NzbWebDAV.Clients.Usenet;
 public class ArticleCachingNntpClient(
     INntpClient usenetClient,
     long maxCacheBytes = long.MaxValue,
-    bool leaveOpen = true
+    bool leaveOpen = true,
+    ArticleCacheBudget? sharedBudget = null
 ) : WrappingNntpClient(usenetClient), IAsyncDisposable
 {
     private readonly string _cacheDir = Directory.CreateTempSubdirectory().FullName;
@@ -26,8 +27,17 @@ public class ArticleCachingNntpClient(
     private readonly ConcurrentDictionary<string, CacheEntry> _cachedSegments = new();
     private readonly SemaphoreSlim _cacheSizeSemaphore = new(1, 1);
     private readonly long _maxCacheBytes = maxCacheBytes > 0 ? maxCacheBytes : long.MaxValue;
+    private readonly ArticleCacheBudget _sharedBudget = ConfigureSharedBudget(
+        sharedBudget ?? ArticleCacheBudget.Shared,
+        maxCacheBytes);
     private long _cacheBytes;
     private bool _disposed;
+
+    private static ArticleCacheBudget ConfigureSharedBudget(ArticleCacheBudget budget, long maxCacheBytes)
+    {
+        budget.Configure(maxCacheBytes);
+        return budget;
+    }
 
     private class CacheEntry
     {
@@ -317,7 +327,8 @@ public class ArticleCachingNntpClient(
         try
         {
             _cacheBytes += addedBytes;
-            if (_cacheBytes <= _maxCacheBytes) return;
+            _sharedBudget.Add(addedBytes);
+            if (_cacheBytes <= _maxCacheBytes && !_sharedBudget.IsOverBudget) return;
 
             var candidates = _cachedSegments
                 .Where(x => x.Key != currentSegmentId)
@@ -326,10 +337,11 @@ public class ArticleCachingNntpClient(
 
             foreach (var (segmentId, cacheEntry) in candidates)
             {
-                if (_cacheBytes <= _maxCacheBytes) break;
+                if (_cacheBytes <= _maxCacheBytes && !_sharedBudget.IsOverBudget) break;
                 if (!_cachedSegments.TryRemove(segmentId, out _)) continue;
 
                 _cacheBytes -= cacheEntry.SizeBytes;
+                _sharedBudget.Remove(cacheEntry.SizeBytes);
                 _pendingRequests.TryRemove(segmentId, out _);
                 TryDeleteCachedFile(segmentId);
             }
@@ -374,6 +386,8 @@ public class ArticleCachingNntpClient(
         _pendingRequests.Clear();
         _cachedSegments.Clear();
         _cacheSizeSemaphore.Dispose();
+        _sharedBudget.Remove(_cacheBytes);
+        _cacheBytes = 0;
 
         await DeleteCacheDir(_cacheDir).ConfigureAwait(false);
         GC.SuppressFinalize(this);

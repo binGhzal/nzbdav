@@ -9,3 +9,5 @@
 /.react-router/
 /build/
 /dist-node/
+/playwright-report/
+/test-results/

@@ -14,20 +14,18 @@ namespace NzbWebDAV.Database.Migrations
             migrationBuilder.AddColumn<Guid>(
                 name: "NzbBlobId",
                 table: "HistoryItems",
-                type: "TEXT",
                 nullable: true);
 
             migrationBuilder.AddColumn<Guid>(
                 name: "NzbBlobId",
                 table: "DavItems",
-                type: "TEXT",
                 nullable: true);
 
             migrationBuilder.CreateTable(
                 name: "NzbBlobCleanupItems",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false)
+                    Id = table.Column<Guid>(nullable: false)
                 },
                 constraints: table =>
                 {
@@ -38,8 +36,8 @@ namespace NzbWebDAV.Database.Migrations
                 name: "NzbNames",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    FileName = table.Column<string>(type: "TEXT", nullable: false)
+                    Id = table.Column<Guid>(nullable: false),
+                    FileName = table.Column<string>(nullable: false)
                 },
                 constraints: table =>
                 {
@@ -58,66 +56,28 @@ namespace NzbWebDAV.Database.Migrations
 
             // Replace the old QueueItems trigger (which inserted into BlobCleanupItems)
             // with a new one that inserts into NzbBlobCleanupItems instead.
-            migrationBuilder.Sql("DROP TRIGGER IF EXISTS TR_QueueItems_AddBlobCleanup");
+            MigrationProvider.DropTrigger(migrationBuilder, "TR_QueueItems_AddBlobCleanup", "QueueItems");
 
-            migrationBuilder.Sql(
-                """
-                CREATE TRIGGER TR_QueueItems_AddNzbBlobCleanup
-                AFTER DELETE ON QueueItems
-                BEGIN
-                    INSERT OR IGNORE INTO NzbBlobCleanupItems (Id)
-                    VALUES (OLD.Id);
-                END
-                """
-            );
+            MigrationProvider.CreateQueueItemsNzbBlobCleanupTrigger(migrationBuilder);
 
             // When a HistoryItem is deleted, schedule its NZB blob for cleanup.
-            migrationBuilder.Sql(
-                """
-                CREATE TRIGGER TR_HistoryItems_Delete_AddNzbBlobCleanup
-                AFTER DELETE ON HistoryItems
-                WHEN OLD.NzbBlobId IS NOT NULL
-                BEGIN
-                    INSERT OR IGNORE INTO NzbBlobCleanupItems (Id)
-                    VALUES (OLD.NzbBlobId);
-                END
-                """
-            );
+            MigrationProvider.CreateHistoryItemsNzbBlobCleanupTrigger(migrationBuilder);
 
             // When a DavItem is deleted, schedule its NZB blob for cleanup.
             // INSERT OR IGNORE handles the case where multiple DavItems share the
             // same NzbBlobId (all files from the same download job).
-            migrationBuilder.Sql(
-                """
-                CREATE TRIGGER TR_DavItems_Delete_AddNzbBlobCleanup
-                AFTER DELETE ON DavItems
-                WHEN OLD.NzbBlobId IS NOT NULL
-                BEGIN
-                    INSERT OR IGNORE INTO NzbBlobCleanupItems (Id)
-                    VALUES (OLD.NzbBlobId);
-                END
-                """
-            );
+            MigrationProvider.CreateDavItemsNzbBlobCleanupTrigger(migrationBuilder);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql("DROP TRIGGER IF EXISTS TR_DavItems_Delete_AddNzbBlobCleanup");
-            migrationBuilder.Sql("DROP TRIGGER IF EXISTS TR_HistoryItems_Delete_AddNzbBlobCleanup");
-            migrationBuilder.Sql("DROP TRIGGER IF EXISTS TR_QueueItems_AddNzbBlobCleanup");
+            MigrationProvider.DropTrigger(migrationBuilder, "TR_DavItems_Delete_AddNzbBlobCleanup", "DavItems");
+            MigrationProvider.DropTrigger(migrationBuilder, "TR_HistoryItems_Delete_AddNzbBlobCleanup", "HistoryItems");
+            MigrationProvider.DropTrigger(migrationBuilder, "TR_QueueItems_AddNzbBlobCleanup", "QueueItems");
 
             // Restore the original QueueItems trigger
-            migrationBuilder.Sql(
-                """
-                CREATE TRIGGER TR_QueueItems_AddBlobCleanup
-                AFTER DELETE ON QueueItems
-                BEGIN
-                    INSERT INTO BlobCleanupItems (Id)
-                    VALUES (OLD.Id);
-                END
-                """
-            );
+            MigrationProvider.CreateQueueItemsBlobCleanupTrigger(migrationBuilder);
 
             migrationBuilder.DropTable(
                 name: "NzbBlobCleanupItems");

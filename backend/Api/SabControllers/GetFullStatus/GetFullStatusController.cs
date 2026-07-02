@@ -15,7 +15,8 @@ public class GetFullStatusController(
     DavDatabaseClient dbClient,
     ConfigManager configManager,
     QueueManager queueManager,
-    ActiveStreamTracker activeStreamTracker
+    ActiveStreamTracker activeStreamTracker,
+    HealthCheckService healthCheckService
 ) : SabApiController.BaseController(httpContext, configManager)
 {
     protected override async Task<IActionResult> Handle()
@@ -27,6 +28,13 @@ public class GetFullStatusController(
         var process = Process.GetCurrentProcess();
         var gcInfo = GC.GetGCMemoryInfo();
         var runtimePressure = configManager.GetRuntimePressureSnapshot();
+        var rcloneInvalidations = await dbClient.GetRcloneInvalidationStatsAsync(
+            ct: httpContext.RequestAborted).ConfigureAwait(false);
+        var healthQueue = await dbClient.GetHealthWorkerQueueStatsAsync(
+            ct: httpContext.RequestAborted).ConfigureAwait(false);
+        var durableWorkerJobs = await dbClient.GetWorkerJobQueueStatsAsync(
+            ct: httpContext.RequestAborted).ConfigureAwait(false);
+        var healthWorkers = healthCheckService.GetWorkerSnapshot();
         var status = new GetFullStatusResponse()
         {
             Status = new GetFullStatusResponse.FullStatusObject()
@@ -44,6 +52,9 @@ public class GetFullStatusController(
                 MaxStreamingConnections = configManager.GetAdaptiveMaxStreamingConnections(),
                 MaxTotalStreamingConnections = configManager.GetAdaptiveMaxTotalStreamingConnections(),
                 ActiveStreams = activeStreams.Count,
+                RcloneInvalidations = RcloneInvalidationStatus.FromStats(rcloneInvalidations),
+                ProviderDiagnostics = ProviderDiagnosticStatus.FromConfig(configManager.GetUsenetProviderConfig()),
+                WorkerQueues = WorkerQueueStatus.FromStats(activeJobs, queuedJobs, healthWorkers, healthQueue, durableWorkerJobs),
                 TotalStreamsOpened = activeStreams.TotalOpened,
                 ManagedMemoryBytes = GC.GetTotalMemory(false),
                 WorkingSetBytes = process.WorkingSet64,

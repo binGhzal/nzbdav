@@ -36,10 +36,15 @@ export async function loader({ request }: Route.LoaderArgs) {
     const manualCategory = config
         .find(x => x.configName === "api.manual-category")
         ?.configValue ?? "uncategorized";
-    let categories = categoriesValue.split(',').map(x => x.trim());
-    if (!categories.includes(manualCategory)) {
-        categories = [manualCategory, ...categories];
-    }
+    const seenCategories = new Set<string>();
+    const categories = [manualCategory, ...categoriesValue.split(',').map(x => x.trim())]
+        .filter(x => x.length > 0)
+        .filter(x => {
+            const key = x.toLowerCase();
+            if (seenCategories.has(key)) return false;
+            seenCategories.add(key);
+            return true;
+        });
 
     return {
         queueSlots: queue?.slots || [],

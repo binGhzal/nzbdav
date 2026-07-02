@@ -24,7 +24,9 @@ public class UsenetStreamingClient : WrappingNntpClient
 
             // update the connection-pool according to the new config
             var newUsenetClient = CreateDownloadingNntpClient(configManager, websocketManager);
-            ReplaceUnderlyingClient(newUsenetClient);
+            ReplaceUnderlyingClient(
+                newUsenetClient,
+                TimeSpan.FromSeconds(configManager.GetConnectionIdleTimeoutSeconds()));
         };
     }
 

@@ -14,7 +14,6 @@ namespace NzbWebDAV.Database.Migrations
             migrationBuilder.AddColumn<Guid>(
                 name: "FileBlobId",
                 table: "DavItems",
-                type: "TEXT",
                 nullable: true);
         }
 

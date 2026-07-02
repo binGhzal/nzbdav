@@ -7,7 +7,7 @@ namespace NzbWebDAV.Api.SabControllers.GetHistory;
 public class GetHistoryRequest
 {
     public int Start { get; init; } = 0;
-    public int Limit { get; init; } = int.MaxValue;
+    public int Limit { get; init; } = SabPagination.MaxLimit;
     public string? Category { get; init; }
     public List<Guid> NzoIds { get; init; } = [];
     public string? Search { get; init; }
@@ -28,12 +28,7 @@ public class GetHistoryRequest
         FailedOnly = context.GetRequestParam("failed_only") == "1";
         CancellationToken = context.RequestAborted;
 
-        if (startParam is not null)
-        {
-            var isValidStartParam = int.TryParse(startParam, out int start);
-            if (!isValidStartParam) throw new BadHttpRequestException("Invalid start parameter");
-            Start = Math.Max(0, start);
-        }
+        Start = SabPagination.ParseStart(startParam);
 
         // The official Sabnzbd api uses the `limit` param to specify the number of history items
         // that should be returned in the response. However, radarr/sonarr set this param to 60 items
@@ -45,9 +40,7 @@ public class GetHistoryRequest
         // When this setting is enabled, we always return all history items.
         if (limitParam is not null && !configManager.IsIgnoreSabHistoryLimitEnabled())
         {
-            var isValidLimit = int.TryParse(limitParam, out var limit);
-            if (!isValidLimit) throw new BadHttpRequestException("Invalid limit parameter");
-            Limit = Math.Max(0, limit);
+            Limit = SabPagination.ParseLimit(limitParam);
         }
 
         // Even though we may want to ignore the `limit` param from the Arrs, NzbDAV frontend
@@ -56,18 +49,10 @@ public class GetHistoryRequest
         // the Sabnzbd api, and is intended to be used only by the NzbDAV frontend.
         if (pageSizeParam is not null)
         {
-            var isValidPageSize = int.TryParse(pageSizeParam, out var pageSize);
-            if (!isValidPageSize) throw new BadHttpRequestException("Invalid pageSize parameter");
-            Limit = Math.Max(0, pageSize);
+            Limit = SabPagination.ParseLimit(pageSizeParam, "pageSize");
         }
 
-        if (nzoIdsParam is not null)
-        {
-            NzoIds = nzoIdsParam
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(Guid.Parse)
-                .ToList();
-        }
+        NzoIds = SabPagination.ParseNzoIdList(nzoIdsParam);
     }
 
     private static HashSet<string> ParseStatuses(string? statusParam)

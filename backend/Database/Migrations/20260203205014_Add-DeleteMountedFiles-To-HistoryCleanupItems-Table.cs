@@ -10,12 +10,11 @@ namespace NzbWebDAV.Database.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql("DROP TRIGGER IF EXISTS TR_HistoryItems_Delete_AddHistoryCleanup;");
+            MigrationProvider.DropTrigger(migrationBuilder, "TR_HistoryItems_Delete_AddHistoryCleanup", "HistoryItems");
             
             migrationBuilder.AddColumn<bool>(
                 name: "DeleteMountedFiles",
                 table: "HistoryCleanupItems",
-                type: "INTEGER",
                 nullable: false,
                 defaultValue: false);
         }
@@ -27,16 +26,7 @@ namespace NzbWebDAV.Database.Migrations
                 name: "DeleteMountedFiles",
                 table: "HistoryCleanupItems");
             
-            migrationBuilder.Sql(
-                """
-                CREATE TRIGGER TR_HistoryItems_Delete_AddHistoryCleanup
-                AFTER DELETE ON HistoryItems
-                BEGIN
-                    INSERT INTO HistoryCleanupItems (Id)
-                    VALUES (OLD.Id);
-                END
-                """
-            );
+            MigrationProvider.CreateHistoryItemsCleanupTrigger(migrationBuilder);
         }
     }
 }

@@ -7,7 +7,7 @@ namespace NzbWebDAV.Api.SabControllers.GetQueue;
 public class GetQueueRequest
 {
     public int Start { get; init; } = 0;
-    public int Limit { get; init; } = int.MaxValue;
+    public int Limit { get; init; } = SabPagination.MaxLimit;
     public string? Category { get; init; }
     public HashSet<Guid> NzoIds { get; init; } = [];
     public string? Search { get; init; }
@@ -31,27 +31,9 @@ public class GetQueueRequest
         SortDescending = ParseSortDirection(context.GetRequestParam("order"));
         CancellationToken = context.RequestAborted;
 
-        if (startParam is not null)
-        {
-            var isValidStartParam = int.TryParse(startParam, out int start);
-            if (!isValidStartParam) throw new BadHttpRequestException("Invalid start parameter");
-            Start = Math.Max(0, start);
-        }
-
-        if (limitParam is not null)
-        {
-            var isValidLimit = int.TryParse(limitParam, out int limit);
-            if (!isValidLimit) throw new BadHttpRequestException("Invalid limit parameter");
-            Limit = Math.Max(0, limit);
-        }
-
-        if (nzoIdsParam is not null)
-        {
-            NzoIds = nzoIdsParam
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(Guid.Parse)
-                .ToHashSet();
-        }
+        Start = SabPagination.ParseStart(startParam);
+        Limit = SabPagination.ParseLimit(limitParam);
+        NzoIds = SabPagination.ParseNzoIdSet(nzoIdsParam);
     }
 
     private static HashSet<QueuePriorityFilter> ParsePriorities(string? priorityParam)

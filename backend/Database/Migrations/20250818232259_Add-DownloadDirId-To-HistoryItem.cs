@@ -14,7 +14,6 @@ namespace NzbWebDAV.Database.Migrations
             migrationBuilder.AddColumn<Guid>(
                 name: "DownloadDirId",
                 table: "HistoryItems",
-                type: "TEXT",
                 nullable: true);
 
             migrationBuilder.CreateIndex(
@@ -26,17 +25,17 @@ namespace NzbWebDAV.Database.Migrations
             // DavItems hierarchy under /content/{Category}/{JobName}
             migrationBuilder.Sql(
                 """
-                UPDATE HistoryItems
-                SET DownloadDirId = (
-                  SELECT child.Id
-                  FROM DavItems AS child
-                  JOIN DavItems AS parent ON child.ParentId = parent.Id
-                  WHERE parent.ParentId = '00000000-0000-0000-0000-000000000002' -- DavItem.ContentFolder.Id
-                    AND parent.Name = HistoryItems.Category
-                    AND child.Name = HistoryItems.JobName
-                    AND child.Type = 1 -- ItemType.Directory
+                UPDATE "HistoryItems"
+                SET "DownloadDirId" = (
+                  SELECT child."Id"
+                  FROM "DavItems" AS child
+                  JOIN "DavItems" AS parent ON child."ParentId" = parent."Id"
+                  WHERE parent."ParentId" = '00000000-0000-0000-0000-000000000002' -- DavItem.ContentFolder.Id
+                    AND parent."Name" = "HistoryItems"."Category"
+                    AND child."Name" = "HistoryItems"."JobName"
+                    AND child."Type" = 1 -- ItemType.Directory
                 )
-                WHERE DownloadStatus = 1; -- HistoryItem.DownloadStatusOption.Completed
+                WHERE "DownloadStatus" = 1; -- HistoryItem.DownloadStatusOption.Completed
                 """
             );
         }

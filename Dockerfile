@@ -12,7 +12,7 @@ COPY ./frontend ./
 ARG URL_BASE=""
 ENV URL_BASE=${URL_BASE}
 
-RUN npm install
+RUN npm ci
 RUN npm run build
 RUN npm run build:server
 RUN npm prune --omit=dev

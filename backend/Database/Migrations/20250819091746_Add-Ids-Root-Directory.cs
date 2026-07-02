@@ -10,31 +10,21 @@ namespace NzbWebDAV.Database.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.InsertData(
-                table: "DavItems",
-                columns: new[] { "Id", "ParentId", "Name", "FileSize", "Type" },
-                values: new object[,]
-                {
-                    {
-                        // Root
-                        Guid.Parse("00000000-0000-0000-0000-000000000004"),
-                        Guid.Parse("00000000-0000-0000-0000-000000000000"),
-                        ".ids",
-                        null,
-                        5, // IdsRoot
-                    },
-                }
-            );
+            migrationBuilder.Sql(
+                """
+                INSERT INTO "DavItems" ("Id", "ParentId", "Name", "FileSize", "Type")
+                VALUES ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000000', '.ids', NULL, 5);
+                """);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DeleteData(
-                table: "DavItems",
-                keyColumn: "Id",
-                keyValue: Guid.Parse("00000000-0000-0000-0000-000000000004")
-            );
+            migrationBuilder.Sql(
+                """
+                DELETE FROM "DavItems"
+                WHERE "Id" = '00000000-0000-0000-0000-000000000004';
+                """);
         }
     }
 }

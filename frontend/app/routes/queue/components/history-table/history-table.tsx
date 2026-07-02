@@ -39,6 +39,7 @@ export function HistoryTable({
     onPageSizeSelected,
 }: HistoryTableProps) {
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
+    const [operationError, setOperationError] = useState<string | null>(null);
     const totalPages = Math.max(1, Math.ceil(totalHistoryCount / pageSize));
     var selectedCount = historySlots.filter(x => !!x.isSelected).length;
     var headerCheckboxState: TriCheckboxState = selectedCount === 0 ? 'none' : selectedCount === historySlots.length ? 'all' : 'some';
@@ -58,6 +59,7 @@ export function HistoryTable({
     const onConfirmRemoval = useCallback(async (deleteCompletedFiles?: boolean) => {
         var nzo_ids = new Set<string>(historySlots.filter(x => !!x.isSelected).map(x => x.nzo_id));
         setIsConfirmingRemoval(false);
+        setOperationError(null);
         onIsRemovingChanged(nzo_ids, true);
         try {
             const url = withUrlBase(`/api?mode=history&name=delete&del_completed_files=${deleteCompletedFiles ? 1 : 0}`);
@@ -74,10 +76,15 @@ export function HistoryTable({
                     onRemoved(nzo_ids);
                     return;
                 }
+                setOperationError(data.error ?? "Failed to remove history items.");
+            } else {
+                setOperationError(`Failed to remove history items (${response.status}).`);
             }
-        } catch { }
+        } catch (error) {
+            setOperationError(`Failed to remove history items: ${error instanceof Error ? error.message : "unknown error"}.`);
+        }
         onIsRemovingChanged(nzo_ids, false);
-    }, [historySlots, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
+    }, [historySlots, setIsConfirmingRemoval, setOperationError, onIsRemovingChanged, onRemoved]);
 
     var sectionTitle = (
         <div className={styles.sectionTitle}>
@@ -90,6 +97,7 @@ export function HistoryTable({
 
     return (
         <PageSection title={sectionTitle} badgeText={`${totalHistoryCount} item(s)`}>
+            {operationError && <div className={styles.alert} role="alert">{operationError}</div>}
             <PageTable headerCheckboxState={headerCheckboxState} onHeaderCheckboxChange={onSelectAll}>
                 {historySlots.map(slot =>
                     <HistoryRow

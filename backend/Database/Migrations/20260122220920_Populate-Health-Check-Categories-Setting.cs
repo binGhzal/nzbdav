@@ -13,7 +13,52 @@ namespace NzbWebDAV.Database.Migrations
             // If api.ensure-article-existence is "true", populate api.ensure-article-existence-categories
             // by combining api.manual-category (default: "uncategorized") with api.categories
             // (default: "audio, software, tv, movies")
-            migrationBuilder.Sql("""
+            if (MigrationProvider.IsPostgreSql(migrationBuilder))
+            {
+                migrationBuilder.Sql("""
+                    WITH
+                        settings AS (
+                            SELECT
+                                COALESCE(
+                                    (SELECT "ConfigValue" FROM "ConfigItems" WHERE "ConfigName" = 'api.ensure-article-existence'),
+                                    'false'
+                                ) AS ensure_existence,
+                                COALESCE(
+                                    (SELECT "ConfigValue" FROM "ConfigItems" WHERE "ConfigName" = 'api.categories'),
+                                    'audio, software, tv, movies'
+                                ) AS categories,
+                                COALESCE(
+                                    (SELECT "ConfigValue" FROM "ConfigItems" WHERE "ConfigName" = 'api.manual-category'),
+                                    'uncategorized'
+                                ) AS manual_category
+                        ),
+                        category_list AS (
+                            SELECT TRIM(parts.item) AS item, parts.ord
+                            FROM settings
+                            CROSS JOIN LATERAL regexp_split_to_table(categories, ',') WITH ORDINALITY AS parts(item, ord)
+                            WHERE LOWER(ensure_existence) = 'true'
+                              AND TRIM(parts.item) <> ''
+                        ),
+                        combined AS (
+                            SELECT
+                                TRIM(s.manual_category) || ', ' || string_agg(c.item, ', ' ORDER BY c.ord) AS combined_categories
+                            FROM settings s, category_list c
+                            WHERE LOWER(s.ensure_existence) = 'true'
+                            GROUP BY s.manual_category
+                        )
+                    INSERT INTO "ConfigItems" ("ConfigName", "ConfigValue")
+                    SELECT 'api.ensure-article-existence-categories', combined_categories
+                    FROM combined
+                    WHERE combined_categories IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM "ConfigItems"
+                          WHERE "ConfigName" = 'api.ensure-article-existence-categories'
+                      );
+                    """);
+            }
+            else
+            {
+                migrationBuilder.Sql("""
                 WITH RECURSIVE
                     settings AS (
                         SELECT
@@ -64,6 +109,7 @@ namespace NzbWebDAV.Database.Migrations
                       WHERE "ConfigName" = 'api.ensure-article-existence-categories'
                   );
                 """);
+            }
 
             // Delete the old api.ensure-article-existence setting
             migrationBuilder.Sql("""

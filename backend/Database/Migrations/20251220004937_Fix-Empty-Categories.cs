@@ -13,51 +13,71 @@ namespace NzbWebDAV.Database.Migrations
             // Function for fixing tables with empty category strings
             // Ensures, that configured category exists
             // Fallback to 'uncategorized'
-            var fix_empty_category = (string table) => migrationBuilder.Sql(@$"
-                UPDATE {table}
-                SET Category = COALESCE(
+            var fixEmptyCategory = (string table) => migrationBuilder.Sql(
+                $"""
+                UPDATE "{table}"
+                SET "Category" = COALESCE(
                     (
-                        SELECT d.Name
-                        FROM ConfigItems c
-                        JOIN DavItems d
-                        ON d.Name = c.ConfigValue
-                        WHERE c.ConfigName = 'api.manual-category'
+                        SELECT d."Name"
+                        FROM "ConfigItems" c
+                        JOIN "DavItems" d
+                        ON d."Name" = c."ConfigValue"
+                        WHERE c."ConfigName" = 'api.manual-category'
                     ),
                     'uncategorized'
                 )
-                WHERE Category = '';
-            ");
+                WHERE "Category" = '';
+                """);
 
             // Fix HistoryItems
-            fix_empty_category("HistoryItems");
+            fixEmptyCategory("HistoryItems");
 
             // Fix QueueItems
-            fix_empty_category("QueueItems");
+            fixEmptyCategory("QueueItems");
 
             // Fix DavItems
             // Move items to configured category, "uncategorized" or "content"-root
-            // Use 'UPDATE OR IGNORE' to prevent potential duplicates
-            migrationBuilder.Sql(@"
-                UPDATE OR IGNORE DavItems
-                SET ParentId = COALESCE(
+            // The NOT EXISTS check preserves the old duplicate-protection behavior.
+            migrationBuilder.Sql(
+                """
+                UPDATE "DavItems"
+                SET "ParentId" = COALESCE(
                     (
-                        SELECT Id
-                        FROM DavItems
-                        WHERE Name = COALESCE(
-                            (SELECT ConfigValue FROM ConfigItems WHERE ConfigName = 'api.manual-category'),
+                        SELECT "Id"
+                        FROM "DavItems"
+                        WHERE "Name" = COALESCE(
+                            (SELECT "ConfigValue" FROM "ConfigItems" WHERE "ConfigName" = 'api.manual-category'),
                             'uncategorized'
                         )
                     ),
                     '00000000-0000-0000-0000-000000000002'
                 )
-                WHERE ParentId = (SELECT Id FROM DavItems WHERE Name = '');
-            ");
+                WHERE "ParentId" = (SELECT "Id" FROM "DavItems" WHERE "Name" = '')
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM "DavItems" existing
+                      WHERE existing."ParentId" = COALESCE(
+                          (
+                              SELECT "Id"
+                              FROM "DavItems"
+                              WHERE "Name" = COALESCE(
+                                  (SELECT "ConfigValue" FROM "ConfigItems" WHERE "ConfigName" = 'api.manual-category'),
+                                  'uncategorized'
+                              )
+                          ),
+                          '00000000-0000-0000-0000-000000000002'
+                      )
+                        AND existing."Name" = "DavItems"."Name"
+                        AND existing."Id" <> "DavItems"."Id"
+                  );
+                """);
 
             // Remove empty parent
             // Previous duplicates will be removed due to 'ON DELETE CASCADE'
-            migrationBuilder.Sql(@"
-                DELETE FROM DavItems WHERE Name = ''
-            ");
+            migrationBuilder.Sql(
+                """
+                DELETE FROM "DavItems" WHERE "Name" = ''
+                """);
 
             // Rebuild 'Path' column
             AddPathToDavItem.BuildFullPath(migrationBuilder);

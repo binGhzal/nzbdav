@@ -16,7 +16,7 @@ public class GetHistoryController(
     private async Task<GetHistoryResponse> GetHistoryAsync(GetHistoryRequest request)
     {
         // get query
-        IQueryable<HistoryItem> query = dbClient.Ctx.HistoryItems;
+        IQueryable<HistoryItem> query = dbClient.Ctx.HistoryItems.AsNoTracking();
         if (request.NzoIds.Count > 0)
             query = query.Where(q => request.NzoIds.Contains(q.Id));
         if (request.Category != null)
@@ -38,6 +38,7 @@ public class GetHistoryController(
         var totalCountPromise = query
             .CountAsync(request.CancellationToken);
         var totalCountAllPromise = dbClient.Ctx.HistoryItems
+            .AsNoTracking()
             .CountAsync(request.CancellationToken);
 
         // get history items
@@ -55,6 +56,7 @@ public class GetHistoryController(
         // get download folders
         var downloadFolderIds = historyItems.Select(x => x.DownloadDirId).ToHashSet();
         var davItems = await dbClient.Ctx.Items
+            .AsNoTracking()
             .Where(x => downloadFolderIds.Contains(x.Id))
             .ToArrayAsync(request.CancellationToken).ConfigureAwait(false);
         var davItemsDict = davItems

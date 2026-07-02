@@ -109,12 +109,12 @@ public class GetQueueResponse : SabBaseResponse
                 Priority = queueItem.Priority.ToString(),
                 Filename = queueItem.FileName,
                 Category = queueItem.Category,
-                Percentage = (progressPercentage % 100).ToString(),
-                TruePercentage = progressPercentage.ToString(),
+                Percentage = Math.Clamp(progressPercentage, 0, 100).ToString(),
+                TruePercentage = Math.Clamp(progressPercentage, 0, 100).ToString(),
                 Status = status,
                 TimeLeft = TimeSpan.Zero,
                 SizeInMB = FormatSizeMB(queueItem.TotalSegmentBytes),
-                SizeLeftInMB = FormatSizeMB((100 - progressPercentage) * queueItem.TotalSegmentBytes / 100),
+                SizeLeftInMB = FormatSizeMB((100 - Math.Clamp(progressPercentage, 0, 100)) * queueItem.TotalSegmentBytes / 100),
             };
         }
 

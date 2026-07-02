@@ -27,6 +27,9 @@ public class GetWebdavItemController(DatabaseStore store, ConfigManager configMa
         if (Path.GetExtension(item.Name).ToLower() == ".par2" && configManager.IsPreviewPar2FilesEnabled())
             return await GetPar2PreviewStream(item).ConfigureAwait(false);
 
+        if (request.RangeEnd is not null)
+            HttpContext.Items["RequestedRangeEnd"] = request.RangeEnd.Value;
+
         // get the file stream and set the file-size in header
         var stream = await item.GetReadableStreamAsync(HttpContext.RequestAborted).ConfigureAwait(false);
         var fileSize = stream.Length;

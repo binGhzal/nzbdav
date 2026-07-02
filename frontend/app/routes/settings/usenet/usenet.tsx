@@ -410,7 +410,7 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
             formData.append('user', user);
             formData.append('pass', pass);
 
-            const response = await fetch('/api/test-usenet-pipelining', {
+            const response = await fetch(withUrlBase('/api/test-usenet-pipelining'), {
                 method: 'POST',
                 body: formData,
             });

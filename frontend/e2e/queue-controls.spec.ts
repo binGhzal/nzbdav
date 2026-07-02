@@ -1,0 +1,39 @@
+import { expect, test } from "@playwright/test";
+
+const mockBackendURL = process.env.PLAYWRIGHT_BACKEND_URL ?? "http://127.0.0.1:5174";
+
+test.beforeEach(async ({ request }) => {
+  await request.post(`${mockBackendURL}/__e2e/reset`);
+});
+
+test("queue filters, page size, and pause controls update live UI and backend calls", async ({ page, request }) => {
+  await page.goto("/queue");
+
+  await expect(page.getByText("Downloading Release")).toBeVisible();
+  await expect(page.getByText("Queued Release")).toBeVisible();
+
+  await page.getByRole("button", { name: "Queued", exact: true }).click();
+  await expect(page).toHaveURL(/queueStatus=queued/);
+  await expect(page.getByText("Queued Release")).toBeVisible();
+  await expect(page.getByText("Downloading Release")).not.toBeVisible();
+
+  await page.getByRole("button", { name: "Rows per page" }).first().click();
+  await page.getByRole("option", { name: "100" }).click();
+  await expect(page).toHaveURL(/pageSize=100/);
+
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+
+  const response = await request.get(`${mockBackendURL}/__e2e/requests`);
+  const { requests } = await response.json();
+
+  expect(requests.some((entry: { query: Record<string, string> }) =>
+    entry.query.mode === "queue" && entry.query.status === "queued"
+  )).toBe(true);
+  expect(requests.some((entry: { query: Record<string, string> }) =>
+    entry.query.mode === "queue" && entry.query.limit === "100"
+  )).toBe(true);
+  expect(requests.some((entry: { query: Record<string, string> }) =>
+    entry.query.mode === "pause"
+  )).toBe(true);
+});

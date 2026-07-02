@@ -5,30 +5,51 @@ import { classNames } from "~/utils/styling";
 export type ActionButtonProps = {
     type: "delete" | "explore" | "menu" | "pause" | "resume",
     text?: string,
+    ariaLabel?: string,
     disabled?: boolean,
     selected?: boolean,
     onClick?: (e: React.MouseEvent) => void,
 }
 
-export function ActionButton({ type, text, disabled, selected, onClick }: ActionButtonProps): ReactNode {
+export function ActionButton({ type, text, ariaLabel, disabled, selected, onClick }: ActionButtonProps): ReactNode {
     const classes = classNames([
         styles["action-button"],
         styles[type],
-        selected && styles.selected
+        selected && styles.selected,
+        disabled && styles.disabled
     ]);
 
     return (
-        <div className={disabled ? styles["disabled"] : undefined}>
-            <div className={classes} onClick={onClick}>
-                {type === "delete" && <TrashIcon />}
-                {type === "explore" && <DirectoryIcon />}
-                {type === "menu" && "⋯"}
-                {type === "pause" && <PauseIcon />}
-                {type === "resume" && <ResumeIcon />}
-                {text && <div className={styles.text}>{text}</div>}
-            </div>
-        </div>
+        <button
+            type="button"
+            className={classes}
+            disabled={disabled}
+            aria-label={text ? undefined : ariaLabel ?? getDefaultAriaLabel(type)}
+            aria-pressed={selected || undefined}
+            onClick={onClick}>
+            {type === "delete" && <TrashIcon />}
+            {type === "explore" && <DirectoryIcon />}
+            {type === "menu" && "⋯"}
+            {type === "pause" && <PauseIcon />}
+            {type === "resume" && <ResumeIcon />}
+            {text && <span className={styles.text}>{text}</span>}
+        </button>
     )
+}
+
+function getDefaultAriaLabel(type: ActionButtonProps["type"]): string {
+    switch (type) {
+        case "delete":
+            return "Delete";
+        case "explore":
+            return "Explore";
+        case "menu":
+            return "More actions";
+        case "pause":
+            return "Pause";
+        case "resume":
+            return "Resume";
+    }
 }
 
 function PauseIcon() {

@@ -13,7 +13,6 @@ namespace NzbWebDAV.Database.Migrations
             migrationBuilder.AddColumn<int>(
                 name: "SubType",
                 table: "DavItems",
-                type: "INTEGER",
                 nullable: false,
                 defaultValue: 0);
 
@@ -26,54 +25,54 @@ namespace NzbWebDAV.Database.Migrations
             // Directory (Type=1) -> SubType=101 (Directory)
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET SubType = 101
-                WHERE Type = 1;
+                UPDATE "DavItems"
+                SET "SubType" = 101
+                WHERE "Type" = 1;
                 """
             );
 
             // SymlinkRoot (Type=2) -> Type=1 (Directory), SubType=105 (SymlinkRoot)
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET Type = 1, SubType = 105
-                WHERE Type = 2;
+                UPDATE "DavItems"
+                SET "Type" = 1, "SubType" = 105
+                WHERE "Type" = 2;
                 """
             );
 
             // NzbFile (Type=3) -> Type=2 (UsenetFile), SubType=201 (NzbFile)
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET Type = 2, SubType = 201
-                WHERE Type = 3;
+                UPDATE "DavItems"
+                SET "Type" = 2, "SubType" = 201
+                WHERE "Type" = 3;
                 """
             );
 
             // RarFile (Type=4) -> Type=2 (UsenetFile), SubType=202 (RarFile)
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET Type = 2, SubType = 202
-                WHERE Type = 4;
+                UPDATE "DavItems"
+                SET "Type" = 2, "SubType" = 202
+                WHERE "Type" = 4;
                 """
             );
 
             // IdsRoot (Type=5) -> Type=1 (Directory), SubType=106 (IdsRoot)
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET Type = 1, SubType = 106
-                WHERE Type = 5;
+                UPDATE "DavItems"
+                SET "Type" = 1, "SubType" = 106
+                WHERE "Type" = 5;
                 """
             );
 
             // MultipartFile (Type=6) -> Type=2 (UsenetFile), SubType=203 (MultipartFile)
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET Type = 2, SubType = 203
-                WHERE Type = 6;
+                UPDATE "DavItems"
+                SET "Type" = 2, "SubType" = 203
+                WHERE "Type" = 6;
                 """
             );
 
@@ -81,27 +80,27 @@ namespace NzbWebDAV.Database.Migrations
             // Root: 00000000-0000-0000-0000-000000000000 -> SubType=102 (WebdavRoot)
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET SubType = 102
-                WHERE Id = '00000000-0000-0000-0000-000000000000';
+                UPDATE "DavItems"
+                SET "SubType" = 102
+                WHERE "Id" = '00000000-0000-0000-0000-000000000000';
                 """
             );
 
             // NzbFolder: 00000000-0000-0000-0000-000000000001 -> SubType=103 (NzbsRoot)
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET SubType = 103
-                WHERE Id = '00000000-0000-0000-0000-000000000001';
+                UPDATE "DavItems"
+                SET "SubType" = 103
+                WHERE "Id" = '00000000-0000-0000-0000-000000000001';
                 """
             );
 
             // ContentFolder: 00000000-0000-0000-0000-000000000002 -> SubType=104 (ContentRoot)
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET SubType = 104
-                WHERE Id = '00000000-0000-0000-0000-000000000002';
+                UPDATE "DavItems"
+                SET "SubType" = 104
+                WHERE "Id" = '00000000-0000-0000-0000-000000000002';
                 """
             );
         }
@@ -113,45 +112,45 @@ namespace NzbWebDAV.Database.Migrations
             // NzbFile (Type=2, SubType=201) -> Type=3
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET Type = 3
-                WHERE Type = 2 AND SubType = 201;
+                UPDATE "DavItems"
+                SET "Type" = 3
+                WHERE "Type" = 2 AND "SubType" = 201;
                 """
             );
 
             // RarFile (Type=2, SubType=202) -> Type=4
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET Type = 4
-                WHERE Type = 2 AND SubType = 202;
+                UPDATE "DavItems"
+                SET "Type" = 4
+                WHERE "Type" = 2 AND "SubType" = 202;
                 """
             );
 
             // MultipartFile (Type=2, SubType=203) -> Type=6
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET Type = 6
-                WHERE Type = 2 AND SubType = 203;
+                UPDATE "DavItems"
+                SET "Type" = 6
+                WHERE "Type" = 2 AND "SubType" = 203;
                 """
             );
 
             // SymlinkRoot (Type=1, SubType=105) -> Type=2
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET Type = 2
-                WHERE Type = 1 AND SubType = 105;
+                UPDATE "DavItems"
+                SET "Type" = 2
+                WHERE "Type" = 1 AND "SubType" = 105;
                 """
             );
 
             // IdsRoot (Type=1, SubType=106) -> Type=5
             migrationBuilder.Sql(
                 """
-                UPDATE DavItems
-                SET Type = 5
-                WHERE Type = 1 AND SubType = 106;
+                UPDATE "DavItems"
+                SET "Type" = 5
+                WHERE "Type" = 1 AND "SubType" = 106;
                 """
             );
 

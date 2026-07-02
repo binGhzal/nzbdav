@@ -305,11 +305,17 @@ function useEnsureArticleExistanceSetting(
     }, [manualCategoryValue]);
 
     const categories = useMemo(() => {
-        var list = !!(categoriesValue?.trim())
+        const list = !!(categoriesValue?.trim())
             ? categoriesValue.split(",").map(c => c.trim()).filter(c => c.length > 0)
             : ["audio", "software", "tv", "movies"];
-        return [manualCategory, ...list];
-    }, [categoriesValue]);
+        const seen = new Set<string>();
+        return [manualCategory, ...list].filter(category => {
+            const key = category.toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    }, [categoriesValue, manualCategory]);
 
     const healthCheckCategories = useMemo(() => {
         const cats = healthCheckCategoriesValue;

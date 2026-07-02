@@ -438,6 +438,62 @@ namespace NzbWebDAV.Database.Migrations
                     b.ToTable("QueueNzbContents", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.WorkerJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("AvailableAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("LeaseExpiresAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PayloadJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("TargetId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Kind", "TargetId")
+                        .IsUnique();
+
+                    b.HasIndex("Kind", "Status", "AvailableAt", "LeaseExpiresAt", "Priority", "CreatedAt");
+
+                    b.ToTable("WorkerJobs", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.DavMultipartFile", b =>
                 {
                     b.HasOne("NzbWebDAV.Database.Models.DavItem", "DavItem")

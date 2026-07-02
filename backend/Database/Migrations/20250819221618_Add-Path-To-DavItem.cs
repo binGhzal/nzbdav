@@ -13,7 +13,6 @@ namespace NzbWebDAV.Database.Migrations
             migrationBuilder.AddColumn<string>(
                 name: "Path",
                 table: "DavItems",
-                type: "TEXT",
                 nullable: false,
                 defaultValue: "");
 
@@ -27,27 +26,27 @@ namespace NzbWebDAV.Database.Migrations
             // * Every other DavItem is given path `{PARENT_PATH}/{NAME}`
             migrationBuilder.Sql(
                 """
-                WITH RECURSIVE computed(Id, Path) AS (
+                WITH RECURSIVE computed("Id", "Path") AS (
                     -- base case: the root item
-                    SELECT Id, '/'
-                    FROM DavItems
-                    WHERE Id = '00000000-0000-0000-0000-000000000000'
+                    SELECT "Id", '/'
+                    FROM "DavItems"
+                    WHERE "Id" = '00000000-0000-0000-0000-000000000000'
 
                     UNION ALL
 
                     -- recursive case: all other items
                     SELECT
-                        d.Id,
+                        d."Id",
                         CASE
-                            WHEN c.Path = '/' THEN '/' || d.Name
-                            ELSE c.Path || '/' || d.Name
-                        END AS Path
-                    FROM DavItems d
-                    JOIN computed c ON d.ParentId = c.Id
+                            WHEN c."Path" = '/' THEN '/' || d."Name"
+                            ELSE c."Path" || '/' || d."Name"
+                        END AS "Path"
+                    FROM "DavItems" d
+                    JOIN computed c ON d."ParentId" = c."Id"
                 )
 
-                UPDATE DavItems
-                SET Path = (SELECT Path FROM computed WHERE DavItems.Id = computed.Id);
+                UPDATE "DavItems"
+                SET "Path" = (SELECT "Path" FROM computed WHERE "DavItems"."Id" = computed."Id");
                 """
             );
         }

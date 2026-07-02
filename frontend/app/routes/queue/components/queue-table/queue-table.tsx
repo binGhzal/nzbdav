@@ -65,6 +65,7 @@ export function QueueTable({
 }: QueueTableProps) {
     const [pendingRemoval, setPendingRemoval] = useState<{ nzoIds: Set<string>, label: string } | null>(null);
     const [isPausingQueue, setIsPausingQueue] = useState(false);
+    const [operationError, setOperationError] = useState<string | null>(null);
     const totalPages = Math.max(1, Math.ceil(totalQueueCount / pageSize));
     const selectedQueueIds = useMemo(
         () => new Set<string>(queueSlots.filter(x => !!x.isSelected).map(x => x.nzo_id)),
@@ -122,6 +123,7 @@ export function QueueTable({
             .filter(x => !x.isUploading && pendingRemoval.nzoIds.has(x.nzo_id))
             .map(x => x.nzo_id));
         setPendingRemoval(null);
+        setOperationError(null);
         onIsRemovingChanged(queued_nzo_ids, true);
         try {
             const url = withUrlBase(`/api?mode=queue&name=delete`);
@@ -138,14 +140,20 @@ export function QueueTable({
                     onRemoved(queued_nzo_ids);
                     return;
                 }
+                setOperationError(data.error ?? "Failed to remove queue items.");
+            } else {
+                setOperationError(`Failed to remove queue items (${response.status}).`);
             }
-        } catch { }
+        } catch (error) {
+            setOperationError(`Failed to remove queue items: ${error instanceof Error ? error.message : "unknown error"}.`);
+        }
         onIsRemovingChanged(queued_nzo_ids, false);
-    }, [pendingRemoval, queueSlots, setPendingRemoval, onIsRemovingChanged, onRemoved]);
+    }, [pendingRemoval, queueSlots, setPendingRemoval, setOperationError, onIsRemovingChanged, onRemoved]);
 
     const onPauseResumeQueue = useCallback(async () => {
         const nextPausedState = !isQueuePaused;
         setIsPausingQueue(true);
+        setOperationError(null);
         try {
             const mode = nextPausedState ? "pause" : "resume";
             const response = await fetch(withUrlBase(`/api?mode=${mode}`));
@@ -156,16 +164,21 @@ export function QueueTable({
                     setIsPausingQueue(false);
                     return;
                 }
+                setOperationError(data.error ?? `Failed to ${nextPausedState ? "pause" : "resume"} queue.`);
+            } else {
+                setOperationError(`Failed to ${nextPausedState ? "pause" : "resume"} queue (${response.status}).`);
             }
-        } catch { }
+        } catch (error) {
+            setOperationError(`Failed to ${nextPausedState ? "pause" : "resume"} queue: ${error instanceof Error ? error.message : "unknown error"}.`);
+        }
         setIsPausingQueue(false);
-    }, [isQueuePaused, onPauseQueueChanged, setIsPausingQueue]);
+    }, [isQueuePaused, onPauseQueueChanged, setIsPausingQueue, setOperationError]);
 
 
     // view
     const categoryDropdown = useMemo(() => (
         <div title="Choose the category for manual nzb uploads.">
-            <SimpleDropdown options={categories} valueRef={manualCategoryRef} />
+            <SimpleDropdown options={categories} valueRef={manualCategoryRef} ariaLabel="Manual upload category" />
         </div>
     ), [categories]);
 
@@ -205,6 +218,7 @@ export function QueueTable({
 
     return (
         <PageSection title={sectionTitle} subTitle={sectionSubTitle} badgeText={`${queueStatusText} · ${totalQueueCount} item(s)`}>
+            {operationError && <div className={styles.alert} role="alert">{operationError}</div>}
             <QueueFilters value={queueStatusFilter} onChange={onQueueStatusSelected} />
             {queueSlots?.length == 0 && totalQueueCount === 0 ? (
                 <EmptyQueue onUploadClicked={onUploadClicked} />
@@ -369,7 +383,8 @@ export const QueueRow = memo(({
                         type="bordered"
                         options={priorityOptions}
                         value={priority}
-                        onChange={onChangePriority} />
+                        onChange={onChangePriority}
+                        ariaLabel={`Priority for ${slot.filename}`} />
                 </div>
             }
             <ActionButton type="delete" disabled={!!slot.isRemoving || isActivelyUploading} onClick={onRemove} />

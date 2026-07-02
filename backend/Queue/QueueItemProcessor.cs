@@ -32,7 +32,7 @@ public class QueueItemProcessor(
     CancellationToken ct
 )
 {
-    public async Task ProcessAsync()
+    public async Task<ProcessingOutcome> ProcessAsync()
     {
         // initialize
         var startTime = DateTime.Now;
@@ -42,6 +42,7 @@ public class QueueItemProcessor(
         try
         {
             await ProcessQueueItemAsync(startTime).ConfigureAwait(false);
+            return ProcessingOutcome.Completed;
         }
 
         // When a queue-item is removed while processing,
@@ -50,6 +51,7 @@ public class QueueItemProcessor(
         {
             Log.Information($"Processing of queue item `{queueItem.JobName}` was cancelled.");
             dbClient.Ctx.ClearChangeTracker();
+            return ProcessingOutcome.Cancelled;
         }
 
         // when a retryable error is encountered
@@ -67,10 +69,12 @@ public class QueueItemProcessor(
                 dbClient.Ctx.Entry(queueItem).Property(x => x.PauseUntil).IsModified = true;
                 await dbClient.Ctx.SaveChangesAsync().ConfigureAwait(false);
                 _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Queued");
+                return ProcessingOutcome.RetryScheduled;
             }
             catch (Exception ex)
             {
                 Log.Error(ex, ex.Message);
+                return ProcessingOutcome.RetryScheduled;
             }
         }
 
@@ -82,12 +86,21 @@ public class QueueItemProcessor(
             try
             {
                 await MarkQueueItemCompleted(startTime, error: e.Message).ConfigureAwait(false);
+                return ProcessingOutcome.Completed;
             }
             catch (Exception ex)
             {
                 Log.Error(e, ex.Message);
+                return ProcessingOutcome.Completed;
             }
         }
+    }
+
+    public enum ProcessingOutcome
+    {
+        Completed,
+        RetryScheduled,
+        Cancelled
     }
 
     private async Task ProcessQueueItemAsync(DateTime startTime)

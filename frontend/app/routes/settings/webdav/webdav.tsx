@@ -52,8 +52,8 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                     value={config["usenet.max-download-connections"]}
                     onChange={e => setNewConfig({ ...config, "usenet.max-download-connections": e.target.value })} />
                 <Form.Text id="max-download-connections-help" muted>
-                    The maximum number of connections that will be used for downloading articles from your usenet provider(s).
-                    Configure this to the minimum number of connections that will fully saturate your server's bandwidth.
+                    Manual fallback for article downloads when adaptive sizing is off or provider capacity is unavailable.
+                    With adaptive sizing on, NZBDav uses pooled provider capacity and runtime pressure instead.
                 </Form.Text>
             </Form.Group>
             <hr />
@@ -68,7 +68,7 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                     onChange={e => setNewConfig({ ...config, "usenet.adaptive-connections-enabled": "" + e.target.checked })} />
                 <Form.Text id="adaptive-connections-enabled-help" muted>
                     Automatically sizes queue and streaming article connections from runtime pressure and provider capacity.
-                    Max Download Connections remains the ceiling; queue fields below are manual fallbacks when adaptive sizing is off.
+                    Max Download Connections and queue fields below are manual fallbacks when adaptive sizing is off.
                 </Form.Text>
             </Form.Group>
             <hr />

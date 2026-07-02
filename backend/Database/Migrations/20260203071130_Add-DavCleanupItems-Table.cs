@@ -20,7 +20,7 @@ namespace NzbWebDAV.Database.Migrations
                 name: "DavCleanupItems",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false)
+                    Id = table.Column<Guid>(nullable: false)
                 },
                 constraints: table =>
                 {
@@ -29,38 +29,45 @@ namespace NzbWebDAV.Database.Migrations
 
             // Recreate triggers destroyed by DropForeignKey's table rebuild (runs AFTER EF Core operations)
             // And add new `TR_DavItems_DeleteDirectory` trigger.
-            migrationBuilder.SqlAfter(
-                """
-                CREATE TRIGGER TR_DavItems_Delete_AddBlobCleanup
-                AFTER DELETE ON DavItems
-                WHEN OLD.FileBlobId IS NOT NULL
-                BEGIN
-                    INSERT INTO BlobCleanupItems (Id)
-                    VALUES (OLD.FileBlobId);
-                END;
+            if (MigrationProvider.IsPostgreSql(migrationBuilder))
+            {
+                MigrationProvider.CreateDavItemsDirectoryCleanupTrigger(migrationBuilder);
+            }
+            else
+            {
+                migrationBuilder.SqlAfter(
+                    """
+                    CREATE TRIGGER TR_DavItems_Delete_AddBlobCleanup
+                    AFTER DELETE ON DavItems
+                    WHEN OLD.FileBlobId IS NOT NULL
+                    BEGIN
+                        INSERT INTO BlobCleanupItems (Id)
+                        VALUES (OLD.FileBlobId);
+                    END;
 
-                CREATE TRIGGER TR_DavItems_Update_AddBlobCleanup
-                AFTER UPDATE OF FileBlobId ON DavItems
-                WHEN OLD.FileBlobId IS NOT NULL AND OLD.FileBlobId != NEW.FileBlobId
-                BEGIN
-                    INSERT INTO BlobCleanupItems (Id)
-                    VALUES (OLD.FileBlobId);
-                END;
+                    CREATE TRIGGER TR_DavItems_Update_AddBlobCleanup
+                    AFTER UPDATE OF FileBlobId ON DavItems
+                    WHEN OLD.FileBlobId IS NOT NULL AND OLD.FileBlobId != NEW.FileBlobId
+                    BEGIN
+                        INSERT INTO BlobCleanupItems (Id)
+                        VALUES (OLD.FileBlobId);
+                    END;
 
-                CREATE TRIGGER TR_DavItems_DeleteDirectory
-                AFTER DELETE ON DavItems
-                WHEN OLD.SubType = 101
-                BEGIN
-                    INSERT INTO DavCleanupItems (Id)
-                    VALUES (OLD.Id);
-                END;
-                """);
+                    CREATE TRIGGER TR_DavItems_DeleteDirectory
+                    AFTER DELETE ON DavItems
+                    WHEN OLD.SubType = 101
+                    BEGIN
+                        INSERT INTO DavCleanupItems (Id)
+                        VALUES (OLD.Id);
+                    END;
+                    """);
+            }
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql("DROP TRIGGER IF EXISTS TR_DavItems_DeleteDirectory;");
+            MigrationProvider.DropTrigger(migrationBuilder, "TR_DavItems_DeleteDirectory", "DavItems");
 
             migrationBuilder.DropTable(
                 name: "DavCleanupItems");
@@ -74,24 +81,27 @@ namespace NzbWebDAV.Database.Migrations
                 onDelete: ReferentialAction.Cascade);
 
             // Recreate triggers destroyed by AddForeignKey's table rebuild (runs AFTER EF Core operations)
-            migrationBuilder.SqlAfter(
-                """
-                CREATE TRIGGER TR_DavItems_Delete_AddBlobCleanup
-                AFTER DELETE ON DavItems
-                WHEN OLD.FileBlobId IS NOT NULL
-                BEGIN
-                    INSERT INTO BlobCleanupItems (Id)
-                    VALUES (OLD.FileBlobId);
-                END;
+            if (!MigrationProvider.IsPostgreSql(migrationBuilder))
+            {
+                migrationBuilder.SqlAfter(
+                    """
+                    CREATE TRIGGER TR_DavItems_Delete_AddBlobCleanup
+                    AFTER DELETE ON DavItems
+                    WHEN OLD.FileBlobId IS NOT NULL
+                    BEGIN
+                        INSERT INTO BlobCleanupItems (Id)
+                        VALUES (OLD.FileBlobId);
+                    END;
 
-                CREATE TRIGGER TR_DavItems_Update_AddBlobCleanup
-                AFTER UPDATE OF FileBlobId ON DavItems
-                WHEN OLD.FileBlobId IS NOT NULL AND OLD.FileBlobId != NEW.FileBlobId
-                BEGIN
-                    INSERT INTO BlobCleanupItems (Id)
-                    VALUES (OLD.FileBlobId);
-                END;
-                """);
+                    CREATE TRIGGER TR_DavItems_Update_AddBlobCleanup
+                    AFTER UPDATE OF FileBlobId ON DavItems
+                    WHEN OLD.FileBlobId IS NOT NULL AND OLD.FileBlobId != NEW.FileBlobId
+                    BEGIN
+                        INSERT INTO BlobCleanupItems (Id)
+                        VALUES (OLD.FileBlobId);
+                    END;
+                    """);
+            }
         }
     }
 }

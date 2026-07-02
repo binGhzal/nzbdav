@@ -12,6 +12,8 @@ namespace NzbWebDAV.Services;
 /// </summary>
 public class BlobCleanupService : BackgroundService
 {
+    private const int BatchSize = 100;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -20,23 +22,23 @@ public class BlobCleanupService : BackgroundService
             {
                 await using var dbContext = new DavDatabaseContext();
 
-                // Get the first item from the queue
-                var cleanupItem = await dbContext.BlobCleanupItems
-                    .FirstOrDefaultAsync(stoppingToken)
+                var cleanupItems = await dbContext.BlobCleanupItems
+                    .Take(BatchSize)
+                    .ToListAsync(stoppingToken)
                     .ConfigureAwait(false);
 
                 // If no items in queue, wait 10 seconds before checking again
-                if (cleanupItem == null)
+                if (cleanupItems.Count == 0)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
                     continue;
                 }
 
-                // Delete the blob
-                BlobStore.Delete(cleanupItem.Id);
+                foreach (var cleanupItem in cleanupItems)
+                    BlobStore.Delete(cleanupItem.Id);
 
-                // Remove the queue item from database
-                dbContext.BlobCleanupItems.Remove(cleanupItem);
+                // Remove the queue items from database
+                dbContext.BlobCleanupItems.RemoveRange(cleanupItems);
                 await dbContext.SaveChangesAsync(stoppingToken).ConfigureAwait(false);
 
                 // Continue immediately to next iteration to process more items

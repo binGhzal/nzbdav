@@ -2,6 +2,7 @@ import { Button, Form } from "react-bootstrap";
 import styles from "./recreate-strm-files.module.css";
 import { useCallback, useEffect, useState } from "react";
 import { receiveMessage } from "~/utils/websocket-util";
+import { getWebsocketUrl, withUrlBase } from "~/utils/url-base";
 
 const cleanupTaskTopic = { 'crst': 'state' };
 
@@ -22,13 +23,29 @@ export function RecreateStrmFiles() {
     useEffect(() => {
         let ws: WebSocket;
         let disposed = false;
+        let reconnectDelayMs = 1000;
+        let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
         function connect() {
-            ws = new WebSocket(window.location.origin.replace(/^http/, 'ws'));
+            ws = new WebSocket(getWebsocketUrl());
             ws.onmessage = receiveMessage((_, message) => setProgress(message));
-            ws.onopen = () => { setConnected(true); ws.send(JSON.stringify(cleanupTaskTopic)); }
-            ws.onclose = () => { !disposed && setTimeout(() => connect(), 1000); setProgress(null) };
+            ws.onopen = () => {
+                reconnectDelayMs = 1000;
+                setConnected(true);
+                ws.send(JSON.stringify(cleanupTaskTopic));
+            }
+            ws.onclose = () => {
+                setConnected(false);
+                setProgress(null);
+                if (disposed) return;
+                reconnectTimer = setTimeout(() => connect(), reconnectDelayMs);
+                reconnectDelayMs = Math.min(reconnectDelayMs * 2, 30000);
+            };
             ws.onerror = () => { ws.close() };
-            return () => { disposed = true; ws.close(); }
+            return () => {
+                disposed = true;
+                if (reconnectTimer) clearTimeout(reconnectTimer);
+                ws.close();
+            }
         }
         return connect();
     }, [setProgress, setConnected]);
@@ -36,7 +53,7 @@ export function RecreateStrmFiles() {
     // events
     const onRun = useCallback(async () => {
         setIsFetching(true);
-        await fetch("/api/recreate-strm-files");
+        await fetch(withUrlBase("/api/recreate-strm-files"));
         setIsFetching(false);
     }, [setIsFetching]);
 

@@ -14,8 +14,8 @@ namespace NzbWebDAV.Database.Migrations
                 name: "ConfigItems",
                 columns: table => new
                 {
-                    ConfigName = table.Column<string>(type: "TEXT", nullable: false),
-                    ConfigValue = table.Column<string>(type: "TEXT", nullable: false)
+                    ConfigName = table.Column<string>(nullable: false),
+                    ConfigValue = table.Column<string>(nullable: false)
                 },
                 constraints: table =>
                 {

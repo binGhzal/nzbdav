@@ -15,13 +15,13 @@ namespace NzbWebDAV.Database.Migrations
                 name: "HealthCheckResults",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    CreatedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    DavItemId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    Path = table.Column<string>(type: "TEXT", nullable: false),
-                    Result = table.Column<int>(type: "INTEGER", nullable: false),
-                    RepairStatus = table.Column<int>(type: "INTEGER", nullable: false),
-                    Message = table.Column<string>(type: "TEXT", nullable: true)
+                    Id = table.Column<Guid>(nullable: false),
+                    CreatedAt = table.Column<long>(nullable: false),
+                    DavItemId = table.Column<Guid>(nullable: false),
+                    Path = table.Column<string>(nullable: false),
+                    Result = table.Column<int>(nullable: false),
+                    RepairStatus = table.Column<int>(nullable: false),
+                    Message = table.Column<string>(nullable: true)
                 },
                 constraints: table =>
                 {

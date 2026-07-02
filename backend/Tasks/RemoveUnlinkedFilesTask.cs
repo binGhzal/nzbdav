@@ -3,6 +3,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -175,6 +176,7 @@ public class RemoveUnlinkedFilesTask(
                 Type = (DavItem.ItemType)x.Type,
                 Path = x.Path
             }).ToList());
+            ContentIndexSnapshotWriterService.RequestSnapshot();
             await dbContext.SaveChangesAsync();
 
             // Track removed paths
@@ -223,6 +225,7 @@ public class RemoveUnlinkedFilesTask(
                 Type = (DavItem.ItemType)x.Type,
                 Path = x.Path
             }).ToList());
+            ContentIndexSnapshotWriterService.RequestSnapshot();
             await dbContext.SaveChangesAsync();
 
             removed += emptyDirs.Count;

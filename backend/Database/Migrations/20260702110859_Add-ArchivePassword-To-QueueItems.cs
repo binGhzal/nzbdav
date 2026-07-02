@@ -13,7 +13,6 @@ namespace NzbWebDAV.Database.Migrations
             migrationBuilder.AddColumn<string>(
                 name: "ArchivePassword",
                 table: "QueueItems",
-                type: "TEXT",
                 nullable: true);
         }
 

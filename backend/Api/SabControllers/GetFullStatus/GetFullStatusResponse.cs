@@ -48,6 +48,15 @@ public class GetFullStatusResponse
         [JsonPropertyName("active_streams")]
         public int ActiveStreams { get; init; }
 
+        [JsonPropertyName("rclone_invalidations")]
+        public RcloneInvalidationStatus RcloneInvalidations { get; init; } = new();
+
+        [JsonPropertyName("provider_diagnostics")]
+        public IReadOnlyList<ProviderDiagnosticStatus> ProviderDiagnostics { get; init; } = [];
+
+        [JsonPropertyName("worker_queues")]
+        public WorkerQueueStatus WorkerQueues { get; init; } = new();
+
         [JsonPropertyName("total_streams_opened")]
         public long TotalStreamsOpened { get; init; }
 

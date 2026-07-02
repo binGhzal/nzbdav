@@ -18,14 +18,13 @@ namespace NzbWebDAV.Database.Migrations
             migrationBuilder.AddColumn<Guid>(
                 name: "HistoryItemId",
                 table: "DavItems",
-                type: "TEXT",
                 nullable: true);
 
             migrationBuilder.CreateTable(
                 name: "HistoryCleanupItems",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false)
+                    Id = table.Column<Guid>(nullable: false)
                 },
                 constraints: table =>
                 {
@@ -42,22 +41,13 @@ namespace NzbWebDAV.Database.Migrations
                 table: "DavItems",
                 columns: new[] { "Type", "HistoryItemId", "NextHealthCheck", "ReleaseDate", "Id" });
 
-            migrationBuilder.Sql(
-                """
-                CREATE TRIGGER TR_HistoryItems_Delete_AddHistoryCleanup
-                AFTER DELETE ON HistoryItems
-                BEGIN
-                    INSERT INTO HistoryCleanupItems (Id)
-                    VALUES (OLD.Id);
-                END
-                """
-            );
+            MigrationProvider.CreateHistoryItemsCleanupTrigger(migrationBuilder);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql("DROP TRIGGER IF EXISTS TR_HistoryItems_Delete_AddHistoryCleanup");
+            MigrationProvider.DropTrigger(migrationBuilder, "TR_HistoryItems_Delete_AddHistoryCleanup", "HistoryItems");
 
             migrationBuilder.DropTable(
                 name: "HistoryCleanupItems");
