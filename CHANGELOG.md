@@ -65,7 +65,7 @@
 * require changelog updates on main pushes that publish pre-release images.
 * update CI setup actions to current Node runtime majors.
 * add a PostgreSQL migration smoke test against `postgres:16-alpine`.
-* harden Playwright smoke tests for shared mock backend state and slower CI hydration.
+* harden Playwright smoke tests for shared mock backend state, slower CI hydration, and stable queue-filter targeting.
 
 ## [0.6.5](https://github.com/nzbdav-dev/nzbdav/compare/v0.6.4...v0.6.5) (2026-05-27)
 

@@ -274,7 +274,7 @@ function QueueFilters({
     ];
 
     return (
-        <div className={styles.queueFilters}>
+        <div className={styles.queueFilters} role="group" aria-label="Queue status filters">
             {filters.map(filter => (
                 <button
                     key={filter.value}

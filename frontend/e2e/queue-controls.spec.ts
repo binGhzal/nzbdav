@@ -13,7 +13,8 @@ test("queue filters, page size, and pause controls update live UI and backend ca
   await expect(page.getByText("Downloading Release")).toBeVisible();
   await expect(page.getByText("Queued Release")).toBeVisible();
 
-  await clickUntilUrlMatches(page.getByRole("button", { name: "Queued", exact: true }), page, /queueStatus=queued/);
+  const queueFilters = page.getByRole("group", { name: "Queue status filters" });
+  await clickUntilUrlMatches(queueFilters.getByRole("button", { name: "Queued", exact: true }), page, /queueStatus=queued/);
   await expect(page.getByText("Queued Release")).toBeVisible();
   await expect(page.getByText("Downloading Release")).not.toBeVisible();
 
