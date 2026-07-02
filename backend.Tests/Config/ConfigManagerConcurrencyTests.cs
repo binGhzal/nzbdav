@@ -60,6 +60,35 @@ public class ConfigManagerConcurrencyTests
         Assert.Equal(8, configManager.GetAdaptiveHealthCheckConcurrency());
     }
 
+    [Fact]
+    public void AutoTotalStreamingConnectionsAreCpuBoundInsteadOfPerStreamMultiplied()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "200"),
+            ("usenet.adaptive-connections-enabled", "false"),
+            ("usenet.article-buffer-size", "40"),
+            ("usenet.max-streaming-connections", "0"),
+            ("usenet.max-total-streaming-connections", "0")
+        );
+
+        var totalStreamingConnections = configManager.GetMaxTotalStreamingConnections();
+
+        Assert.True(totalStreamingConnections < configManager.GetMaxStreamingConnections());
+        Assert.InRange(totalStreamingConnections, 1, 8);
+    }
+
+    [Fact]
+    public void ExplicitTotalStreamingConnectionsAreClamped()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "200"),
+            ("usenet.adaptive-connections-enabled", "false"),
+            ("usenet.max-total-streaming-connections", "200")
+        );
+
+        Assert.Equal(128, configManager.GetMaxTotalStreamingConnections());
+    }
+
     private static ConfigManager CreateConfigManager(params (string Name, string Value)[] values)
     {
         var configManager = new ConfigManager();

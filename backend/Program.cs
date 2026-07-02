@@ -92,6 +92,7 @@ class Program
             .AddSingleton(configManager)
             .AddSingleton(websocketManager)
             .AddSingleton<ActiveStreamTracker>()
+            .AddSingleton<StreamingConnectionLimiter>()
             .AddSingleton<UsenetStreamingClient>()
             .AddSingleton<QueueManager>()
             .AddHostedService<ContentIndexRecoveryService>()

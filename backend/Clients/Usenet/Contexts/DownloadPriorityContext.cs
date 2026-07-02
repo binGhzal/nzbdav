@@ -6,4 +6,5 @@ public record DownloadPriorityContext
 {
     public required SemaphorePriority Priority { get; init; }
     public SemaphoreSlim? ConnectionLimiter { get; init; }
+    public IReadOnlyList<IConnectionLimiter> ConnectionLimiters { get; init; } = [];
 }

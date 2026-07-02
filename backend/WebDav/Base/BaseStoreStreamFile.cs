@@ -15,10 +15,15 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
     public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
     {
         var connectionLimiter = new SemaphoreSlim(configManager.GetMaxStreamingConnections());
+        var globalConnectionLimiter = context.RequestServices.GetRequiredService<StreamingConnectionLimiter>();
         var downloadPriorityContext = new DownloadPriorityContext()
         {
             Priority = SemaphorePriority.High,
-            ConnectionLimiter = connectionLimiter
+            ConnectionLimiters =
+            [
+                new SemaphoreSlimConnectionLimiter(connectionLimiter),
+                globalConnectionLimiter
+            ]
         };
         var scopedDownloadPriorityContext = cancellationToken.SetContext(downloadPriorityContext);
 

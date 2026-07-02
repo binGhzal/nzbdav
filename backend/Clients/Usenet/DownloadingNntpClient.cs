@@ -15,7 +15,9 @@ namespace NzbWebDAV.Clients.Usenet;
 /// <param name="usenetClient"></param>
 public class DownloadingNntpClient : WrappingNntpClient
 {
-    private sealed class ConnectionLease(PrioritizedSemaphore downloadSemaphore, SemaphoreSlim? streamSemaphore)
+    private sealed class ConnectionLease(
+        PrioritizedSemaphore downloadSemaphore,
+        IReadOnlyList<IConnectionLimiter> streamLimiters)
     {
         private int _released;
 
@@ -23,14 +25,18 @@ public class DownloadingNntpClient : WrappingNntpClient
         {
             if (Interlocked.Exchange(ref _released, 1) != 0) return;
             downloadSemaphore.Release();
-            try
+
+            foreach (var streamLimiter in streamLimiters.Reverse())
             {
-                streamSemaphore?.Release();
-            }
-            catch (ObjectDisposedException)
-            {
-                // A streaming response can complete while the NNTP callback is still unwinding.
-                // The shared download lease is already returned; the per-stream limiter is gone.
+                try
+                {
+                    streamLimiter.Release();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // A streaming response can complete while the NNTP callback is still unwinding.
+                    // The shared download lease is already returned; the limiter is gone.
+                }
             }
         }
     }
@@ -172,27 +178,51 @@ public class DownloadingNntpClient : WrappingNntpClient
         RefreshMaxAllowedConnections();
         var downloadPriorityContext = cancellationToken.GetContext<DownloadPriorityContext>();
         var semaphorePriority = downloadPriorityContext?.Priority ?? SemaphorePriority.Low;
-        var streamSemaphore = semaphorePriority == SemaphorePriority.High
-            ? downloadPriorityContext?.ConnectionLimiter
-            : null;
+        var streamLimiters = GetStreamLimiters(downloadPriorityContext, semaphorePriority);
 
-        var hasStreamLease = false;
+        var acquiredStreamLimiters = new List<IConnectionLimiter>();
         try
         {
-            if (streamSemaphore != null)
+            foreach (var streamLimiter in streamLimiters)
             {
-                await streamSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-                hasStreamLease = true;
+                await streamLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
+                acquiredStreamLimiters.Add(streamLimiter);
             }
 
             await _semaphore.WaitAsync(semaphorePriority, cancellationToken).ConfigureAwait(false);
-            return new ConnectionLease(_semaphore, streamSemaphore);
+            return new ConnectionLease(_semaphore, acquiredStreamLimiters);
         }
         catch
         {
-            if (hasStreamLease) streamSemaphore!.Release();
+            foreach (var streamLimiter in acquiredStreamLimiters.AsEnumerable().Reverse())
+            {
+                try
+                {
+                    streamLimiter.Release();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // The request can complete while a later limiter acquisition is canceled.
+                }
+            }
+
             throw;
         }
+    }
+
+    private static IReadOnlyList<IConnectionLimiter> GetStreamLimiters
+    (
+        DownloadPriorityContext? downloadPriorityContext,
+        SemaphorePriority semaphorePriority
+    )
+    {
+        if (downloadPriorityContext == null || semaphorePriority != SemaphorePriority.High) return [];
+
+        var streamLimiters = new List<IConnectionLimiter>();
+        if (downloadPriorityContext.ConnectionLimiter != null)
+            streamLimiters.Add(new SemaphoreSlimConnectionLimiter(downloadPriorityContext.ConnectionLimiter));
+        streamLimiters.AddRange(downloadPriorityContext.ConnectionLimiters);
+        return streamLimiters;
     }
 
     private void RefreshMaxAllowedConnections()

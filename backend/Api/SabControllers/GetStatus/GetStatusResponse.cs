@@ -39,6 +39,12 @@ public class GetStatusResponse
         [JsonPropertyName("healthcheck_concurrency")]
         public int HealthCheckConcurrency { get; init; }
 
+        [JsonPropertyName("max_streaming_connections")]
+        public int MaxStreamingConnections { get; init; }
+
+        [JsonPropertyName("max_total_streaming_connections")]
+        public int MaxTotalStreamingConnections { get; init; }
+
         [JsonPropertyName("active_streams")]
         public int ActiveStreams { get; init; }
 

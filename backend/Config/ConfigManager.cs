@@ -176,6 +176,29 @@ public class ConfigManager
         return Math.Min(articleBufferSize, GetAdaptiveMaxDownloadConnections());
     }
 
+    public int GetMaxTotalStreamingConnections()
+    {
+        var configValue = int.Parse(GetConfigValue("usenet.max-total-streaming-connections") ?? "0");
+        if (configValue > 0) return Math.Clamp(configValue, 1, 128);
+
+        var perStreamConnections = Math.Max(1, GetMaxStreamingConnections());
+        var cpuBasedLimit = Math.Clamp(Environment.ProcessorCount / 2, 2, 8);
+        var downloadConnections = Math.Max(1, GetMaxDownloadConnections());
+        return Math.Clamp(
+            Math.Min(Math.Min(perStreamConnections * 2, cpuBasedLimit), downloadConnections),
+            1,
+            128
+        );
+    }
+
+    public int GetAdaptiveMaxTotalStreamingConnections()
+    {
+        var maxTotalStreamingConnections = GetMaxTotalStreamingConnections();
+        return IsAdaptiveConnectionCountEnabled()
+            ? ApplyMemoryPressureLimit(maxTotalStreamingConnections)
+            : maxTotalStreamingConnections;
+    }
+
     public int GetMaxConcurrentQueueDownloads()
     {
         var configValue = int.Parse(GetConfigValue("queue.max-concurrent-downloads") ?? "0");
@@ -231,7 +254,7 @@ public class ConfigManager
     {
         return int.Parse(
             GetConfigValue("usenet.article-buffer-size")
-            ?? "40"
+            ?? "8"
         );
     }
 

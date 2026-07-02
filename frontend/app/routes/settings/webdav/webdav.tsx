@@ -135,6 +135,21 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
             </Form.Group>
             <hr />
             <Form.Group>
+                <Form.Label htmlFor="max-total-streaming-connections-input">Max Total Streaming Connections</Form.Label>
+                <Form.Control
+                    {...className([styles.input, !isValidMaxTotalStreamingConnections(config["usenet.max-total-streaming-connections"]) && styles.error])}
+                    type="text"
+                    id="max-total-streaming-connections-input"
+                    aria-describedby="max-total-streaming-connections-help"
+                    placeholder="0"
+                    value={config["usenet.max-total-streaming-connections"]}
+                    onChange={e => setNewConfig({ ...config, "usenet.max-total-streaming-connections": e.target.value })} />
+                <Form.Text id="max-total-streaming-connections-help" muted>
+                    Total article connections shared by all WebDAV streams. Use 0 for automatic CPU-based sizing.
+                </Form.Text>
+            </Form.Group>
+            <hr />
+            <Form.Group>
                 <Form.Label htmlFor="streaming-priority-input">Streaming Priority (vs Queue)</Form.Label>
                 <InputGroup className={styles.input}>
                     <Form.Control
@@ -221,6 +236,7 @@ export function isWebdavSettingsUpdated(config: Record<string, string>, newConfi
         || config["queue.file-processing-concurrency"] !== newConfig["queue.file-processing-concurrency"]
         || config["usenet.article-cache-max-megabytes"] !== newConfig["usenet.article-cache-max-megabytes"]
         || config["usenet.max-streaming-connections"] !== newConfig["usenet.max-streaming-connections"]
+        || config["usenet.max-total-streaming-connections"] !== newConfig["usenet.max-total-streaming-connections"]
         || config["usenet.streaming-priority"] !== newConfig["usenet.streaming-priority"]
         || config["usenet.article-buffer-size"] !== newConfig["usenet.article-buffer-size"]
         || config["webdav.show-hidden-files"] !== newConfig["webdav.show-hidden-files"]
@@ -235,6 +251,7 @@ export function isWebdavSettingsValid(newConfig: Record<string, string>) {
         && isValidFileProcessingConcurrency(newConfig["queue.file-processing-concurrency"])
         && isValidArticleCacheMaxMegabytes(newConfig["usenet.article-cache-max-megabytes"])
         && isValidMaxStreamingConnections(newConfig["usenet.max-streaming-connections"])
+        && isValidMaxTotalStreamingConnections(newConfig["usenet.max-total-streaming-connections"])
         && isValidStreamingPriority(newConfig["usenet.streaming-priority"])
         && isValidArticleBufferSize(newConfig["usenet.article-buffer-size"]);
 }
@@ -268,6 +285,12 @@ function isValidMaxStreamingConnections(value: string): boolean {
     if (value.trim() === "") return false;
     const num = Number(value);
     return Number.isInteger(num) && num >= 0 && num <= 64;
+}
+
+function isValidMaxTotalStreamingConnections(value: string): boolean {
+    if (value.trim() === "") return false;
+    const num = Number(value);
+    return Number.isInteger(num) && num >= 0 && num <= 128;
 }
 
 function isValidStreamingPriority(value: string): boolean {

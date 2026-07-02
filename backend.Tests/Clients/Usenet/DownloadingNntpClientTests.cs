@@ -43,6 +43,51 @@ public class DownloadingNntpClientTests
     }
 
     [Fact]
+    public async Task StreamingContextsShareGlobalConnectionLimiter()
+    {
+        using var innerClient = new BlockingNntpClient();
+        using var client = new DownloadingNntpClient(innerClient, CreateConfigManager());
+        using var firstTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var secondTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var globalConnectionLimiter = new SemaphoreSlim(1);
+        using var firstPerStreamLimiter = new SemaphoreSlim(2);
+        using var secondPerStreamLimiter = new SemaphoreSlim(2);
+        using var firstPriorityContext = firstTimeout.Token.SetContext(new DownloadPriorityContext
+        {
+            Priority = SemaphorePriority.High,
+            ConnectionLimiters =
+            [
+                new SemaphoreSlimConnectionLimiter(firstPerStreamLimiter),
+                new SemaphoreSlimConnectionLimiter(globalConnectionLimiter)
+            ]
+        });
+        using var secondPriorityContext = secondTimeout.Token.SetContext(new DownloadPriorityContext
+        {
+            Priority = SemaphorePriority.High,
+            ConnectionLimiters =
+            [
+                new SemaphoreSlimConnectionLimiter(secondPerStreamLimiter),
+                new SemaphoreSlimConnectionLimiter(globalConnectionLimiter)
+            ]
+        });
+
+        var first = client.DecodedBodyAsync("segment-1", firstTimeout.Token);
+        await innerClient.WaitForStartedCountAsync(1, firstTimeout.Token);
+
+        var second = client.DecodedBodyAsync("segment-2", secondTimeout.Token);
+        Assert.Equal(1, innerClient.MaxActiveBodyDownloads);
+
+        await innerClient.ReleaseOneAsync(firstTimeout.Token);
+        await innerClient.WaitForStartedCountAsync(2, secondTimeout.Token);
+        Assert.Equal(1, innerClient.MaxActiveBodyDownloads);
+
+        await innerClient.ReleaseOneAsync(secondTimeout.Token);
+        await Task.WhenAll(first, second);
+        Assert.Equal(2, innerClient.StartedBodyDownloads);
+        Assert.Equal(1, innerClient.MaxActiveBodyDownloads);
+    }
+
+    [Fact]
     public async Task StreamingContextIgnoresLateCallbacksAfterStreamLimiterIsDisposed()
     {
         using var innerClient = new BlockingNntpClient();
