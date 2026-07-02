@@ -6,6 +6,7 @@ using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Streams.Caching;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Config;
@@ -47,6 +48,17 @@ public class ConfigManager
         {
             return _config.TryGetValue(configName, out string? value) ? value.ToNullIfEmpty() : null;
         }
+    }
+
+    private string? GetFirstConfigValue(params string[] configNames)
+    {
+        foreach (var configName in configNames)
+        {
+            var value = GetConfigValue(configName);
+            if (value != null) return value;
+        }
+
+        return null;
     }
 
     private T? GetConfigValue<T>(string configName)
@@ -262,6 +274,46 @@ public class ConfigManager
             GetConfigValue("usenet.article-buffer-size")
             ?? "8"
         );
+    }
+
+    public SparseSegmentCacheOptions GetSparseSegmentCacheOptions()
+    {
+        return new SparseSegmentCacheOptions
+        {
+            Enabled = GetBoolConfig(true, "Cache:Enabled", "cache.enabled"),
+            Directory = GetFirstConfigValue("Cache:Directory", "cache.directory") ?? "/config/cache/segments",
+            MaxBytes = GetLongConfig(64L * 1024 * 1024 * 1024, "Cache:MaxBytes", "cache.max-bytes"),
+            ChunkBytes = (int)Math.Clamp(
+                GetLongConfig(4L * 1024 * 1024, "Cache:ChunkBytes", "cache.chunk-bytes"),
+                64L * 1024,
+                64L * 1024 * 1024),
+            ReadAheadBytes = (int)Math.Clamp(
+                GetLongConfig(16L * 1024 * 1024, "Cache:ReadAheadBytes", "cache.read-ahead-bytes"),
+                0,
+                512L * 1024 * 1024),
+            IdleTtl = GetTimeSpanConfig(TimeSpan.FromMinutes(10), "Cache:IdleTtl", "cache.idle-ttl"),
+            NoProgressTimeout = GetTimeSpanConfig(TimeSpan.FromSeconds(30), "Cache:NoProgressTimeout", "cache.no-progress-timeout"),
+        };
+    }
+
+    private bool GetBoolConfig(bool defaultValue, params string[] names)
+    {
+        var raw = GetFirstConfigValue(names);
+        return raw == null ? defaultValue : bool.Parse(raw);
+    }
+
+    private long GetLongConfig(long defaultValue, params string[] names)
+    {
+        var raw = GetFirstConfigValue(names);
+        return raw == null ? defaultValue : long.Parse(raw, CultureInfo.InvariantCulture);
+    }
+
+    private TimeSpan GetTimeSpanConfig(TimeSpan defaultValue, params string[] names)
+    {
+        var raw = GetFirstConfigValue(names);
+        if (raw == null) return defaultValue;
+        if (TimeSpan.TryParse(raw, CultureInfo.InvariantCulture, out var parsed)) return parsed;
+        return TimeSpan.FromSeconds(double.Parse(raw, CultureInfo.InvariantCulture));
     }
 
     private int ApplyRuntimePressureLimit(int configuredLimit)

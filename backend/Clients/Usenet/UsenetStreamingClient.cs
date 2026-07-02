@@ -2,6 +2,8 @@
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Streams;
 using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Clients.Usenet;
@@ -79,6 +81,30 @@ public class UsenetStreamingClient : WrappingNntpClient
         }
 
         return SegmentCheckBatch.FromResults(results);
+    }
+
+    public override async Task<NzbFileStream> GetFileStream(NzbFile nzbFile, int articleBufferSize, CancellationToken ct)
+    {
+        var segmentIds = nzbFile.GetSegmentIds();
+        var fileSize = await GetFileSizeAsync(nzbFile, ct).ConfigureAwait(false);
+        return GetFileStream(segmentIds, fileSize, articleBufferSize);
+    }
+
+    public override NzbFileStream GetFileStream(NzbFile nzbFile, long fileSize, int articleBufferSize)
+    {
+        return GetFileStream(nzbFile.GetSegmentIds(), fileSize, articleBufferSize);
+    }
+
+    public override NzbFileStream GetFileStream(
+        string[] segmentIds, long fileSize, int articleBufferSize, long? requestedEndByte = null)
+    {
+        return new NzbFileStream(
+            segmentIds,
+            fileSize,
+            this,
+            articleBufferSize,
+            requestedEndByte,
+            _configManager.GetSparseSegmentCacheOptions());
     }
 
     private async Task<IReadOnlyList<IndexedSegmentCheckResult>> CheckPipelinedBatchAsync

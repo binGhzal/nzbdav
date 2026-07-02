@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Services;
+using NzbWebDAV.Streams.Caching;
 
 namespace NzbWebDAV.Api.SabControllers;
 
@@ -76,6 +77,48 @@ public sealed class ProviderDiagnosticStatus
                 StatPipeliningEnabled = provider.StatPipeliningEnabled
             })
             .ToList();
+    }
+}
+
+public sealed class CacheStatus
+{
+    [JsonPropertyName("bytes")]
+    public long Bytes { get; init; }
+
+    [JsonPropertyName("max_bytes")]
+    public long MaxBytes { get; init; }
+
+    [JsonPropertyName("hits")]
+    public long Hits { get; init; }
+
+    [JsonPropertyName("misses")]
+    public long Misses { get; init; }
+
+    [JsonPropertyName("evictions")]
+    public long Evictions { get; init; }
+
+    [JsonPropertyName("files")]
+    public int Files { get; init; }
+
+    [JsonPropertyName("active_readers")]
+    public int ActiveReaders { get; init; }
+
+    [JsonPropertyName("pending_fetches")]
+    public int PendingFetches { get; init; }
+
+    public static CacheStatus FromSnapshot(SparseSegmentCacheSnapshot snapshot)
+    {
+        return new CacheStatus
+        {
+            Bytes = snapshot.Bytes,
+            MaxBytes = snapshot.MaxBytes,
+            Hits = snapshot.Hits,
+            Misses = snapshot.Misses,
+            Evictions = snapshot.Evictions,
+            Files = snapshot.Files,
+            ActiveReaders = snapshot.ActiveReaders,
+            PendingFetches = snapshot.PendingFetches
+        };
     }
 }
 

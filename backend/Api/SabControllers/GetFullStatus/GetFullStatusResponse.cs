@@ -51,6 +51,9 @@ public class GetFullStatusResponse
         [JsonPropertyName("rclone_invalidations")]
         public RcloneInvalidationStatus RcloneInvalidations { get; init; } = new();
 
+        [JsonPropertyName("cache")]
+        public CacheStatus Cache { get; init; } = new();
+
         [JsonPropertyName("provider_diagnostics")]
         public IReadOnlyList<ProviderDiagnosticStatus> ProviderDiagnostics { get; init; } = [];
 

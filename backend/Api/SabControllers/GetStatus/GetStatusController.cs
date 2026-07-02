@@ -6,6 +6,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
+using NzbWebDAV.Streams.Caching;
 
 namespace NzbWebDAV.Api.SabControllers.GetStatus;
 
@@ -52,6 +53,8 @@ public class GetStatusController(
                 MaxTotalStreamingConnections = configManager.GetAdaptiveMaxTotalStreamingConnections(),
                 ActiveStreams = activeStreams.Count,
                 RcloneInvalidations = RcloneInvalidationStatus.FromStats(rcloneInvalidations),
+                Cache = CacheStatus.FromSnapshot(SparseSegmentCacheManager.Shared.GetSnapshot(
+                    configManager.GetSparseSegmentCacheOptions())),
                 ProviderDiagnostics = ProviderDiagnosticStatus.FromConfig(configManager.GetUsenetProviderConfig()),
                 WorkerQueues = WorkerQueueStatus.FromStats(activeJobs, queuedJobs, healthWorkers, healthQueue, durableWorkerJobs),
                 TotalStreamsOpened = activeStreams.TotalOpened,

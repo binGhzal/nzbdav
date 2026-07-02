@@ -1,6 +1,7 @@
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Streams.Caching;
 using NzbWebDAV.Utils;
 using Serilog;
 using UsenetSharp.Streams;
@@ -12,7 +13,8 @@ public class NzbFileStream(
     long fileSize,
     INntpClient usenetClient,
     int articleBufferSize,
-    long? requestedEndByte = null
+    long? requestedEndByte = null,
+    SparseSegmentCacheOptions? cacheOptions = null
 ) : FastReadOnlyStream
 {
     // Extra segments fetched past the requested end to cover seek imprecision.
@@ -21,6 +23,13 @@ public class NzbFileStream(
     private long _position;
     private bool _disposed;
     private Stream? _innerStream;
+    private readonly IFileRangeReader? _rangeReader = CreateRangeReader(
+        fileSegmentIds,
+        fileSize,
+        usenetClient,
+        articleBufferSize,
+        requestedEndByte,
+        cacheOptions);
 
     public override bool CanSeek => true;
     public override long Length => fileSize;
@@ -39,6 +48,17 @@ public class NzbFileStream(
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         if (_position >= fileSize) return 0;
+        if (_rangeReader != null)
+        {
+            if (_position >= _rangeReader.Length) return 0;
+            var bytesToRead = (int)Math.Min(buffer.Length, _rangeReader.Length - _position);
+            var readFromCache = await _rangeReader
+                .ReadAtAsync(_position, buffer[..bytesToRead], cancellationToken)
+                .ConfigureAwait(false);
+            _position += readFromCache;
+            return readFromCache;
+        }
+
         _innerStream ??= await GetFileStream(_position, cancellationToken).ConfigureAwait(false);
         var read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         _position += read;
@@ -52,8 +72,12 @@ public class NzbFileStream(
             : throw new InvalidOperationException("SeekOrigin must be Begin or Current.");
         if (_position == absoluteOffset) return _position;
         _position = absoluteOffset;
-        _innerStream?.Dispose();
-        _innerStream = null;
+        if (_rangeReader == null)
+        {
+            _innerStream?.Dispose();
+            _innerStream = null;
+        }
+
         return _position;
     }
 
@@ -120,6 +144,7 @@ public class NzbFileStream(
     {
         if (_disposed) return;
         _innerStream?.Dispose();
+        if (_rangeReader is IDisposable disposable) disposable.Dispose();
         _disposed = true;
     }
 
@@ -127,7 +152,28 @@ public class NzbFileStream(
     {
         if (_disposed) return;
         if (_innerStream != null) await _innerStream.DisposeAsync().ConfigureAwait(false);
+        if (_rangeReader is IAsyncDisposable asyncDisposable)
+            await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+        else if (_rangeReader is IDisposable disposable)
+            disposable.Dispose();
         _disposed = true;
         GC.SuppressFinalize(this);
+    }
+
+    private static IFileRangeReader? CreateRangeReader
+    (
+        string[] segmentIds,
+        long length,
+        INntpClient client,
+        int bufferSize,
+        long? endByte,
+        SparseSegmentCacheOptions? options
+    )
+    {
+        if (options is not { Enabled: true }) return null;
+        var inner = new SegmentFileRangeReader(segmentIds, length, client, bufferSize);
+        var key = SparseSegmentCacheManager.CreateKey(segmentIds, length);
+        var readLimitExclusive = endByte.HasValue ? Math.Clamp(endByte.Value + 1, 0, length) : length;
+        return SparseSegmentCacheManager.Shared.Open(key, inner, options, readLimitExclusive);
     }
 }
