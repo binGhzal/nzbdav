@@ -12,6 +12,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Middlewares;
+using NzbWebDAV.Mount;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
@@ -87,6 +88,7 @@ class Program
             .AddSingleton(configManager)
             .AddSingleton(websocketManager)
             .AddSingleton<ActiveStreamTracker>()
+            .AddSingleton<MountStatusProvider>()
             .AddSingleton<StreamingConnectionLimiter>()
             .AddSingleton<UsenetStreamingClient>()
             .AddSingleton<QueueManager>()
@@ -100,6 +102,7 @@ class Program
             .AddHostedService<HistoryCleanupService>()
             .AddHostedService<DavCleanupService>()
             .AddHostedService<RcloneInvalidationService>()
+            .AddHostedService<DfsMountService>()
             .AddHostedService<UsenetFileToBlobstoreMigrationService>()
             .AddHostedService<RemoveOrphanedFilesSchedulerService>()
             .AddScoped<DavDatabaseContext>()

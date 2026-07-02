@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Mount;
 using NzbWebDAV.Services;
 using NzbWebDAV.Streams.Caching;
 
@@ -119,6 +120,64 @@ public sealed class CacheStatus
             Files = snapshot.Files,
             ActiveReaders = snapshot.ActiveReaders,
             PendingFetches = snapshot.PendingFetches
+        };
+    }
+}
+
+public sealed class MountDiagnosticStatus
+{
+    [JsonPropertyName("type")]
+    public required string Type { get; init; }
+
+    [JsonPropertyName("directory")]
+    public required string Directory { get; init; }
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; }
+
+    [JsonPropertyName("ready")]
+    public bool Ready { get; init; }
+
+    [JsonPropertyName("state")]
+    public required string State { get; init; }
+
+    [JsonPropertyName("message")]
+    public string? Message { get; init; }
+
+    [JsonPropertyName("fuse_errors")]
+    public long FuseErrors { get; init; }
+
+    [JsonPropertyName("active_operations")]
+    public int ActiveOperations { get; init; }
+
+    [JsonPropertyName("waiting_operations")]
+    public int WaitingOperations { get; init; }
+
+    [JsonPropertyName("last_invalidation_at")]
+    public DateTimeOffset? LastInvalidationAt { get; init; }
+
+    [JsonPropertyName("updated_at")]
+    public DateTimeOffset UpdatedAt { get; init; }
+
+    [JsonPropertyName("cache")]
+    public CacheStatus? Cache { get; init; }
+
+    public static MountDiagnosticStatus FromSnapshot(MountStatusSnapshot snapshot)
+    {
+        return new MountDiagnosticStatus
+        {
+            Type = snapshot.Type,
+            Directory = snapshot.Directory,
+            Enabled = snapshot.Enabled,
+            Ready = snapshot.Ready,
+            State = snapshot.State,
+            Message = snapshot.Message,
+            FuseErrors = snapshot.FuseErrors,
+            ActiveOperations = snapshot.ActiveOperations,
+            WaitingOperations = snapshot.WaitingOperations,
+            LastInvalidationAt = snapshot.LastInvalidationAt,
+            UpdatedAt = snapshot.UpdatedAt,
+            Cache = snapshot.Cache == null ? null : CacheStatus.FromSnapshot(snapshot.Cache)
         };
     }
 }

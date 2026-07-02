@@ -394,6 +394,20 @@ function getFullStatusResponse() {
         active_readers: 2,
         pending_fetches: 1,
       },
+      mount: {
+        type: "rclone",
+        directory: "/mnt/nzbdav",
+        enabled: false,
+        ready: true,
+        state: "external",
+        message: "rclone mount is managed outside NZBDav",
+        fuse_errors: 0,
+        active_operations: 0,
+        waiting_operations: 0,
+        last_invalidation_at: null,
+        updated_at: "2026-07-02T08:05:00Z",
+        cache: null,
+      },
       provider_diagnostics: [
         {
           name: "provider-1",

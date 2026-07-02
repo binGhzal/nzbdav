@@ -440,6 +440,7 @@ export type FullStatusResponse = {
     active_streams: number,
     rclone_invalidations: RcloneInvalidationStatus,
     cache: CacheStatus,
+    mount: MountDiagnosticStatus,
     provider_diagnostics: ProviderDiagnosticStatus[],
     worker_queues: WorkerQueueStatus,
     repair_runs: RepairRunsStatus,
@@ -469,6 +470,21 @@ export type CacheStatus = {
     files: number,
     active_readers: number,
     pending_fetches: number,
+}
+
+export type MountDiagnosticStatus = {
+    type: string,
+    directory: string,
+    enabled: boolean,
+    ready: boolean,
+    state: string,
+    message: string | null,
+    fuse_errors: number,
+    active_operations: number,
+    waiting_operations: number,
+    last_invalidation_at: string | null,
+    updated_at: string,
+    cache: CacheStatus | null,
 }
 
 export type ProviderDiagnosticStatus = {

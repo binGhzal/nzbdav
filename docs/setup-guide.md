@@ -152,11 +152,11 @@ You can find the optimal **Max Download Connections** for your network (`Setting
 
 ### 4. Repair And Operations
 
-Open `Health` in the WebUI for live repair, cache, provider, worker, and rclone invalidation status. The page can start a repair verification run, cancel an active run, and clear broken-file repair records after review.
+Open `Health` in the WebUI for live repair, cache, provider, worker, mount, and rclone invalidation status. The page can start a repair verification run, cancel an active run, and clear broken-file repair records after review.
 
 Repair checking uses a separate connection budget so background verification does not steal active streaming slots. The defaults are conservative: `repair.connection-budget-percent=20` with at least one connection. Provider errors and unknown results are retried and reported as degraded state; NZBDav only queues repair for definitive missing-on-all-provider cases.
 
-The SAB-compatible `status` and `fullstatus` responses include additive `cache`, `repair_runs`, `provider_diagnostics`, `worker_queues`, and `rclone_invalidations` fields for dashboards and ARR/Plex operational checks.
+The SAB-compatible `status` and `fullstatus` responses include additive `cache`, `mount`, `repair_runs`, `provider_diagnostics`, `worker_queues`, and `rclone_invalidations` fields for dashboards and ARR/Plex operational checks.
 
 ---
 
@@ -339,6 +339,30 @@ Remember: `unnecessary flags = potential pitfalls`.
 #### Rclone flags reference
 * [Rclone mount VFS documentation](https://rclone.org/commands/rclone_mount/)
 * [Rclone Forum Discussion on Buffer Size](https://forum.rclone.org/t/whats-the-suitable-value-to-set-for-buffer-size-with-vfs-read-ahead/39971/4)
+
+## Native DFS Prototype
+
+`Mount:Type=dfs` is a Linux x64 prototype and remains behind the benchmark gate. Keep `MOUNT_TYPE=rclone` for production unless manual artifacts in `artifacts/benchmarks/` show DFS beats tuned rclone by the documented seek-latency, CPU/RSS, restart, invalidation, and ARR import/delete criteria. The current `Mono.Fuse.NETStandard` package only ships a Linux x64 native helper, so arm64 containers report DFS as unavailable and fail closed.
+
+To test DFS in a container, the NZBDav container must have access to FUSE:
+
+```yaml
+services:
+  nzbdav:
+    environment:
+      - MOUNT_TYPE=dfs
+      - MOUNT_DIR=/mnt/remote/nzbdav
+    devices:
+      - /dev/fuse:/dev/fuse:rwm
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+```
+
+The mount fails closed: if the host is not Linux x64, `/dev/fuse` is unavailable, or FUSE cannot mount the target directory, `/api/mount/status` and SAB `fullstatus.mount` report `ready=false` instead of exposing an empty library. Media apps should not scan the mount until `ready=true`.
+
+DFS exposes the same content and `.ids` logical items as WebDAV, and exposes completed imports as real symlinks so ARR copy-delete imports can unlink the virtual symlink without deleting underlying content. Rclone remains the default because it is battle-tested; DFS should replace it only after benchmark evidence wins on the same host and media workload.
 
 ---
 

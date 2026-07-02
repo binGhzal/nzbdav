@@ -11,7 +11,7 @@ import { isRepairsSettingsUpdated, isRepairsSettingsValid, RepairsSettings } fro
 import { isRcloneSettingsUpdated, RcloneSettings } from "./rclone/rclone";
 import { isLibrarySettingsUpdated, LibrarySettings } from "./library/library";
 import { useCallback, useEffect, useState } from "react";
-import { useBlocker, useLocation } from "react-router";
+import { useBlocker, useLocation, useNavigate } from "react-router";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { withUrlBase } from "~/utils/url-base";
 
@@ -96,6 +96,7 @@ function Body(props: BodyProps) {
     const [isSaved, setIsSaved] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     const location = useLocation();
+    const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState(() => getSettingsTab(new URLSearchParams(location.search).get("tab")));
 
     useEffect(() => {
@@ -149,8 +150,8 @@ function Body(props: BodyProps) {
         const params = new URLSearchParams(location.search);
         if (nextTab === "usenet") params.delete("tab");
         else params.set("tab", nextTab);
-        window.history.replaceState(window.history.state, "", `${location.pathname}${params.size > 0 ? `?${params.toString()}` : ""}`);
-    }, [location.pathname, location.search]);
+        navigate(`${location.pathname}${params.size > 0 ? `?${params.toString()}` : ""}`, { replace: true });
+    }, [location.pathname, location.search, navigate]);
 
     const onSave = useCallback(async () => {
         setIsSaving(true);

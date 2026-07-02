@@ -75,7 +75,7 @@ public class StrmToSymlinksTask(
             })
             .ToList();
 
-        var mountDir = configManager.GetRcloneMountDir();
+        var mountDir = configManager.GetMountDir();
         foreach (var item in itemsWithExtension)
         {
             var symlinkPath = PathUtil.ReplaceExtension(item.Link.LinkPath, item.Extension);

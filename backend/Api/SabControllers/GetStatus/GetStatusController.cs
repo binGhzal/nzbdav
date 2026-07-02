@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Mount;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Streams.Caching;
@@ -17,7 +18,8 @@ public class GetStatusController(
     ConfigManager configManager,
     QueueManager queueManager,
     ActiveStreamTracker activeStreamTracker,
-    HealthCheckService healthCheckService
+    HealthCheckService healthCheckService,
+    MountStatusProvider mountStatusProvider
 ) : SabApiController.BaseController(httpContext, configManager)
 {
     protected override async Task<IActionResult> Handle()
@@ -44,6 +46,7 @@ public class GetStatusController(
             .CountAsync(httpContext.RequestAborted)
             .ConfigureAwait(false);
         var healthWorkers = healthCheckService.GetWorkerSnapshot();
+        var cacheSnapshot = SparseSegmentCacheManager.Shared.GetSnapshot(configManager.GetSparseSegmentCacheOptions());
         var response = new GetStatusResponse()
         {
             Status = new GetStatusResponse.StatusObject
@@ -62,8 +65,8 @@ public class GetStatusController(
                 MaxTotalStreamingConnections = configManager.GetAdaptiveMaxTotalStreamingConnections(),
                 ActiveStreams = activeStreams.Count,
                 RcloneInvalidations = RcloneInvalidationStatus.FromStats(rcloneInvalidations),
-                Cache = CacheStatus.FromSnapshot(SparseSegmentCacheManager.Shared.GetSnapshot(
-                    configManager.GetSparseSegmentCacheOptions())),
+                Cache = CacheStatus.FromSnapshot(cacheSnapshot),
+                Mount = MountDiagnosticStatus.FromSnapshot(mountStatusProvider.GetSnapshot(cacheSnapshot)),
                 ProviderDiagnostics = ProviderDiagnosticStatus.FromConfig(configManager.GetUsenetProviderConfig()),
                 WorkerQueues = WorkerQueueStatus.FromStats(activeJobs, queuedJobs, healthWorkers, healthQueue, durableWorkerJobs),
                 RepairRuns = RepairRunsStatus.FromRuns(activeRepairRun, lastRepairRun, repairBrokenFiles),
@@ -80,7 +83,7 @@ public class GetStatusController(
                 Uptime = GetUptime(),
                 Version = ConfigManager.AppVersion,
                 CompleteDir = GetCompleteDir(configManager),
-                DownloadDir = Path.Join(configManager.GetRcloneMountDir(), DavItem.NzbFolder.Name),
+                DownloadDir = Path.Join(configManager.GetMountDir(), DavItem.NzbFolder.Name),
             }
         };
 
@@ -99,9 +102,9 @@ public class GetStatusController(
         return configManager.GetImportStrategy() switch
         {
             "strm" => configManager.GetStrmCompletedDownloadDir(),
-            "both" => Path.Join(configManager.GetRcloneMountDir(), DavItem.SymlinkFolder.Name),
-            "symlinks" => Path.Join(configManager.GetRcloneMountDir(), DavItem.SymlinkFolder.Name),
-            _ => Path.Join(configManager.GetRcloneMountDir(), DavItem.SymlinkFolder.Name)
+            "both" => Path.Join(configManager.GetMountDir(), DavItem.SymlinkFolder.Name),
+            "symlinks" => Path.Join(configManager.GetMountDir(), DavItem.SymlinkFolder.Name),
+            _ => Path.Join(configManager.GetMountDir(), DavItem.SymlinkFolder.Name)
         };
     }
 

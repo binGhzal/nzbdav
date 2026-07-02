@@ -49,7 +49,7 @@ public static class OrganizedLinksUtil
 
     private static bool Verify(string linkFromCache, DavItem targetDavItem, ConfigManager configManager)
     {
-        var mountDir = configManager.GetRcloneMountDir();
+        var mountDir = configManager.GetMountDir();
         var fileInfo = new FileInfo(linkFromCache);
         var symlinkOrStrmInfo = SymlinkAndStrmUtil.GetSymlinkOrStrmInfo(fileInfo);
         if (symlinkOrStrmInfo == null) return false;
@@ -76,7 +76,7 @@ public static class OrganizedLinksUtil
         ConfigManager configManager
     )
     {
-        var mountDir = configManager.GetRcloneMountDir();
+        var mountDir = configManager.GetMountDir();
         return symlinkOrStrmInfos
             .Select(x => GetDavItemLink(x, mountDir))
             .Where(x => x != null)

@@ -53,6 +53,6 @@ public class GetConfigController(
     {
         return configManager.GetImportStrategy() == "strm"
             ? configManager.GetStrmCompletedDownloadDir()
-            : Path.Join(configManager.GetRcloneMountDir(), DavItem.SymlinkFolder.Name);
+            : Path.Join(configManager.GetMountDir(), DavItem.SymlinkFolder.Name);
     }
 }

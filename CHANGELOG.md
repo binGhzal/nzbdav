@@ -10,7 +10,8 @@
 * expose rclone invalidation backlog and provider diagnostic state in status/fullstatus APIs.
 * expose download, verify, and repair worker queue status in status/fullstatus APIs.
 * persist repair run status, broken-file records, and repair history APIs for operator review.
-* add Health page operations panels for repair, sparse cache, providers, workers, and degraded state.
+* add Health page operations panels for repair, sparse cache, mount, providers, workers, and degraded state.
+* add Linux x64 native DFS prototype behind `Mount:Type=dfs` with mount status reporting and ARR-safe completed-symlink unlink handling.
 * add frontend Vitest coverage and Playwright frontend-server smoke coverage.
 * run background health checks and repair workers concurrently while retaining shared NNTP connection limits.
 * persist download, verify, and repair work as leased durable jobs with retry and quarantine status.
@@ -30,6 +31,7 @@
 * add shared article-cache budget accounting across concurrent queue downloads.
 * add temporary sparse segment caching for random-access range reads and seeks.
 * drain replaced Usenet provider clients after config reloads instead of disposing active clients immediately.
+* add mount status observability so DFS/rclone readiness can be benchmarked with cache and operation counters.
 
 ### Bug Fixes
 
@@ -47,6 +49,10 @@
 * mount the Library settings tab and make settings tabs URL-addressable.
 * make historical migrations provider-aware so PostgreSQL can build a fresh schema.
 * let browser navigations reach the WebUI Health route while preserving `/health` as a non-browser liveness probe.
+
+### Infrastructure
+
+* include FUSE userspace libraries in runtime images for optional DFS testing; `/dev/fuse`, Linux x64, and container capabilities are still required at deployment time.
 
 ### CI
 

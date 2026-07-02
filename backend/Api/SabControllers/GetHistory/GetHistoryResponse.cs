@@ -109,7 +109,7 @@ public class GetHistoryResponse : SabBaseResponse
             {
                 return Path.Join(new[]
                 {
-                    configManager.GetRcloneMountDir(),
+                    configManager.GetMountDir(),
                     DavItem.SymlinkFolder.Name,
                     historyItem.Category,
                     downloadFolder.Name

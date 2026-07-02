@@ -86,6 +86,28 @@ public class ConfigManager
         var mountDir = GetConfigValue("rclone.mount-dir")
                        ?? EnvironmentUtil.GetVariable("MOUNT_DIR")
                        ?? "/mnt/nzbdav";
+        return NormalizeMountDir(mountDir);
+    }
+
+    public string GetMountType()
+    {
+        var mountType = GetFirstConfigValue("Mount:Type", "mount.type")
+                        ?? EnvironmentUtil.GetVariable("MOUNT_TYPE")
+                        ?? "rclone";
+        mountType = mountType.Trim().ToLowerInvariant();
+        return mountType is "rclone" or "dfs" or "none" ? mountType : "rclone";
+    }
+
+    public string GetMountDir()
+    {
+        var mountDir = GetFirstConfigValue("Mount:Directory", "mount.directory")
+                       ?? EnvironmentUtil.GetVariable("MOUNT_DIRECTORY")
+                       ?? GetRcloneMountDir();
+        return NormalizeMountDir(mountDir);
+    }
+
+    private static string NormalizeMountDir(string mountDir)
+    {
         if (mountDir.EndsWith('/')) mountDir = mountDir.TrimEnd('/');
         return mountDir;
     }

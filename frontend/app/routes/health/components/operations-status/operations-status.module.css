@@ -84,6 +84,13 @@
     font-size: 0.88rem;
 }
 
+.mutedLine {
+    margin-top: 10px;
+    color: hsl(180, 7%, 55%);
+    font-size: 0.88rem;
+    overflow-wrap: anywhere;
+}
+
 .warning {
     color: hsl(45, 96%, 70%);
 }

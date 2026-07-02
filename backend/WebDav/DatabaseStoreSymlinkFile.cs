@@ -22,7 +22,7 @@ public class DatabaseStoreSymlinkFile(DavItem davFile, ConfigManager configManag
 
     private string GetTargetPath()
     {
-        return GetTargetPath(davFile.Id, configManager.GetRcloneMountDir());
+        return GetTargetPath(davFile.Id, configManager.GetMountDir());
     }
 
     public static string GetTargetPath(Guid davItemId, string mountDir, char? pathSeparator = null)

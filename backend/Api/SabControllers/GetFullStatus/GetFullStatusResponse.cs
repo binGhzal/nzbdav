@@ -54,6 +54,14 @@ public class GetFullStatusResponse
         [JsonPropertyName("cache")]
         public CacheStatus Cache { get; init; } = new();
 
+        [JsonPropertyName("mount")]
+        public MountDiagnosticStatus Mount { get; init; } = new()
+        {
+            Type = "rclone",
+            Directory = "",
+            State = "unknown"
+        };
+
         [JsonPropertyName("provider_diagnostics")]
         public IReadOnlyList<ProviderDiagnosticStatus> ProviderDiagnostics { get; init; } = [];
 

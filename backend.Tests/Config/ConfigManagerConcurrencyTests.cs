@@ -254,6 +254,19 @@ public class ConfigManagerConcurrencyTests
         Assert.Null(ConfigManager.TryReadCgroupCpuUsageSeconds(path));
     }
 
+    [Fact]
+    public void MountTypeAndDirectoryUseGenericConfigAliases()
+    {
+        var configManager = CreateConfigManager(
+            ("Mount:Type", "dfs"),
+            ("Mount:Directory", "/mnt/dfs/"),
+            ("rclone.mount-dir", "/mnt/rclone"));
+
+        Assert.Equal("dfs", configManager.GetMountType());
+        Assert.Equal("/mnt/dfs", configManager.GetMountDir());
+        Assert.Equal("/mnt/rclone", configManager.GetRcloneMountDir());
+    }
+
     private static ConfigManager CreateConfigManager(params (string Name, string Value)[] values)
     {
         var configManager = new ConfigManager();

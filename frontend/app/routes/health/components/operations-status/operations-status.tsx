@@ -71,6 +71,25 @@ export function OperationsStatus({
 
                 <section className={styles.panel}>
                     <div className={styles.header}>
+                        <h3 className={styles.title}>Mount</h3>
+                        <span className={styles.badge}>{fullStatus?.mount.state ?? "unknown"}</span>
+                    </div>
+                    <div className={styles.metricGrid}>
+                        <Metric label="Type" value={fullStatus?.mount.type ?? "unknown"} />
+                        <Metric label="Ready" value={fullStatus?.mount.ready ? "yes" : "no"} tone={fullStatus && !fullStatus.mount.ready ? "warning" : undefined} />
+                        <Metric label="Active" value={fullStatus?.mount.active_operations ?? 0} />
+                        <Metric label="Errors" value={fullStatus?.mount.fuse_errors ?? 0} tone={fullStatus?.mount.fuse_errors ? "danger" : undefined} />
+                    </div>
+                    {fullStatus?.mount.message &&
+                        <div className={styles.mutedLine}>{fullStatus.mount.message}</div>
+                    }
+                    {fullStatus?.mount.directory &&
+                        <div className={styles.mutedLine}>{fullStatus.mount.directory}</div>
+                    }
+                </section>
+
+                <section className={styles.panel}>
+                    <div className={styles.header}>
                         <h3 className={styles.title}>Providers</h3>
                         <span className={styles.badge}>{fullStatus?.provider_diagnostics.length ?? 0} configured</span>
                     </div>
@@ -212,6 +231,8 @@ function getDegradedMessages(
     if (repairStatusError) messages.push(repairStatusError);
     if (fullStatus?.rclone_invalidations.failed) messages.push("Rclone invalidation failures need attention.");
     if (fullStatus?.rclone_invalidations.pending || fullStatus?.rclone_invalidations.ready) messages.push("Rclone invalidations are waiting to drain.");
+    if (fullStatus?.mount.enabled && !fullStatus.mount.ready) messages.push("Mounted filesystem is not ready.");
+    if (fullStatus?.mount.fuse_errors) messages.push("Mounted filesystem reported FUSE errors.");
     if (repairStatus?.broken_files.length) messages.push("Repair has broken files requiring operator review.");
     if (repairStatus?.verify_queue.quarantined || repairStatus?.repair_queue.quarantined) messages.push("Repair or verify jobs are quarantined.");
     return messages;

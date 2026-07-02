@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make NZBDav faster and safer for ARR/Plex Usenet workloads by improving the existing WebDAV/rclone stream path first, then benchmark-gating a Linux-only native DFS prototype as a possible replacement mount backend.
+Make NZBDav faster and safer for ARR/Plex Usenet workloads by improving the existing WebDAV/rclone stream path first, then benchmark-gating a Linux x64 native DFS prototype as a possible replacement mount backend.
 
 ## Execution State
 
@@ -13,8 +13,8 @@ Make NZBDav faster and safer for ARR/Plex Usenet workloads by improving the exis
 - [x] Archive segment slicing
 - [x] Persisted repair history and status APIs
 - [x] Operator diagnostics UI/API
-- [ ] Native DFS prototype
-- [ ] Release and CI gates
+- [x] Native DFS prototype
+- [x] Release and CI gates
 
 ## Current Evidence
 
@@ -23,6 +23,11 @@ Make NZBDav faster and safer for ARR/Plex Usenet workloads by improving the exis
 - Frontend checks passed: `npm --prefix frontend run typecheck`, `npm --prefix frontend test`, `npm --prefix frontend run build:server`, `npm --prefix frontend run build`, `npm --prefix frontend run test:e2e`
 - Migration smoke passed with a temporary config path and `--db-migration`
 - Whitespace check passed: `git diff --check`
+- DFS path resolver/runtime-gate tests passed: `dotnet test backend.Tests/backend.Tests.csproj --filter "FullyQualifiedName~DfsDavPathResolverTests|FullyQualifiedName~DfsMountServiceTests|FullyQualifiedName~ConfigManagerConcurrencyTests"`
+- Docker image build passed: `docker build -t nzbdav:dfs-check .`
+- Docker image runtime check passed for managed DFS assemblies in `/app/backend`; arm64 image correctly lacks `libMonoFuseHelper.so` because `Mono.Fuse.NETStandard` 1.1.0 only packages the Linux x64 native helper.
+- Publish checks passed for `linux-musl-x64` and `linux-musl-arm64`; only x64 includes `libMonoFuseHelper.so`, and DFS fails closed elsewhere.
+- Vulnerability checks passed: `dotnet list backend/NzbWebDAV.csproj package --vulnerable` and `npm --prefix frontend audit --audit-level=moderate`
 
 ## DFS Acceptance Gate
 
@@ -36,8 +41,5 @@ Keep `Mount:Type=rclone` as the default until repo-local benchmark artifacts sho
 
 ## Remaining Work
 
-- Implement `Mount:Type=dfs` behind a Linux-only feature path using `Mono.Fuse.NETStandard`.
-- Add `GET /api/mount/status` and include mount readiness in `fullstatus`.
-- Document Docker `/dev/fuse` and capability requirements.
-- Add DFS mount status tests and benchmark artifact generation for manual production comparisons.
-- Finish release docs, changelog notes, and CI/release gates after DFS is benchmarked.
+- Run the manual production benchmark on the real media host before making DFS the preferred backend.
+- Keep `Mount:Type=rclone` as the default until the benchmark artifacts satisfy every acceptance gate.

@@ -21,6 +21,7 @@ using NzbWebDAV.Api.SabControllers.RemoveFromQueue;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Mount;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
@@ -36,7 +37,8 @@ public class SabApiController(
     QueueManager queueManager,
     WebsocketManager websocketManager,
     ActiveStreamTracker activeStreamTracker,
-    HealthCheckService healthCheckService
+    HealthCheckService healthCheckService,
+    MountStatusProvider mountStatusProvider
 ) : ControllerBase
 {
     [HttpGet]
@@ -84,7 +86,7 @@ public class SabApiController(
             case "status":
                 return new GetStatusController(
                     HttpContext, dbClient, configManager, queueManager, activeStreamTracker,
-                    healthCheckService);
+                    healthCheckService, mountStatusProvider);
             case "get_cats":
                 return new GetCategoriesController(
                     HttpContext, configManager);
@@ -103,7 +105,7 @@ public class SabApiController(
             case "fullstatus":
                 return new GetFullStatusController(
                     HttpContext, dbClient, configManager, queueManager, activeStreamTracker,
-                    healthCheckService);
+                    healthCheckService, mountStatusProvider);
             case "pause":
                 return new PauseResumeQueueController(
                     HttpContext, dbClient, queueManager, configManager, isPaused: true);
