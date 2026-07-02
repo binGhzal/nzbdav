@@ -44,7 +44,8 @@ public class DatabaseStoreRarFile(
             rarFile.ToDavMultipartFileMeta().FileParts,
             usenetClient,
             configManager.GetArticleBufferSize(),
-            requestedEndByte
+            requestedEndByte,
+            configManager.GetSparseSegmentCacheOptions()
         );
     }
 }

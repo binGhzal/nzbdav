@@ -11,6 +11,7 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Streams.Caching;
 using Serilog;
 
 namespace NzbWebDAV.Mount;
@@ -154,11 +155,8 @@ public sealed class DfsFileSystem(
         try
         {
             var handle = GetHandle(info);
-            if (handle.Stream.Position != offset)
-                handle.Stream.Seek(offset, SeekOrigin.Begin);
-
-            bytesWritten = handle.Stream
-                .ReadAsync(buf.AsMemory(0, buf.Length), handle.CancellationToken)
+            bytesWritten = handle.Reader
+                .ReadAtAsync(offset, buf.AsMemory(0, buf.Length), handle.CancellationToken)
                 .AsTask()
                 .GetAwaiter()
                 .GetResult();
@@ -242,7 +240,7 @@ public sealed class DfsFileSystem(
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<DavDatabaseContext>();
         var dbClient = new DavDatabaseClient(dbContext);
-        var stream = CreateStream(dbClient, item);
+        var reader = CreateRangeReader(dbClient, item);
         var connectionLimiter = new SemaphoreSlim(configManager.GetAdaptiveMaxStreamingConnections());
         var cts = new CancellationTokenSource();
         var priorityContext = new DownloadPriorityContext
@@ -263,7 +261,7 @@ public sealed class DfsFileSystem(
         var activeStreamLease = activeStreamTracker.Open($"dfs:{path}", "fuse");
 
         return new DfsOpenFileHandle(
-            stream,
+            reader,
             cts,
             priorityScope,
             timeoutScope,
@@ -271,48 +269,69 @@ public sealed class DfsFileSystem(
             activeStreamLease);
     }
 
-    private Stream CreateStream(DavDatabaseClient dbClient, DavItem item)
+    private IFileRangeReader CreateRangeReader(DavDatabaseClient dbClient, DavItem item)
     {
         return item.SubType switch
         {
-            DavItem.ItemSubType.NzbFile => CreateNzbStream(dbClient, item),
-            DavItem.ItemSubType.RarFile => CreateRarStream(dbClient, item),
-            DavItem.ItemSubType.MultipartFile => CreateMultipartStream(dbClient, item),
+            DavItem.ItemSubType.NzbFile => CreateNzbRangeReader(dbClient, item),
+            DavItem.ItemSubType.RarFile => CreateRarRangeReader(dbClient, item),
+            DavItem.ItemSubType.MultipartFile => CreateMultipartRangeReader(dbClient, item),
             _ => throw new FileNotFoundException($"Unsupported DFS file type {item.SubType} for {item.Id}")
         };
     }
 
-    private NzbFileStream CreateNzbStream(DavDatabaseClient dbClient, DavItem item)
+    private IFileRangeReader CreateNzbRangeReader(DavDatabaseClient dbClient, DavItem item)
     {
         var nzbFile = dbClient.GetDavNzbFileAsync(item).GetAwaiter().GetResult()
                       ?? throw new FileNotFoundException($"Could not find nzb file with id: {item.Id}");
-        return usenetClient.GetFileStream(
-            nzbFile.SegmentIds,
-            item.FileSize ?? 0,
-            configManager.GetArticleBufferSize());
+        return CreateSegmentRangeReader(nzbFile.SegmentIds, item.FileSize ?? 0);
     }
 
-    private DavMultipartFileStream CreateRarStream(DavDatabaseClient dbClient, DavItem item)
+    private IFileRangeReader CreateRarRangeReader(DavDatabaseClient dbClient, DavItem item)
     {
         var rarFile = dbClient.GetDavRarFileAsync(item).GetAwaiter().GetResult()
                       ?? throw new FileNotFoundException($"Could not find rar file with id: {item.Id}");
-        return new DavMultipartFileStream(
+        return new DavMultipartFileRangeReader(
             rarFile.ToDavMultipartFileMeta().FileParts,
             usenetClient,
-            configManager.GetArticleBufferSize());
+            configManager.GetArticleBufferSize(),
+            cacheOptions: configManager.GetSparseSegmentCacheOptions());
     }
 
-    private Stream CreateMultipartStream(DavDatabaseClient dbClient, DavItem item)
+    private IFileRangeReader CreateMultipartRangeReader(DavDatabaseClient dbClient, DavItem item)
     {
         var multipartFile = dbClient.GetDavMultipartFileAsync(item).GetAwaiter().GetResult()
                             ?? throw new FileNotFoundException($"Could not find multipart file with id: {item.Id}");
+        if (multipartFile.Metadata.AesParams == null)
+        {
+            return new DavMultipartFileRangeReader(
+                multipartFile.Metadata.FileParts,
+                usenetClient,
+                configManager.GetArticleBufferSize(),
+                cacheOptions: configManager.GetSparseSegmentCacheOptions());
+        }
+
         var packedStream = new DavMultipartFileStream(
             multipartFile.Metadata.FileParts,
             usenetClient,
+            configManager.GetArticleBufferSize(),
+            cacheOptions: configManager.GetSparseSegmentCacheOptions());
+        return new StreamFileRangeReader(new AesDecoderStream(packedStream, multipartFile.Metadata.AesParams));
+    }
+
+    private IFileRangeReader CreateSegmentRangeReader(string[] segmentIds, long length)
+    {
+        var inner = new SegmentFileRangeReader(
+            segmentIds,
+            length,
+            usenetClient,
             configManager.GetArticleBufferSize());
-        return multipartFile.Metadata.AesParams == null
-            ? packedStream
-            : new AesDecoderStream(packedStream, multipartFile.Metadata.AesParams);
+        var options = configManager.GetSparseSegmentCacheOptions();
+        if (!options.Enabled) return inner;
+        return SparseSegmentCacheManager.Shared.Open(
+            SparseSegmentCacheManager.CreateKey(segmentIds, length),
+            inner,
+            options);
     }
 
     private static DfsOpenFileHandle GetHandle(OpenedPathInfo info)
@@ -381,7 +400,7 @@ public sealed class DfsFileSystem(
     }
 
     private sealed class DfsOpenFileHandle(
-        Stream stream,
+        IFileRangeReader reader,
         CancellationTokenSource cancellationTokenSource,
         IDisposable priorityContext,
         IDisposable timeoutContext,
@@ -391,14 +410,14 @@ public sealed class DfsFileSystem(
     {
         private int _disposed;
 
-        public Stream Stream => stream;
+        public IFileRangeReader Reader => reader;
         public CancellationToken CancellationToken => cancellationTokenSource.Token;
 
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
             cancellationTokenSource.Cancel();
-            stream.Dispose();
+            if (reader is IDisposable disposable) disposable.Dispose();
             priorityContext.Dispose();
             timeoutContext.Dispose();
             connectionLimiter.Dispose();

@@ -48,7 +48,8 @@ public class DatabaseStoreMultipartFile(
             multipartFile.Metadata.FileParts,
             usenetClient,
             configManager.GetArticleBufferSize(),
-            requestedEndByte
+            requestedEndByte,
+            configManager.GetSparseSegmentCacheOptions()
         );
 
         return multipartFile.Metadata.AesParams != null

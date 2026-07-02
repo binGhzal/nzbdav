@@ -137,3 +137,5 @@ The 2026-07-02 production benchmark kept rclone as the accepted backend:
 * DFS correctness failed because one sequential read timed out.
 
 Do not switch production to `Mount:Type=dfs` from this result. Fix the DFS CPU regression and timeout first, then rerun the same filesystem-transport benchmark gate.
+
+Follow-up local remediation moved DFS reads onto direct `IFileRangeReader` handles and extended the sparse cache to RAR/multipart streams. This is not acceptance evidence by itself; rerun the production benchmark gate with the same rclone baseline inputs before changing the default mount backend.
