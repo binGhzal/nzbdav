@@ -14,6 +14,7 @@
 * move `/content` recovery snapshot writes off the database save hot path into a debounced background writer.
 * make adaptive connection limits use configured values as ceilings while reacting to provider, CPU, memory, and thread-pool pressure.
 * bound repair missing-segment metadata and article-cache pending-request metadata.
+* connect the frontend websocket bridge to the backend only while browser clients are subscribed.
 * stop forcing aggressive default thread-pool sizes; thread-pool minimum overrides are now opt-in via environment variables.
 * add a queue-selection database index for active queue worker scans.
 

@@ -4,10 +4,15 @@ import type { IncomingMessage } from 'http';
 
 function initializeWebsocketServer(wss: WebSocketServer) {
     // keep track of socket subscriptions
+    const clients = new Set<WebSocket>();
     const websockets = new Map<WebSocket, any>();
     const subscriptions = new Map<string, Set<WebSocket>>();
     const lastMessage = new Map<string, string>();
-    initializeWebsocketClient(subscriptions, lastMessage);
+    const backendWebsocket = initializeWebsocketClient(
+        subscriptions,
+        lastMessage,
+        () => clients.size > 0
+    );
 
     // authenticate new websocket sessions
     wss.on("connection", async (ws: WebSocket, request: IncomingMessage) => {
@@ -17,6 +22,9 @@ function initializeWebsocketServer(wss: WebSocketServer) {
                 ws.close(1008, "Unauthorized");
                 return;
             }
+
+            clients.add(ws);
+            backendWebsocket.ensureConnected();
 
             // handle topic subscription
             ws.onmessage = (event: WebSocket.MessageEvent) => {
@@ -39,6 +47,7 @@ function initializeWebsocketServer(wss: WebSocketServer) {
 
             // unsubscribe from topics
             ws.onclose = () => {
+                clients.delete(ws);
                 var topics = websockets.get(ws);
                 if (topics) {
                     websockets.delete(ws);
@@ -47,6 +56,7 @@ function initializeWebsocketServer(wss: WebSocketServer) {
                         if (topicSubscriptions) topicSubscriptions.delete(ws);
                     }
                 }
+                backendWebsocket.disconnectIfIdle();
             };
         } catch (error) {
             console.error("Error authenticating websocket session:", error);
@@ -56,29 +66,38 @@ function initializeWebsocketServer(wss: WebSocketServer) {
     });
 }
 
-export function initializeWebsocketClient(subscriptions: Map<string, Set<WebSocket>>, lastMessage: Map<string, string>) {
+export function initializeWebsocketClient(
+    subscriptions: Map<string, Set<WebSocket>>,
+    lastMessage: Map<string, string>,
+    shouldStayConnected: () => boolean
+) {
     let reconnectRetryDelay = 1000;
     let reconnectTimeout: NodeJS.Timeout | null = null;
+    let socket: WebSocket | null = null;
     const url = getBackendWebsocketUrl();
 
     function connect() {
-        const socket = new WebSocket(url);
+        if (!shouldStayConnected()) return;
+        if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
 
-        socket.on('error', (error: Error) => {
+        const newSocket = new WebSocket(url);
+        socket = newSocket;
+
+        newSocket.on('error', (error: Error) => {
             console.error('WebSocket error:', error.message);
         });
 
-        socket.onopen = () => {
+        newSocket.onopen = () => {
             console.info("WebSocket connected");
             if (reconnectTimeout) {
                 clearTimeout(reconnectTimeout);
                 reconnectTimeout = null;
             }
 
-            socket.send(Buffer.from(process.env.FRONTEND_BACKEND_API_KEY!, "utf-8"), { binary: false });
+            newSocket.send(Buffer.from(process.env.FRONTEND_BACKEND_API_KEY!, "utf-8"), { binary: false });
         };
 
-        socket.onmessage = (event: WebSocket.MessageEvent) => {
+        newSocket.onmessage = (event: WebSocket.MessageEvent) => {
             var rawMessage = event.data.toString();
             var topicMessage = JSON.parse(rawMessage);
             var [topic, message] = [topicMessage.Topic, topicMessage.Message];
@@ -92,13 +111,15 @@ export function initializeWebsocketClient(subscriptions: Map<string, Set<WebSock
             });
         };
 
-        socket.onclose = (event: WebSocket.CloseEvent) => {
+        newSocket.onclose = (event: WebSocket.CloseEvent) => {
             console.info(`WebSocket closed (code: ${event.code}, reason: ${event.reason})`);
-            scheduleReconnect();
+            if (socket === newSocket) socket = null;
+            if (shouldStayConnected()) scheduleReconnect();
         };
     }
 
     function scheduleReconnect() {
+        if (!shouldStayConnected()) return;
         if (reconnectTimeout) clearTimeout(reconnectTimeout);
 
         reconnectTimeout = setTimeout(() => {
@@ -107,7 +128,23 @@ export function initializeWebsocketClient(subscriptions: Map<string, Set<WebSock
         }, reconnectRetryDelay);
     }
 
-    connect();
+    function disconnectIfIdle() {
+        if (shouldStayConnected()) return;
+        if (reconnectTimeout) {
+            clearTimeout(reconnectTimeout);
+            reconnectTimeout = null;
+        }
+        if (socket) {
+            const socketToClose = socket;
+            socket = null;
+            socketToClose.close(1000, "No frontend websocket clients");
+        }
+    }
+
+    return {
+        ensureConnected: connect,
+        disconnectIfIdle,
+    };
 }
 
 function getBackendWebsocketUrl() {
