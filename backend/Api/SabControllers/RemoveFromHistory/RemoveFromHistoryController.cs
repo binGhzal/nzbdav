@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Api.SabControllers.RemoveFromHistory;
@@ -16,7 +17,19 @@ public class RemoveFromHistoryController(
 {
     public async Task<RemoveFromHistoryResponse> RemoveFromHistory(RemoveFromHistoryRequest request)
     {
-        await dbClient.RemoveHistoryItemsAsync(request.NzoIds, request.DeleteCompletedFiles, request.CancellationToken).ConfigureAwait(false);
+        var nzoIds = request.RemoveAll
+            ? await dbClient.Ctx.HistoryItems
+                .Where(x => !request.FailedOnly || x.DownloadStatus == HistoryItem.DownloadStatusOption.Failed)
+                .Select(x => x.Id)
+                .ToListAsync(request.CancellationToken)
+                .ConfigureAwait(false)
+            : request.NzoIds;
+        nzoIds = nzoIds.Distinct().ToList();
+
+        if (nzoIds.Count == 0)
+            return new RemoveFromHistoryResponse() { Status = true };
+
+        await dbClient.RemoveHistoryItemsAsync(nzoIds, request.DeleteCompletedFiles, request.CancellationToken).ConfigureAwait(false);
         try
         {
             await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
@@ -25,7 +38,7 @@ public class RemoveFromHistoryController(
         {
             // Item already removed by a prior call; SAB API delete is idempotent.
         }
-        _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemRemoved, string.Join(",", request.NzoIds));
+        _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemRemoved, string.Join(",", nzoIds));
         return new RemoveFromHistoryResponse() { Status = true };
     }
 

@@ -89,7 +89,8 @@ public sealed class ContentIndexRecoveryService(ConfigManager configManager) : I
             .Where(x => currentItemsById.ContainsKey(x.Id) || missingItemIds.Contains(x.Id))
             .ToDictionary(x => x.Id);
         var effectiveFileItems = effectiveItemsById.Values
-            .Where(x => x.Type is DavItem.ItemType.NzbFile or DavItem.ItemType.RarFile or DavItem.ItemType.MultipartFile)
+            .Where(x => x.Type == DavItem.ItemType.UsenetFile)
+            .Where(x => x.SubType is DavItem.ItemSubType.NzbFile or DavItem.ItemSubType.RarFile or DavItem.ItemSubType.MultipartFile)
             .ToArray();
         var effectiveIds = effectiveFileItems.Select(x => x.Id).ToHashSet();
 
@@ -116,15 +117,15 @@ public sealed class ContentIndexRecoveryService(ConfigManager configManager) : I
         {
             MissingItemIds = missingItemIds,
             MissingNzbFileIds = effectiveFileItems
-                .Where(x => x.Type == DavItem.ItemType.NzbFile && !currentNzbIds.Contains(x.Id))
+                .Where(x => x.SubType == DavItem.ItemSubType.NzbFile && !currentNzbIds.Contains(x.Id))
                 .Select(x => x.Id)
                 .ToHashSet(),
             MissingRarFileIds = effectiveFileItems
-                .Where(x => x.Type == DavItem.ItemType.RarFile && !currentRarIds.Contains(x.Id))
+                .Where(x => x.SubType == DavItem.ItemSubType.RarFile && !currentRarIds.Contains(x.Id))
                 .Select(x => x.Id)
                 .ToHashSet(),
             MissingMultipartFileIds = effectiveFileItems
-                .Where(x => x.Type == DavItem.ItemType.MultipartFile && !currentMultipartIds.Contains(x.Id))
+                .Where(x => x.SubType == DavItem.ItemSubType.MultipartFile && !currentMultipartIds.Contains(x.Id))
                 .Select(x => x.Id)
                 .ToHashSet(),
         };

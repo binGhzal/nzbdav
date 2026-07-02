@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 
 namespace NzbWebDAV.Api.SabControllers.GetQueue;
@@ -8,6 +9,10 @@ public class GetQueueRequest
     public int Start { get; init; } = 0;
     public int Limit { get; init; } = int.MaxValue;
     public string? Category { get; init; }
+    public HashSet<Guid> NzoIds { get; init; } = [];
+    public string? Search { get; init; }
+    public HashSet<QueuePriorityFilter> Priorities { get; init; } = [];
+    public HashSet<string> Statuses { get; init; } = [];
     public CancellationToken CancellationToken { get; init; }
 
 
@@ -15,21 +20,70 @@ public class GetQueueRequest
     {
         var startParam = context.GetRequestParam("start");
         var limitParam = context.GetRequestParam("limit");
-        Category = context.GetRequestParam("category");
+        var nzoIdsParam = context.GetRequestParam("nzo_ids");
+        Category = context.GetRequestParam("category") ?? context.GetRequestParam("cat");
+        Search = context.GetRequestParam("search");
+        Priorities = ParsePriorities(context.GetRequestParam("priority"));
+        Statuses = ParseStatuses(context.GetRequestParam("status"));
         CancellationToken = context.RequestAborted;
 
         if (startParam is not null)
         {
             var isValidStartParam = int.TryParse(startParam, out int start);
             if (!isValidStartParam) throw new BadHttpRequestException("Invalid start parameter");
-            Start = start;
+            Start = Math.Max(0, start);
         }
 
         if (limitParam is not null)
         {
             var isValidLimit = int.TryParse(limitParam, out int limit);
             if (!isValidLimit) throw new BadHttpRequestException("Invalid limit parameter");
-            Limit = limit;
+            Limit = Math.Max(0, limit);
         }
+
+        if (nzoIdsParam is not null)
+        {
+            NzoIds = nzoIdsParam
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(Guid.Parse)
+                .ToHashSet();
+        }
+    }
+
+    private static HashSet<QueuePriorityFilter> ParsePriorities(string? priorityParam)
+    {
+        if (string.IsNullOrWhiteSpace(priorityParam)) return [];
+
+        return priorityParam
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => x switch
+            {
+                "-2" or "Paused" => QueuePriorityFilter.Paused,
+                "-1" or "Low" => QueuePriorityFilter.Low,
+                "0" or "Normal" => QueuePriorityFilter.Normal,
+                "1" or "High" => QueuePriorityFilter.High,
+                "2" or "Force" => QueuePriorityFilter.Force,
+                _ => throw new BadHttpRequestException("Invalid priority parameter")
+            })
+            .ToHashSet();
+    }
+
+    private static HashSet<string> ParseStatuses(string? statusParam)
+    {
+        if (string.IsNullOrWhiteSpace(statusParam)) return [];
+
+        return statusParam
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => x.ToLowerInvariant())
+            .ToHashSet();
+    }
+
+    public enum QueuePriorityFilter
+    {
+        Paused = QueueItem.PriorityOption.Paused,
+        Low = QueueItem.PriorityOption.Low,
+        Normal = QueueItem.PriorityOption.Normal,
+        High = QueueItem.PriorityOption.High,
+        Force = QueueItem.PriorityOption.Force
     }
 }

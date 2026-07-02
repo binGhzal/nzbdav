@@ -233,6 +233,7 @@ public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) 
         var enabled = providers
             .Where(x => x.ProviderType != ProviderType.Disabled)
             .OrderBy(x => x.ProviderType)
+            .ThenBy(x => x.ProviderPriority)
             .ThenByDescending(x => x.AvailableConnections)
             .ToList();
 

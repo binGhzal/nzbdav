@@ -101,6 +101,7 @@ public class ConfigManager
     {
         return GetConfigValue("webdav.user")
                ?? EnvironmentUtil.GetVariable("WEBDAV_USER")
+               ?? EnvironmentUtil.GetVariable("NZBDAV_ADMIN_USERNAME")
                ?? "admin";
     }
 
@@ -108,7 +109,8 @@ public class ConfigManager
     {
         var hashedPass = GetConfigValue("webdav.pass");
         if (hashedPass != null) return hashedPass;
-        var pass = EnvironmentUtil.GetVariable("WEBDAV_PASSWORD");
+        var pass = EnvironmentUtil.GetVariable("WEBDAV_PASSWORD")
+                   ?? EnvironmentUtil.GetVariable("NZBDAV_ADMIN_PASSWORD");
         if (pass != null) return PasswordUtil.Hash(pass);
         return null;
     }
@@ -140,12 +142,86 @@ public class ConfigManager
         );
     }
 
+    public bool IsQueuePaused()
+    {
+        var defaultValue = false;
+        var configValue = GetConfigValue("queue.paused");
+        return configValue != null ? bool.Parse(configValue) : defaultValue;
+    }
+
+    public bool IsAdaptiveConnectionCountEnabled()
+    {
+        var defaultValue = true;
+        var configValue = GetConfigValue("usenet.adaptive-connections-enabled");
+        return configValue != null ? bool.Parse(configValue) : defaultValue;
+    }
+
+    public int GetAdaptiveMaxDownloadConnections()
+    {
+        var maxDownloadConnections = Math.Max(1, GetMaxDownloadConnections());
+        return IsAdaptiveConnectionCountEnabled()
+            ? ApplyMemoryPressureLimit(maxDownloadConnections)
+            : maxDownloadConnections;
+    }
+
+    public int GetMaxStreamingConnections()
+    {
+        var configValue = int.Parse(GetConfigValue("usenet.max-streaming-connections") ?? "0");
+        if (configValue > 0) return Math.Clamp(configValue, 1, 64);
+
+        var articleBufferSize = Math.Max(1, GetArticleBufferSize());
+        return Math.Min(articleBufferSize, GetAdaptiveMaxDownloadConnections());
+    }
+
+    public int GetMaxConcurrentQueueDownloads()
+    {
+        var configValue = int.Parse(GetConfigValue("queue.max-concurrent-downloads") ?? "0");
+        if (configValue > 0) return Math.Clamp(configValue, 1, 16);
+
+        var downloadConnections = Math.Max(1, GetMaxDownloadConnections());
+        return Math.Clamp(downloadConnections / 8 + 1, 1, 4);
+    }
+
+    public int GetAdaptiveMaxConcurrentQueueDownloads()
+    {
+        var maxConcurrentQueueDownloads = GetMaxConcurrentQueueDownloads();
+        return IsAdaptiveConnectionCountEnabled()
+            ? ApplyMemoryPressureLimit(maxConcurrentQueueDownloads)
+            : maxConcurrentQueueDownloads;
+    }
+
+    public long GetArticleCacheMaxBytes()
+    {
+        var megabytes = long.Parse(
+            GetConfigValue("usenet.article-cache-max-megabytes")
+            ?? "256"
+        );
+        return Math.Max(1, megabytes) * 1024 * 1024;
+    }
+
     public int GetArticleBufferSize()
     {
         return int.Parse(
             GetConfigValue("usenet.article-buffer-size")
             ?? "40"
         );
+    }
+
+    private static int ApplyMemoryPressureLimit(int configuredLimit)
+    {
+        var memoryInfo = GC.GetGCMemoryInfo();
+        var thresholdBytes = memoryInfo.HighMemoryLoadThresholdBytes;
+        if (thresholdBytes <= 0) return configuredLimit;
+
+        var pressure = memoryInfo.MemoryLoadBytes / (double)thresholdBytes;
+        var multiplier = pressure switch
+        {
+            >= 0.95 => 0.25,
+            >= 0.90 => 0.50,
+            >= 0.80 => 0.75,
+            _ => 1.00
+        };
+        return Math.Max(1, (int)Math.Floor(configuredLimit * multiplier));
     }
 
     public SemaphorePriorityOdds GetStreamingPriority()
@@ -180,6 +256,14 @@ public class ConfigManager
         );
     }
 
+    public int GetAdaptiveHealthCheckConcurrency()
+    {
+        var healthCheckConcurrency = Math.Max(1, GetHealthCheckConcurrency());
+        return IsAdaptiveConnectionCountEnabled()
+            ? ApplyMemoryPressureLimit(healthCheckConcurrency)
+            : healthCheckConcurrency;
+    }
+
     public int GetConnectionIdleTimeoutSeconds()
     {
         return int.Parse(
@@ -212,7 +296,7 @@ public class ConfigManager
     public bool GetNntpPipeliningEnabled()
     {
         var defaultValue = true;
-        var configValue = StringUtil.EmptyToNull(GetConfigValue("usenet.nntp-pipelining.enabled"));
+        var configValue = GetConfigValue("usenet.nntp-pipelining.enabled");
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
 
@@ -225,7 +309,7 @@ public class ConfigManager
     public int GetNntpPipeliningDepth()
     {
         var defaultValue = 50;
-        var configValue = StringUtil.EmptyToNull(GetConfigValue("usenet.nntp-pipelining.depth"));
+        var configValue = GetConfigValue("usenet.nntp-pipelining.depth");
         var depth = configValue != null ? int.Parse(configValue) : defaultValue;
         return Math.Clamp(depth, 1, 150);
     }
@@ -263,7 +347,11 @@ public class ConfigManager
     public UsenetProviderConfig GetUsenetProviderConfig()
     {
         var defaultValue = new UsenetProviderConfig();
-        return GetConfigValue<UsenetProviderConfig>("usenet.providers") ?? defaultValue;
+        var configValue = GetConfigValue<UsenetProviderConfig>("usenet.providers");
+        if (configValue != null) return configValue;
+
+        var envValue = EnvironmentUtil.GetVariable("NZBDAV_USENET_PROVIDERS_JSON");
+        return envValue == null ? defaultValue : JsonSerializer.Deserialize<UsenetProviderConfig>(envValue) ?? defaultValue;
     }
 
     public string GetDuplicateNzbBehavior()

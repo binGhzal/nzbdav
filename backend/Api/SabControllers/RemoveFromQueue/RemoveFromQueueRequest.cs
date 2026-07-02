@@ -9,6 +9,7 @@ namespace NzbWebDAV.Api.SabControllers.RemoveFromQueue;
 public class RemoveFromQueueRequest()
 {
     public List<Guid> NzoIds { get; init; } = [];
+    public bool RemoveAll { get; init; }
     public CancellationToken CancellationToken { get; init; }
 
     public static async Task<RemoveFromQueueRequest> New(HttpContext httpContext)
@@ -19,6 +20,7 @@ public class RemoveFromQueueRequest()
             NzoIds = NzoIdsFromQueryParam(httpContext)
                 .Concat(await NzoIdsFromRequestBody(httpContext, cancellationToken).ConfigureAwait(false))
                 .ToList(),
+            RemoveAll = IsRemoveAll(httpContext),
             CancellationToken = cancellationToken
         };
     }
@@ -30,6 +32,13 @@ public class RemoveFromQueueRequest()
             .Select(TryParseGuid)
             .Where(x => x.HasValue)
             .Select(x => x!.Value);
+    }
+
+    private static bool IsRemoveAll(HttpContext httpContext)
+    {
+        return httpContext.GetQueryParamValues("value")
+            .SelectMany(x => x.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Any(x => x.Equals("all", StringComparison.OrdinalIgnoreCase));
     }
 
     private static async Task<List<Guid>> NzoIdsFromRequestBody(HttpContext httpContext, CancellationToken ct)

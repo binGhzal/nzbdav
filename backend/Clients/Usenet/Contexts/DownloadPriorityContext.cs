@@ -5,4 +5,5 @@ namespace NzbWebDAV.Clients.Usenet.Contexts;
 public record DownloadPriorityContext
 {
     public required SemaphorePriority Priority { get; init; }
+    public SemaphoreSlim? ConnectionLimiter { get; init; }
 }

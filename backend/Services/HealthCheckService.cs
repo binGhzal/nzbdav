@@ -1,5 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
+using NzbWebDAV.Clients.RadarrSonarr;
+using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -19,11 +21,14 @@ namespace NzbWebDAV.Services;
 /// </summary>
 public class HealthCheckService : BackgroundService
 {
+    private static readonly TimeSpan AutoRepairRetryDelay = TimeSpan.FromHours(6);
+    private static readonly TimeSpan MissingSegmentCacheTtl = TimeSpan.FromHours(6);
+
     private readonly ConfigManager _configManager;
     private readonly INntpClient _usenetClient;
     private readonly WebsocketManager _websocketManager;
 
-    private static readonly HashSet<string> _missingSegmentIds = [];
+    private static readonly Dictionary<string, DateTimeOffset> _missingSegmentIds = [];
 
     public HealthCheckService
     (
@@ -58,7 +63,7 @@ public class HealthCheckService : BackgroundService
                 }
 
                 // get concurrency
-                var concurrency = _configManager.GetHealthCheckConcurrency();
+                var concurrency = _configManager.GetAdaptiveHealthCheckConcurrency();
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
                 // get the davItem to health-check
@@ -139,6 +144,7 @@ public class HealthCheckService : BackgroundService
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
 
             // update the database
+            ClearCachedMissingSegmentIds(segments);
             davItem.LastHealthCheck = DateTimeOffset.UtcNow;
             davItem.NextHealthCheck = davItem.ReleaseDate + 2 * (davItem.LastHealthCheck - davItem.ReleaseDate);
             dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
@@ -160,7 +166,7 @@ public class HealthCheckService : BackgroundService
             if (FilenameUtil.IsImportantFileType(davItem.Name))
                 lock (_missingSegmentIds)
                     foreach (var segmentId in NzbSegmentIdSet.Decode(e.SegmentId))
-                        _missingSegmentIds.Add(segmentId);
+                        _missingSegmentIds[segmentId] = DateTimeOffset.UtcNow;
 
             // when usenet article is missing, perform repairs
             await Repair(davItem, dbClient, ct).ConfigureAwait(false);
@@ -254,61 +260,63 @@ public class HealthCheckService : BackgroundService
             // if the unhealthy item is linked within the organized media-library
             // then we must find the corresponding arr instance and trigger a new search.
             var linkType = symlinkOrStrmPath.ToLower().EndsWith("strm") ? "strm-file" : "symlink";
+            var arrErrors = new List<string>();
+            var matchingArrHosts = new List<string>();
             foreach (var arrClient in _configManager.GetArrConfig().GetArrClients())
             {
-                var rootFolders = await arrClient.GetRootFolders().ConfigureAwait(false);
-                if (!rootFolders.Any(x => symlinkOrStrmPath.StartsWith(x.Path!))) continue;
+                var rootFolders = await GetArrRootFolders(arrClient, arrErrors).ConfigureAwait(false);
+                if (!rootFolders.Any(x => IsPathInsideRoot(symlinkOrStrmPath, x.Path))) continue;
+                matchingArrHosts.Add(arrClient.Host);
 
                 // if we found a corresponding arr instance,
                 // then remove and search.
-                if (await arrClient.RemoveAndSearch(symlinkOrStrmPath).ConfigureAwait(false))
+                try
                 {
-                    dbClient.Ctx.Items.Remove(davItem);
-                    dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+                    if (await arrClient.RemoveAndSearch(symlinkOrStrmPath).ConfigureAwait(false))
                     {
-                        Id = Guid.NewGuid(),
-                        DavItemId = davItem.Id,
-                        Path = davItem.Path,
-                        CreatedAt = DateTimeOffset.UtcNow,
-                        Result = HealthCheckResult.HealthResult.Unhealthy,
-                        RepairStatus = HealthCheckResult.RepairAction.Repaired,
-                        Message = string.Join(" ", [
-                            "File had missing articles.",
-                            $"Corresponding {linkType} found within Library Dir.",
-                            "Triggered new Arr search."
-                        ])
-                    }));
-                    await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
-                    return;
+                        dbClient.Ctx.Items.Remove(davItem);
+                        dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+                        {
+                            Id = Guid.NewGuid(),
+                            DavItemId = davItem.Id,
+                            Path = davItem.Path,
+                            CreatedAt = DateTimeOffset.UtcNow,
+                            Result = HealthCheckResult.HealthResult.Unhealthy,
+                            RepairStatus = HealthCheckResult.RepairAction.Repaired,
+                            Message = string.Join(" ", [
+                                "File had missing articles.",
+                                $"Corresponding {linkType} found within Library Dir.",
+                                $"Triggered new Arr search through `{arrClient.Host}`."
+                            ])
+                        }));
+                        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+                        return;
+                    }
                 }
-
-                // if we could not find corresponding media-item to remove-and-search
-                // within the found arr instance, then break out of this loop so that
-                // we can fall back to the behavior below of deleting both the link-file
-                // and the dav-item.
-                break;
+                catch (Exception e)
+                {
+                    arrErrors.Add($"`{arrClient.Host}`: {e.Message}");
+                }
             }
 
-            // if we could not find a corresponding arr instance
-            // then we can delete both the item and the link-file.
-            await Task.Run(() => File.Delete(symlinkOrStrmPath)).ConfigureAwait(false);
-            dbClient.Ctx.Items.Remove(davItem);
-            dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
-            {
-                Id = Guid.NewGuid(),
-                DavItemId = davItem.Id,
-                Path = davItem.Path,
-                CreatedAt = DateTimeOffset.UtcNow,
-                Result = HealthCheckResult.HealthResult.Unhealthy,
-                RepairStatus = HealthCheckResult.RepairAction.Deleted,
-                Message = string.Join(" ", [
+            var arrErrorText = arrErrors.Count == 0
+                ? ""
+                : $" Arr errors: {string.Join(" ", arrErrors)}";
+            var repairFailureMessage = matchingArrHosts.Count > 0
+                ? $"Found matching Arr root folder in {string.Join(", ", matchingArrHosts.Select(x => $"`{x}`"))}, but no instance matched the link to a tracked media item."
+                : "Could not find a configured Arr root folder for this link.";
+            await MarkAutoRepairNeedsAction(
+                davItem,
+                dbClient,
+                string.Join(" ", [
                     "File had missing articles.",
                     $"Corresponding {linkType} found within Library Dir.",
-                    "Could not find corresponding Radarr/Sonarr media-item to trigger a new search.",
-                    $"Deleted the webdav-file and {linkType}."
-                ])
-            }));
-            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+                    repairFailureMessage,
+                    "Left the webdav-file and link in place and will retry automatic repair.",
+                    arrErrorText
+                ]),
+                ct
+            ).ConfigureAwait(false);
         }
         catch (Exception e)
         {
@@ -331,6 +339,69 @@ public class HealthCheckService : BackgroundService
         }
     }
 
+    private static async Task<List<ArrRootFolder>> GetArrRootFolders
+    (
+        ArrClient arrClient,
+        List<string> errors
+    )
+    {
+        try
+        {
+            return await arrClient.GetRootFolders().ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            errors.Add($"`{arrClient.Host}`: {e.Message}");
+            return [];
+        }
+    }
+
+    private async Task MarkAutoRepairNeedsAction
+    (
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        string message,
+        CancellationToken ct
+    )
+    {
+        var utcNow = DateTimeOffset.UtcNow;
+        davItem.LastHealthCheck = utcNow;
+        davItem.NextHealthCheck = utcNow + AutoRepairRetryDelay;
+        dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = davItem.Id,
+            Path = davItem.Path,
+            CreatedAt = utcNow,
+            Result = HealthCheckResult.HealthResult.Unhealthy,
+            RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
+            Message = message
+        }));
+        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    public static bool IsPathInsideRoot(string path, string? rootPath)
+    {
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(rootPath)) return false;
+
+        var normalizedPath = NormalizePathForRootMatch(path);
+        var normalizedRoot = NormalizePathForRootMatch(rootPath);
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        if (normalizedRoot == "/") return normalizedPath.StartsWith("/", comparison);
+
+        return normalizedPath.Equals(normalizedRoot, comparison)
+               || normalizedPath.StartsWith($"{normalizedRoot}/", comparison);
+    }
+
+    private static string NormalizePathForRootMatch(string path)
+    {
+        var normalized = path.Replace('\\', '/').TrimEnd('/');
+        return normalized.Length == 0 ? "/" : normalized;
+    }
+
     private HealthCheckResult SendStatus(HealthCheckResult result)
     {
         _ = _websocketManager.SendMessage
@@ -345,9 +416,29 @@ public class HealthCheckService : BackgroundService
     {
         lock (_missingSegmentIds)
         {
+            PruneExpiredMissingSegmentIds(DateTimeOffset.UtcNow);
             foreach (var segmentId in segmentIds)
-                if (NzbSegmentIdSet.Decode(segmentId).All(candidateSegmentId => _missingSegmentIds.Contains(candidateSegmentId)))
+                if (NzbSegmentIdSet.Decode(segmentId).All(candidateSegmentId => _missingSegmentIds.ContainsKey(candidateSegmentId)))
                     throw new UsenetArticleNotFoundException(segmentId);
         }
+    }
+
+    private static void ClearCachedMissingSegmentIds(IEnumerable<string> segmentIds)
+    {
+        lock (_missingSegmentIds)
+        {
+            foreach (var segmentId in segmentIds.SelectMany(NzbSegmentIdSet.Decode))
+                _missingSegmentIds.Remove(segmentId);
+        }
+    }
+
+    private static void PruneExpiredMissingSegmentIds(DateTimeOffset utcNow)
+    {
+        var expiredSegmentIds = _missingSegmentIds
+            .Where(x => utcNow - x.Value > MissingSegmentCacheTtl)
+            .Select(x => x.Key)
+            .ToList();
+        foreach (var segmentId in expiredSegmentIds)
+            _missingSegmentIds.Remove(segmentId);
     }
 }

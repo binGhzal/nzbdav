@@ -120,15 +120,21 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     // queue
     public async Task<(QueueItem? queueItem, Stream? queueNzbStream)> GetTopQueueItem
     (
+        IReadOnlyCollection<Guid>? excludeIds = null,
         CancellationToken ct = default
     )
     {
         // read queue item from database
         var nowTime = DateTime.Now;
-        var queueItem = await Ctx.QueueItems
+        var queueItems = Ctx.QueueItems.AsQueryable();
+        if (excludeIds is { Count: > 0 })
+            queueItems = queueItems.Where(q => !excludeIds.Contains(q.Id));
+
+        var queueItem = await queueItems
             .OrderByDescending(q => q.Priority)
             .ThenBy(q => q.CreatedAt)
             .Where(q => q.PauseUntil == null || nowTime >= q.PauseUntil)
+            .Where(q => q.Priority != QueueItem.PriorityOption.Paused)
             .Skip(0)
             .Take(1)
             .FirstOrDefaultAsync(ct).ConfigureAwait(false);
@@ -162,9 +168,26 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         CancellationToken ct = default
     )
     {
-        var queueItems = category != null
-            ? Ctx.QueueItems.Where(q => q.Category == category)
-            : Ctx.QueueItems;
+        return GetQueueItems(category, null, null, null, null, null, start, limit, ct);
+    }
+
+    public Task<QueueItem[]> GetQueueItems
+    (
+        string? category,
+        IReadOnlyCollection<Guid>? excludeIds = null,
+        IReadOnlyCollection<Guid>? nzoIds = null,
+        string? search = null,
+        IReadOnlyCollection<QueueItem.PriorityOption>? priorities = null,
+        IReadOnlyCollection<string>? statuses = null,
+        int start = 0,
+        int limit = int.MaxValue,
+        CancellationToken ct = default
+    )
+    {
+        var queueItems = GetQueueItemsQuery(category, nzoIds, search, priorities, statuses);
+        if (excludeIds is { Count: > 0 })
+            queueItems = queueItems.Where(q => !excludeIds.Contains(q.Id));
+
         return queueItems
             .OrderByDescending(q => q.Priority)
             .ThenBy(q => q.CreatedAt)
@@ -175,9 +198,23 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
 
     public Task<int> GetQueueItemsCount(string? category, CancellationToken ct = default)
     {
-        var queueItems = category != null
-            ? Ctx.QueueItems.Where(q => q.Category == category)
-            : Ctx.QueueItems;
+        return GetQueueItemsCount(category, null, null, null, null, ct);
+    }
+
+    public Task<int> GetQueueItemsCount
+    (
+        string? category,
+        IReadOnlyCollection<Guid>? nzoIds,
+        string? search,
+        IReadOnlyCollection<QueueItem.PriorityOption>? priorities,
+        IReadOnlyCollection<string>? statuses,
+        CancellationToken ct = default,
+        IReadOnlyCollection<Guid>? excludeIds = null
+    )
+    {
+        var queueItems = GetQueueItemsQuery(category, nzoIds, search, priorities, statuses);
+        if (excludeIds is { Count: > 0 })
+            queueItems = queueItems.Where(q => !excludeIds.Contains(q.Id));
         return queueItems.CountAsync(cancellationToken: ct);
     }
 
@@ -186,6 +223,76 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         await Ctx.QueueItems
             .Where(x => ids.Contains(x.Id))
             .ExecuteDeleteAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task UpdateQueueItemsPriorityAsync
+    (
+        List<Guid> ids,
+        QueueItem.PriorityOption priority,
+        CancellationToken ct = default
+    )
+    {
+        await Ctx.QueueItems
+            .Where(x => ids.Contains(x.Id))
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(x => x.Priority, priority),
+                cancellationToken: ct)
+            .ConfigureAwait(false);
+    }
+
+    public async Task UpdateQueueItemsPostProcessingAsync
+    (
+        List<Guid> ids,
+        QueueItem.PostProcessingOption postProcessing,
+        CancellationToken ct = default
+    )
+    {
+        await Ctx.QueueItems
+            .Where(x => ids.Contains(x.Id))
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(x => x.PostProcessing, postProcessing),
+                cancellationToken: ct)
+            .ConfigureAwait(false);
+    }
+
+    public Task<List<Guid>> GetAllQueueItemIdsAsync(CancellationToken ct = default)
+    {
+        return Ctx.QueueItems
+            .Select(x => x.Id)
+            .ToListAsync(ct);
+    }
+
+    private IQueryable<QueueItem> GetQueueItemsQuery
+    (
+        string? category,
+        IReadOnlyCollection<Guid>? nzoIds,
+        string? search,
+        IReadOnlyCollection<QueueItem.PriorityOption>? priorities,
+        IReadOnlyCollection<string>? statuses
+    )
+    {
+        var queueItems = category != null
+            ? Ctx.QueueItems.Where(q => q.Category == category)
+            : Ctx.QueueItems;
+
+        if (nzoIds is { Count: > 0 })
+            queueItems = queueItems.Where(q => nzoIds.Contains(q.Id));
+        if (!string.IsNullOrWhiteSpace(search))
+            queueItems = queueItems.Where(q => q.JobName.Contains(search) || q.FileName.Contains(search));
+        if (priorities is { Count: > 0 })
+            queueItems = queueItems.Where(q => priorities.Contains(q.Priority));
+        if (statuses is { Count: > 0 })
+        {
+            var includePaused = statuses.Contains("paused");
+            var includeDownloading = statuses.Contains("downloading");
+            var includeQueued = statuses.Contains("queued");
+            queueItems = queueItems.Where(q =>
+                includePaused && q.Priority == QueueItem.PriorityOption.Paused
+                || includeDownloading && q.Priority != QueueItem.PriorityOption.Paused
+                || includeQueued && q.Priority != QueueItem.PriorityOption.Paused);
+        }
+
+        return queueItems;
     }
 
     // history

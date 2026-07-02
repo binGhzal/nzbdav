@@ -1,8 +1,10 @@
 ﻿using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Config;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Services;
 
 namespace NzbWebDAV.WebDav.Base;
 
@@ -12,7 +14,12 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
 
     public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
     {
-        var downloadPriorityContext = new DownloadPriorityContext() { Priority = SemaphorePriority.High };
+        var connectionLimiter = new SemaphoreSlim(configManager.GetMaxStreamingConnections());
+        var downloadPriorityContext = new DownloadPriorityContext()
+        {
+            Priority = SemaphorePriority.High,
+            ConnectionLimiter = connectionLimiter
+        };
         var scopedDownloadPriorityContext = cancellationToken.SetContext(downloadPriorityContext);
 
         var streamingTimeoutContext = new StreamingTimeoutContext
@@ -21,11 +28,17 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
             MaxRetries = configManager.GetStreamingSegmentRetries()
         };
         var scopedStreamingTimeoutContext = cancellationToken.SetContext(streamingTimeoutContext);
+        var activeStreamTracker = context.RequestServices.GetRequiredService<ActiveStreamTracker>();
+        var activeStreamLease = activeStreamTracker.Open(
+            context.Request.Path.Value,
+            context.Request.Headers.UserAgent.ToString());
 
         context.Response.OnCompleted(() =>
         {
             scopedDownloadPriorityContext.Dispose();
             scopedStreamingTimeoutContext.Dispose();
+            connectionLimiter.Dispose();
+            activeStreamLease.Dispose();
             return Task.CompletedTask;
         });
 

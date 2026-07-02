@@ -23,6 +23,7 @@ public class AddUrlRequest() : AddFileRequest
             ContentType = nzbFile.ContentType,
             NzbFileStream = nzbFile.FileStream,
             Category = context.GetRequestParam("cat") ?? configManager.GetManualUploadCategory(),
+            ArchivePassword = GetArchivePassword(context),
             Priority = MapPriorityOption(context.GetRequestParam("priority")),
             PostProcessing = MapPostProcessingOption(context.GetRequestParam("pp")),
             CancellationToken = context.RequestAborted

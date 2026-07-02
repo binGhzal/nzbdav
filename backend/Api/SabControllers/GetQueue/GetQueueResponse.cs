@@ -11,14 +11,51 @@ public class GetQueueResponse : SabBaseResponse
 
     public class QueueObject
     {
+        [JsonPropertyName("status")]
+        public string Status { get; init; } = "Idle";
+
         [JsonPropertyName("paused")]
         public bool Paused { get; init; } = false;
+
+        [JsonPropertyName("paused_all")]
+        public bool PausedAll { get; init; } = false;
 
         [JsonPropertyName("slots")]
         public List<QueueSlot> Slots { get; init; } = new();
 
         [JsonPropertyName("noofslots")]
         public int TotalCount { get; set; }
+
+        [JsonPropertyName("noofslots_total")]
+        public int TotalCountAll { get; set; }
+
+        [JsonPropertyName("start")]
+        public int Start { get; init; }
+
+        [JsonPropertyName("limit")]
+        public int Limit { get; init; }
+
+        [JsonPropertyName("mb")]
+        public string SizeInMB { get; init; } = "0.00";
+
+        [JsonPropertyName("mbleft")]
+        public string SizeLeftInMB { get; init; } = "0.00";
+
+        [JsonPropertyName("size")]
+        public string Size { get; init; } = "0.00 MB";
+
+        [JsonPropertyName("sizeleft")]
+        public string SizeLeft { get; init; } = "0.00 MB";
+
+        [JsonPropertyName("timeleft")]
+        [JsonConverter(typeof(SabnzbdQueueTimeConverter))]
+        public TimeSpan TimeLeft { get; init; } = TimeSpan.Zero;
+
+        [JsonPropertyName("speed")]
+        public string Speed { get; init; } = "0 ";
+
+        [JsonPropertyName("kbpersec")]
+        public string KbPerSec { get; init; } = "0.00";
     }
 
     public class QueueSlot
@@ -81,7 +118,7 @@ public class GetQueueResponse : SabBaseResponse
             };
         }
 
-        private static string FormatSizeMB(long bytes)
+        public static string FormatSizeMB(long bytes)
         {
             var megabytes = bytes / (1024.0 * 1024.0);
             return megabytes.ToString("0.00");

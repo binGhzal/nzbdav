@@ -28,6 +28,8 @@ class Program
 {
     static async Task Main(string[] args)
     {
+        EnvironmentUtil.LoadDotEnvFile();
+
         // Update thread-pool
         var coreCount = Environment.ProcessorCount;
         var minThreads = Math.Max(coreCount * 2, 50); // 2x cores, minimum 50
@@ -89,6 +91,7 @@ class Program
             .AddWebdavBasicAuthentication(configManager)
             .AddSingleton(configManager)
             .AddSingleton(websocketManager)
+            .AddSingleton<ActiveStreamTracker>()
             .AddSingleton<UsenetStreamingClient>()
             .AddSingleton<QueueManager>()
             .AddHostedService<ContentIndexRecoveryService>()

@@ -11,6 +11,7 @@ public class AddFileRequest()
     public string? ContentType { get; init; }
     public Stream NzbFileStream { get; init; }
     public string Category { get; init; }
+    public string? ArchivePassword { get; init; }
     public QueueItem.PriorityOption Priority { get; init; }
     public QueueItem.PostProcessingOption PostProcessing { get; init; }
     public DateTime? PauseUntil { get; init; }
@@ -32,10 +33,20 @@ public class AddFileRequest()
             ContentType = file.ContentType,
             NzbFileStream = file.OpenReadStream(),
             Category = context.GetRequestParam("cat") ?? configManager.GetManualUploadCategory(),
+            ArchivePassword = GetArchivePassword(context),
             Priority = MapPriorityOption(context.GetRequestParam("priority")),
             PostProcessing = MapPostProcessingOption(context.GetRequestParam("pp")),
             CancellationToken = context.RequestAborted
         };
+    }
+
+    public static string? GetArchivePassword(HttpContext context)
+    {
+        return (context.GetRequestParam("password")
+                ?? context.GetRequestParam("nzbpassword")
+                ?? context.GetRequestParam("unpack_password")
+                ?? context.GetRequestParam("unpackPassword"))
+            .ToNullIfEmpty();
     }
 
     private static string? AddNzbExtension(string? nzbName)
@@ -45,7 +56,7 @@ public class AddFileRequest()
             : $"{nzbName}.nzb";
     }
 
-    protected static QueueItem.PriorityOption MapPriorityOption(string? priority)
+    public static QueueItem.PriorityOption MapPriorityOption(string? priority)
     {
         return priority switch
         {
@@ -61,7 +72,7 @@ public class AddFileRequest()
         };
     }
 
-    protected static QueueItem.PostProcessingOption MapPostProcessingOption(string? postProcessing)
+    public static QueueItem.PostProcessingOption MapPostProcessingOption(string? postProcessing)
     {
         return postProcessing switch
         {

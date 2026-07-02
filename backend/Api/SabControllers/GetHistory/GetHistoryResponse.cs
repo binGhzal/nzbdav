@@ -16,6 +16,15 @@ public class GetHistoryResponse : SabBaseResponse
 
         [JsonPropertyName("noofslots")]
         public int TotalCount { get; set; }
+
+        [JsonPropertyName("noofslots_total")]
+        public int TotalCountAll { get; set; }
+
+        [JsonPropertyName("start")]
+        public int Start { get; init; }
+
+        [JsonPropertyName("limit")]
+        public int Limit { get; init; }
     }
 
     public class HistorySlot

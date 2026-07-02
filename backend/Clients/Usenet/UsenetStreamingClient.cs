@@ -130,6 +130,7 @@ public class UsenetStreamingClient : WrappingNntpClient
             connectionDetails.Type,
             circuitBreaker,
             connectionDetails.Host,
+            connectionDetails.Priority,
             connectionDetails.StatPipeliningEnabled);
     }
 

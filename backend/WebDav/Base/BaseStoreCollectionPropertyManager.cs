@@ -28,11 +28,13 @@ public class BaseStoreCollectionPropertyManager() : PropertyManager<BaseStoreCol
         },
         new DavGetLastModified<BaseStoreCollection>
         {
-            Getter = x => x.CreatedAt
+            Getter = x => x.CreatedAt,
+            Setter = (_, _) => DavStatusCode.Ok
         },
         new Win32FileAttributes<BaseStoreCollection>
         {
-            Getter = _ => FileAttributes.Directory
+            Getter = _ => FileAttributes.Directory,
+            Setter = (_, _) => DavStatusCode.Ok
         },
         new DavQuotaAvailableBytes<BaseStoreCollection>()
         {

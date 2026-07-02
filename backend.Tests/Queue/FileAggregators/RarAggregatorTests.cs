@@ -43,6 +43,41 @@ public class RarAggregatorTests
         Assert.All(items, item => Assert.Equal("episode.mkv", item.Name));
     }
 
+    [Fact]
+    public void UpdateDatabaseAllowsMultipleRangesFromSameRarVolume()
+    {
+        using var dbContext = new DavDatabaseContext();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var mountDirectory = CreateMountDirectory();
+        var aggregator = new RarAggregator(dbClient, mountDirectory, checkedFullHealth: false);
+
+        aggregator.UpdateDatabase([
+            new RarProcessor.Result
+            {
+                StoredFileSegments =
+                [
+                    CreateStoredFileSegment(
+                        archiveName: "archive-a",
+                        pathWithinArchive: "episode.mkv",
+                        partNumberFromFilename: 1,
+                        byteRangeWithinPart: LongRange.FromStartAndSize(0, 50),
+                        fileUncompressedSize: 100),
+                    CreateStoredFileSegment(
+                        archiveName: "archive-a",
+                        pathWithinArchive: "episode.mkv",
+                        partNumberFromFilename: 1,
+                        byteRangeWithinPart: LongRange.FromStartAndSize(50, 50),
+                        fileUncompressedSize: 100)
+                ]
+            }
+        ]);
+
+        var multipartFile = Assert.Single(dbContext.BlobMultipartFiles);
+        Assert.Equal(2, multipartFile.Metadata.FileParts.Length);
+        Assert.Equal(0, multipartFile.Metadata.FileParts[0].FilePartByteRange.StartInclusive);
+        Assert.Equal(50, multipartFile.Metadata.FileParts[1].FilePartByteRange.StartInclusive);
+    }
+
     private static DavItem CreateMountDirectory()
     {
         var categoryDirectory = DavItem.New(
@@ -72,7 +107,12 @@ public class RarAggregatorTests
         );
     }
 
-    private static RarProcessor.StoredFileSegment CreateStoredFileSegment(string archiveName, string pathWithinArchive)
+    private static RarProcessor.StoredFileSegment CreateStoredFileSegment(
+        string archiveName,
+        string pathWithinArchive,
+        int partNumberFromFilename = 1,
+        LongRange? byteRangeWithinPart = null,
+        long fileUncompressedSize = 100)
     {
         return new RarProcessor.StoredFileSegment
         {
@@ -82,13 +122,13 @@ public class RarAggregatorTests
             PartNumber = new RarProcessor.PartNumber
             {
                 PartNumberFromHeader = 0,
-                PartNumberFromFilename = 1
+                PartNumberFromFilename = partNumberFromFilename
             },
             ReleaseDate = DateTimeOffset.UtcNow,
             PathWithinArchive = pathWithinArchive,
-            ByteRangeWithinPart = LongRange.FromStartAndSize(0, 100),
+            ByteRangeWithinPart = byteRangeWithinPart ?? LongRange.FromStartAndSize(0, 100),
             AesParams = null,
-            FileUncompressedSize = 100
+            FileUncompressedSize = fileUncompressedSize
         };
     }
 }

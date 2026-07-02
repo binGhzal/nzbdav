@@ -15,24 +15,38 @@ namespace NzbWebDAV.Clients.Usenet;
 /// <param name="usenetClient"></param>
 public class DownloadingNntpClient : WrappingNntpClient
 {
+    private sealed class ConnectionLease(PrioritizedSemaphore downloadSemaphore, SemaphoreSlim? streamSemaphore)
+    {
+        private int _released;
+
+        public void Release()
+        {
+            if (Interlocked.Exchange(ref _released, 1) != 0) return;
+            downloadSemaphore.Release();
+            streamSemaphore?.Release();
+        }
+    }
+
     private readonly ConfigManager _configManager;
     private readonly PrioritizedSemaphore _semaphore;
+    private int _maxAllowedConnections;
 
     public DownloadingNntpClient(INntpClient usenetClient, ConfigManager configManager) : base(usenetClient)
     {
-        var maxDownloadConnections = configManager.GetMaxDownloadConnections();
+        var maxDownloadConnections = configManager.GetAdaptiveMaxDownloadConnections();
         var streamingPriority = configManager.GetStreamingPriority();
         _configManager = configManager;
+        _maxAllowedConnections = maxDownloadConnections;
         _semaphore = new PrioritizedSemaphore(maxDownloadConnections, maxDownloadConnections, streamingPriority);
         configManager.OnConfigChanged += OnConfigChanged;
     }
 
     private void OnConfigChanged(object? sender, ConfigManager.ConfigEventArgs e)
     {
-        if (e.ChangedConfig.ContainsKey("usenet.max-download-connections"))
+        if (e.ChangedConfig.ContainsKey("usenet.max-download-connections")
+            || e.ChangedConfig.ContainsKey("usenet.adaptive-connections-enabled"))
         {
-            var maxDownloadConnections = _configManager.GetMaxDownloadConnections();
-            _semaphore.UpdateMaxAllowed(maxDownloadConnections);
+            RefreshMaxAllowedConnections();
         }
 
         if (e.ChangedConfig.ContainsKey("usenet.streaming-priority"))
@@ -51,27 +65,27 @@ public class DownloadingNntpClient : WrappingNntpClient
     /// </summary>
     public override async Task<UsenetStatResponse> StatAsync(SegmentId segmentId, CancellationToken cancellationToken)
     {
-        await AcquireExclusiveConnectionAsync(cancellationToken).ConfigureAwait(false);
+        var lease = await AcquireConnectionLeaseAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             return await base.StatAsync(segmentId, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            _semaphore.Release();
+            lease.Release();
         }
     }
 
     public override async Task<UsenetHeadResponse> HeadAsync(SegmentId segmentId, CancellationToken cancellationToken)
     {
-        await AcquireExclusiveConnectionAsync(cancellationToken).ConfigureAwait(false);
+        var lease = await AcquireConnectionLeaseAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             return await base.HeadAsync(segmentId, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            _semaphore.Release();
+            lease.Release();
         }
     }
 
@@ -90,12 +104,21 @@ public class DownloadingNntpClient : WrappingNntpClient
     public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId,
         Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken)
     {
-        await AcquireExclusiveConnectionAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
-        return await base.DecodedBodyAsync(segmentId, OnConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
+        var lease = await AcquireConnectionLeaseAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await base.DecodedBodyAsync(segmentId, OnConnectionReadyAgain, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            lease.Release();
+            throw;
+        }
 
         void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult)
         {
-            _semaphore.Release();
+            lease.Release();
             onConnectionReadyAgain?.Invoke(articleBodyResult);
         }
     }
@@ -103,23 +126,31 @@ public class DownloadingNntpClient : WrappingNntpClient
     public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync(SegmentId segmentId,
         Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken)
     {
-        await AcquireExclusiveConnectionAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
-        return await base.DecodedArticleAsync(segmentId, OnConnectionReadyAgain, cancellationToken)
-            .ConfigureAwait(false);
+        var lease = await AcquireConnectionLeaseAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await base.DecodedArticleAsync(segmentId, OnConnectionReadyAgain, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            lease.Release();
+            throw;
+        }
 
         void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult)
         {
-            _semaphore.Release();
+            lease.Release();
             onConnectionReadyAgain?.Invoke(articleBodyResult);
         }
     }
 
-    private async Task AcquireExclusiveConnectionAsync(Action<ArticleBodyResult>? onConnectionReadyAgain,
+    private async Task<ConnectionLease> AcquireConnectionLeaseAsync(Action<ArticleBodyResult>? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
         try
         {
-            await AcquireExclusiveConnectionAsync(cancellationToken);
+            return await AcquireConnectionLeaseAsync(cancellationToken);
         }
         catch
         {
@@ -128,11 +159,41 @@ public class DownloadingNntpClient : WrappingNntpClient
         }
     }
 
-    private Task AcquireExclusiveConnectionAsync(CancellationToken cancellationToken)
+    private async Task<ConnectionLease> AcquireConnectionLeaseAsync(CancellationToken cancellationToken)
     {
+        RefreshMaxAllowedConnections();
         var downloadPriorityContext = cancellationToken.GetContext<DownloadPriorityContext>();
         var semaphorePriority = downloadPriorityContext?.Priority ?? SemaphorePriority.Low;
-        return _semaphore.WaitAsync(semaphorePriority, cancellationToken);
+        var streamSemaphore = semaphorePriority == SemaphorePriority.High
+            ? downloadPriorityContext?.ConnectionLimiter
+            : null;
+
+        var hasStreamLease = false;
+        try
+        {
+            if (streamSemaphore != null)
+            {
+                await streamSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+                hasStreamLease = true;
+            }
+
+            await _semaphore.WaitAsync(semaphorePriority, cancellationToken).ConfigureAwait(false);
+            return new ConnectionLease(_semaphore, streamSemaphore);
+        }
+        catch
+        {
+            if (hasStreamLease) streamSemaphore!.Release();
+            throw;
+        }
+    }
+
+    private void RefreshMaxAllowedConnections()
+    {
+        var maxDownloadConnections = _configManager.GetAdaptiveMaxDownloadConnections();
+        if (Interlocked.Exchange(ref _maxAllowedConnections, maxDownloadConnections) == maxDownloadConnections)
+            return;
+
+        _semaphore.UpdateMaxAllowed(maxDownloadConnections);
     }
 
     public override async Task<UsenetExclusiveConnection> AcquireExclusiveConnectionAsync
@@ -141,8 +202,8 @@ public class DownloadingNntpClient : WrappingNntpClient
         CancellationToken cancellationToken
     )
     {
-        await AcquireExclusiveConnectionAsync(cancellationToken).ConfigureAwait(false);
-        return new UsenetExclusiveConnection(_ => _semaphore.Release());
+        var lease = await AcquireConnectionLeaseAsync(cancellationToken).ConfigureAwait(false);
+        return new UsenetExclusiveConnection(_ => lease.Release());
     }
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId,

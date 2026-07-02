@@ -2,19 +2,27 @@
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Api.SabControllers.AddFile;
 using NzbWebDAV.Api.SabControllers.AddUrl;
+using NzbWebDAV.Api.SabControllers.ChangeQueuePostProcessing;
+using NzbWebDAV.Api.SabControllers.ChangeQueuePriority;
 using NzbWebDAV.Api.SabControllers.GetCategories;
 using NzbWebDAV.Api.SabControllers.GetConfig;
 using NzbWebDAV.Api.SabControllers.GetFullStatus;
 using NzbWebDAV.Api.SabControllers.GetHistory;
 using NzbWebDAV.Api.SabControllers.GetQueue;
+using NzbWebDAV.Api.SabControllers.GetScripts;
+using NzbWebDAV.Api.SabControllers.GetServerStats;
 using NzbWebDAV.Api.SabControllers.GetStatus;
 using NzbWebDAV.Api.SabControllers.GetVersion;
+using NzbWebDAV.Api.SabControllers.GetWarnings;
+using NzbWebDAV.Api.SabControllers.PauseResumeQueue;
+using NzbWebDAV.Api.SabControllers.PauseResumeQueueItem;
 using NzbWebDAV.Api.SabControllers.RemoveFromHistory;
 using NzbWebDAV.Api.SabControllers.RemoveFromQueue;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 
@@ -26,7 +34,8 @@ public class SabApiController(
     DavDatabaseClient dbClient,
     ConfigManager configManager,
     QueueManager queueManager,
-    WebsocketManager websocketManager
+    WebsocketManager websocketManager,
+    ActiveStreamTracker activeStreamTracker
 ) : ControllerBase
 {
     [HttpGet]
@@ -73,16 +82,31 @@ public class SabApiController(
                     HttpContext, configManager);
             case "status":
                 return new GetStatusController(
-                    HttpContext, configManager);
+                    HttpContext, dbClient, configManager, queueManager, activeStreamTracker);
             case "get_cats":
                 return new GetCategoriesController(
+                    HttpContext, configManager);
+            case "get_scripts":
+                return new GetScriptsController(
                     HttpContext, configManager);
             case "get_config":
                 return new GetConfigController(
                     HttpContext, configManager);
+            case "warnings":
+                return new GetWarningsController(
+                    HttpContext, configManager);
+            case "server_stats":
+                return new GetServerStatsController(
+                    HttpContext, dbClient, configManager);
             case "fullstatus":
                 return new GetFullStatusController(
-                    HttpContext, configManager);
+                    HttpContext, dbClient, configManager, queueManager, activeStreamTracker);
+            case "pause":
+                return new PauseResumeQueueController(
+                    HttpContext, dbClient, queueManager, configManager, isPaused: true);
+            case "resume":
+                return new PauseResumeQueueController(
+                    HttpContext, dbClient, queueManager, configManager, isPaused: false);
             case "addfile":
                 return new AddFileController(
                     HttpContext, dbClient, queueManager, configManager, websocketManager);
@@ -93,6 +117,19 @@ public class SabApiController(
             case "queue" when HttpContext.GetRequestParam("name") == "delete":
                 return new RemoveFromQueueController(
                     HttpContext, dbClient, queueManager, configManager, websocketManager);
+            case "queue" when HttpContext.GetRequestParam("name") == "pause":
+                return new PauseResumeQueueItemController(
+                    HttpContext, dbClient, queueManager, configManager, isPaused: true);
+            case "queue" when HttpContext.GetRequestParam("name") == "resume":
+                return new PauseResumeQueueItemController(
+                    HttpContext, dbClient, queueManager, configManager, isPaused: false);
+            case "queue" when HttpContext.GetRequestParam("name") == "priority":
+                return new ChangeQueuePriorityController(
+                    HttpContext, dbClient, queueManager, configManager);
+            case "queue" when HttpContext.GetRequestParam("name") == "change_opts":
+            case "change_opts":
+                return new ChangeQueuePostProcessingController(
+                    HttpContext, dbClient, configManager);
             case "queue":
                 return new GetQueueController(
                     HttpContext, dbClient, queueManager, configManager);

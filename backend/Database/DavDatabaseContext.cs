@@ -14,18 +14,19 @@ using Serilog;
 
 namespace NzbWebDAV.Database;
 
-public sealed class DavDatabaseContext() : DbContext(Options.Value)
+public sealed class DavDatabaseContext() : DbContext(CreateOptions())
 {
     public static string ConfigPath => EnvironmentUtil.GetVariable("CONFIG_PATH") ?? "/config";
     public static string DatabaseFilePath => Path.Join(ConfigPath, "db.sqlite");
 
-    private static readonly Lazy<DbContextOptions<DavDatabaseContext>> Options = new(() =>
-        new DbContextOptionsBuilder<DavDatabaseContext>()
+    private static DbContextOptions<DavDatabaseContext> CreateOptions()
+    {
+        return new DbContextOptionsBuilder<DavDatabaseContext>()
             .UseSqlite($"Data Source={DatabaseFilePath}")
             .AddInterceptors(new SqliteForeignKeyEnabler(), new ContentIndexSnapshotInterceptor())
             .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
-            .Options
-    );
+            .Options;
+    }
 
     // database sets
     public DbSet<Account> Accounts => Set<Account>();
@@ -249,6 +250,8 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
 
             e.Property(i => i.Category)
                 .IsRequired();
+
+            e.Property(i => i.ArchivePassword);
 
             e.Property(i => i.Priority)
                 .HasConversion<int>()

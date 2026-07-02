@@ -15,7 +15,7 @@ namespace NzbWebDAV.Database.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.4");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.Account", b =>
                 {
@@ -335,6 +335,9 @@ namespace NzbWebDAV.Database.Migrations
             modelBuilder.Entity("NzbWebDAV.Database.Models.QueueItem", b =>
                 {
                     b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ArchivePassword")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Category")

@@ -188,9 +188,13 @@ public static class ContentIndexSnapshotStore
             var hasRequiredMetadata = item.Type switch
             {
                 DavItem.ItemType.Directory => true,
-                DavItem.ItemType.NzbFile => nzbFilesById.ContainsKey(item.Id),
-                DavItem.ItemType.RarFile => rarFilesById.ContainsKey(item.Id),
-                DavItem.ItemType.MultipartFile => multipartFilesById.ContainsKey(item.Id),
+                DavItem.ItemType.UsenetFile => item.SubType switch
+                {
+                    DavItem.ItemSubType.NzbFile => nzbFilesById.ContainsKey(item.Id),
+                    DavItem.ItemSubType.RarFile => rarFilesById.ContainsKey(item.Id),
+                    DavItem.ItemSubType.MultipartFile => multipartFilesById.ContainsKey(item.Id),
+                    _ => false
+                },
                 _ => false
             };
 
@@ -201,19 +205,25 @@ public static class ContentIndexSnapshotStore
             }
         }
 
-        if (snapshot.NzbFiles.Any(x => !itemsById.TryGetValue(x.Id, out var item) || item.Type != DavItem.ItemType.NzbFile))
+        if (snapshot.NzbFiles.Any(x => !itemsById.TryGetValue(x.Id, out var item)
+                                       || item.Type != DavItem.ItemType.UsenetFile
+                                       || item.SubType != DavItem.ItemSubType.NzbFile))
         {
             error = "snapshot contains DavNzbFile rows without matching NzbFile items";
             return false;
         }
 
-        if (snapshot.RarFiles.Any(x => !itemsById.TryGetValue(x.Id, out var item) || item.Type != DavItem.ItemType.RarFile))
+        if (snapshot.RarFiles.Any(x => !itemsById.TryGetValue(x.Id, out var item)
+                                       || item.Type != DavItem.ItemType.UsenetFile
+                                       || item.SubType != DavItem.ItemSubType.RarFile))
         {
             error = "snapshot contains DavRarFile rows without matching RarFile items";
             return false;
         }
 
-        if (snapshot.MultipartFiles.Any(x => !itemsById.TryGetValue(x.Id, out var item) || item.Type != DavItem.ItemType.MultipartFile))
+        if (snapshot.MultipartFiles.Any(x => !itemsById.TryGetValue(x.Id, out var item)
+                                             || item.Type != DavItem.ItemType.UsenetFile
+                                             || item.SubType != DavItem.ItemSubType.MultipartFile))
         {
             error = "snapshot contains DavMultipartFile rows without matching MultipartFile items";
             return false;

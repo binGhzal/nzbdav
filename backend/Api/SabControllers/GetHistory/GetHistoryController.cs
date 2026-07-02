@@ -21,9 +21,23 @@ public class GetHistoryController(
             query = query.Where(q => request.NzoIds.Contains(q.Id));
         if (request.Category != null)
             query = query.Where(q => q.Category == request.Category);
+        if (!string.IsNullOrWhiteSpace(request.Search))
+            query = query.Where(q => q.JobName.Contains(request.Search) || q.FileName.Contains(request.Search));
+        if (request.FailedOnly)
+            query = query.Where(q => q.DownloadStatus == HistoryItem.DownloadStatusOption.Failed);
+        if (request.Statuses.Count > 0)
+        {
+            var includeCompleted = request.Statuses.Contains("completed");
+            var includeFailed = request.Statuses.Contains("failed");
+            query = query.Where(q =>
+                includeCompleted && q.DownloadStatus == HistoryItem.DownloadStatusOption.Completed
+                || includeFailed && q.DownloadStatus == HistoryItem.DownloadStatusOption.Failed);
+        }
 
         // get total count
         var totalCountPromise = query
+            .CountAsync(request.CancellationToken);
+        var totalCountAllPromise = dbClient.Ctx.HistoryItems
             .CountAsync(request.CancellationToken);
 
         // get history items
@@ -35,6 +49,7 @@ public class GetHistoryController(
 
         // await results
         var totalCount = await totalCountPromise.ConfigureAwait(false);
+        var totalCountAll = await totalCountAllPromise.ConfigureAwait(false);
         var historyItems = await historyItemsPromise.ConfigureAwait(false);
 
         // get download folders
@@ -63,6 +78,9 @@ public class GetHistoryController(
             {
                 Slots = slots,
                 TotalCount = totalCount,
+                TotalCountAll = totalCountAll,
+                Start = request.Start,
+                Limit = request.Limit,
             }
         };
     }

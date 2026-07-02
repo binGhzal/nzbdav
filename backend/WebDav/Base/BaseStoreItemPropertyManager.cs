@@ -26,11 +26,13 @@ public class BaseStoreItemPropertyManager() : PropertyManager<BaseStoreItem>(Dav
         },
         new DavGetLastModified<BaseStoreItem>
         {
-            Getter = x => x.CreatedAt
+            Getter = x => x.CreatedAt,
+            Setter = (_, _) => DavStatusCode.Ok
         },
         new Win32FileAttributes<BaseStoreItem>
         {
-            Getter = _ => FileAttributes.Normal
+            Getter = _ => FileAttributes.Normal,
+            Setter = (_, _) => DavStatusCode.Ok
         },
         new DavGetResourceType<BaseStoreItem>
         {

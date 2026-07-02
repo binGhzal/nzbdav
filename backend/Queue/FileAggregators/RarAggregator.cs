@@ -98,13 +98,12 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
             .GroupBy(x => x)
             .MaxBy(x => x.Count())?.Key;
 
-        // Ensure there are no duplicate part numbers.
-        var allPartNumbers = storedFileSegments.Select(x => GetNormalizedPartNumber(x.PartNumber, delta));
-        ValidatePartNumbers(allPartNumbers);
+        ValidatePartRanges(storedFileSegments, delta);
 
         // Sort by part numbers and return.
         return storedFileSegments
             .OrderBy(x => GetNormalizedPartNumber(x.PartNumber, delta))
+            .ThenBy(x => x.ByteRangeWithinPart.StartInclusive)
             .ToArray();
     }
 
@@ -120,13 +119,29 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
             throw new InvalidDataException("Missing rar volumes detected.");
     }
 
-    [SuppressMessage("ReSharper", "PossibleMultipleEnumeration")]
-    private static void ValidatePartNumbers(IEnumerable<int> partNumbers)
+    private static void ValidatePartRanges(List<RarProcessor.StoredFileSegment> storedFileSegments, int? delta)
     {
-        var count = partNumbers.Count();
-        var uniqueCount = partNumbers.Distinct().Count();
-        if (count != uniqueCount)
-            throw new InvalidDataException("Rar archive has duplicate volume numbers.");
+        var parts = storedFileSegments
+            .Select(x => new
+            {
+                PartNumber = GetNormalizedPartNumber(x.PartNumber, delta),
+                Range = x.ByteRangeWithinPart
+            })
+            .GroupBy(x => x.PartNumber);
+
+        foreach (var part in parts)
+        {
+            var ranges = part
+                .Select(x => x.Range)
+                .OrderBy(x => x.StartInclusive)
+                .ToList();
+
+            for (var i = 1; i < ranges.Count; i++)
+            {
+                if (ranges[i].StartInclusive < ranges[i - 1].EndExclusive)
+                    throw new InvalidDataException("Rar archive has overlapping duplicate volume ranges.");
+            }
+        }
     }
 
     private static int GetNormalizedPartNumber(RarProcessor.PartNumber partNumber, int? delta)

@@ -9,6 +9,7 @@ public class QueueItem
     public long NzbFileSize { get; set; }
     public long TotalSegmentBytes { get; set; }
     public string Category { get; set; } = null!;
+    public string? ArchivePassword { get; set; }
     public PriorityOption Priority { get; set; }
     public PostProcessingOption PostProcessing { get; set; }
     public DateTime? PauseUntil { get; set; }

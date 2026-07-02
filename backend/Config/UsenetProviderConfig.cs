@@ -20,6 +20,7 @@ public class UsenetProviderConfig
         public required string User { get; set; }
         public required string Pass { get; set; }
         public required int MaxConnections { get; set; }
+        public int Priority { get; set; } = 100;
 
         // Whether STAT existence checks may be pipelined for this provider. Not "required" so
         // that provider configs saved before this feature existed deserialize to false (i.e.

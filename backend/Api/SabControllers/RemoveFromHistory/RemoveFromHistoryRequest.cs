@@ -9,6 +9,8 @@ namespace NzbWebDAV.Api.SabControllers.RemoveFromHistory;
 public class RemoveFromHistoryRequest
 {
     public List<Guid> NzoIds { get; private init; } = [];
+    public bool RemoveAll { get; private init; }
+    public bool FailedOnly { get; private init; }
     public bool DeleteCompletedFiles { get; private init; }
     public CancellationToken CancellationToken { get; private init; }
 
@@ -30,6 +32,8 @@ public class RemoveFromHistoryRequest
             NzoIds = NzoIdsFromQueryParam(httpContext)
                 .Concat(await NzoIdsFromRequestBody(httpContext, cancellationToken).ConfigureAwait(false))
                 .ToList(),
+            RemoveAll = IsValue(httpContext, "all") || IsValue(httpContext, "failed"),
+            FailedOnly = IsValue(httpContext, "failed"),
             DeleteCompletedFiles = httpContext.GetRequestParam("del_completed_files") == "1",
             CancellationToken = cancellationToken
         };
@@ -37,7 +41,23 @@ public class RemoveFromHistoryRequest
 
     private static IEnumerable<Guid> NzoIdsFromQueryParam(HttpContext httpContext)
     {
-        return httpContext.GetQueryParamValues("value").Select(Guid.Parse);
+        return httpContext.GetQueryParamValues("value")
+            .SelectMany(x => x.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Select(TryParseGuid)
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value);
+    }
+
+    private static bool IsValue(HttpContext httpContext, string expected)
+    {
+        return httpContext.GetQueryParamValues("value")
+            .SelectMany(x => x.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Any(x => x.Equals(expected, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static Guid? TryParseGuid(string value)
+    {
+        return Guid.TryParse(value, out var guid) ? guid : null;
     }
 
     private static async Task<List<Guid>> NzoIdsFromRequestBody(HttpContext httpContext, CancellationToken ct)

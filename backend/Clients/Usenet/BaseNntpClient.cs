@@ -78,10 +78,7 @@ public class BaseNntpClient : NntpClient
         CancellationToken cancellationToken
     )
     {
-        var ids = new SegmentId[segmentIds.Count];
-        for (var i = 0; i < segmentIds.Count; i++)
-            ids[i] = segmentIds[i];
-        return _client.StatPipelinedAsync(ids, cancellationToken);
+        return base.StatPipelinedAsync(segmentIds, cancellationToken);
     }
 
     public override async Task<UsenetHeadResponse> HeadAsync(SegmentId segmentId, CancellationToken cancellationToken)

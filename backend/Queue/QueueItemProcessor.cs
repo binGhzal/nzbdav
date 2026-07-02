@@ -116,9 +116,10 @@ public class QueueItemProcessor(
         var nzb = await NzbDocument.LoadAsync(queueNzbStream).ConfigureAwait(false);
         var nzbFiles = nzb.Files.Where(x => x.Segments.Count > 0).ToList();
 
-        // Look for a password in filename and nzb document
-        // The file name's password takes priority, as an easy override
+        // Look for a password in filename, submission params, and nzb document.
+        // The file name's password takes priority, as an easy override.
         var archivePassword = FilenameUtil.GetNzbPassword(queueItem.FileName) ??
+            queueItem.ArchivePassword.ToNullIfEmpty() ??
             nzb.Metadata.GetValueOrDefault("password");
 
         // step 0 -- perform article existence pre-check against cache
@@ -145,7 +146,7 @@ public class QueueItemProcessor(
             .ToMultiProgress(fileProcessors.Count);
         var fileProcessingResultsAll = await fileProcessors
             .Select(x => x!.ProcessAsync(part2Progress.SubProgress))
-            .WithConcurrencyAsync(configManager.GetMaxDownloadConnections() + 5)
+            .WithConcurrencyAsync(configManager.GetAdaptiveMaxDownloadConnections() + 5)
             .GetAllAsync(ct).ConfigureAwait(false);
         var fileProcessingResults = fileProcessingResultsAll
             .Where(x => x is not null)
@@ -165,8 +166,7 @@ public class QueueItemProcessor(
                 .Offset(100)
                 .ToPercentage(articlesToCheck.Count);
             var healthCheckConcurrency = configManager
-                .GetUsenetProviderConfig()
-                .TotalPooledConnections;
+                .GetAdaptiveMaxDownloadConnections();
             await usenetClient
                 .CheckAllSegmentsAsync(articlesToCheck, healthCheckConcurrency, part3Progress, ct)
                 .ConfigureAwait(false);
@@ -193,7 +193,7 @@ public class QueueItemProcessor(
                 new EnsureImportableVideoValidator(dbClient).ThrowIfValidationFails();
 
             // create strm files, if necessary
-            if (configManager.GetImportStrategy() == "strm")
+            if (configManager.GetImportStrategy() is "strm" or "both")
                 await new CreateStrmFilesPostProcessor(configManager, dbClient).CreateStrmFilesAsync(mountFolder)
                     .ConfigureAwait(false);
 

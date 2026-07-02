@@ -17,8 +17,17 @@ public class RemoveFromQueueController(
 {
     public async Task<RemoveFromQueueResponse> RemoveFromQueue(RemoveFromQueueRequest request)
     {
-        await queueManager.RemoveQueueItemsAsync(request.NzoIds, dbClient, request.CancellationToken).ConfigureAwait(false);
-        _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, string.Join(",", request.NzoIds));
+        var nzoIds = request.RemoveAll
+            ? await dbClient.GetAllQueueItemIdsAsync(request.CancellationToken).ConfigureAwait(false)
+            : request.NzoIds;
+        nzoIds = nzoIds.Distinct().ToList();
+
+        if (nzoIds.Count > 0)
+        {
+            await queueManager.RemoveQueueItemsAsync(nzoIds, dbClient, request.CancellationToken).ConfigureAwait(false);
+            _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, string.Join(",", nzoIds));
+        }
+
         _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
         return new RemoveFromQueueResponse() { Status = true };
     }

@@ -62,6 +62,7 @@ public class AddFileController(
                 NzbFileSize = nzbFileStream.Length,
                 TotalSegmentBytes = totalSegmentBytes,
                 Category = request.Category,
+                ArchivePassword = request.ArchivePassword,
                 Priority = request.Priority,
                 PostProcessing = request.PostProcessing,
                 PauseUntil = request.PauseUntil

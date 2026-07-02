@@ -261,12 +261,34 @@ public sealed class ContentIndexRecoveryServiceTests
 
     private static DavItem CreateDirectory(Guid id, string name, DavItem parent)
     {
-        return DavItem.New(id, parent, name, null, DavItem.ItemType.Directory, null, null);
+        return DavItem.New(
+            id,
+            parent,
+            name,
+            null,
+            DavItem.ItemType.Directory,
+            DavItem.ItemSubType.Directory,
+            null,
+            null,
+            null,
+            null
+        );
     }
 
     private static DavItem CreateNzbFile(Guid id, DavItem parent, string name)
     {
-        return DavItem.New(id, parent, name, 1024, DavItem.ItemType.NzbFile, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        return DavItem.New(
+            id,
+            parent,
+            name,
+            1024,
+            DavItem.ItemType.UsenetFile,
+            DavItem.ItemSubType.NzbFile,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            null,
+            null
+        );
     }
 }
 
