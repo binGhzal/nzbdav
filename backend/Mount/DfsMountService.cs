@@ -60,9 +60,12 @@ public sealed class DfsMountService(
             {
                 Name = "nzbdav-dfs",
                 MultiThreaded = true,
-                EnableLargeReadRequests = true,
+                // Mono.Fuse maps this to the deprecated large_read option, which
+                // is rejected by modern FUSE/kernel combinations.
+                EnableLargeReadRequests = false,
                 EnableKernelCache = false,
                 EnableDirectIO = false,
+                AllowAccessToOthers = true,
                 AllowMountOverNonEmptyDirectory = false
             };
 

@@ -32,6 +32,7 @@
 * add temporary sparse segment caching for random-access range reads and seeks.
 * drain replaced Usenet provider clients after config reloads instead of disposing active clients immediately.
 * add mount status observability so DFS/rclone readiness can be benchmarked with cache and operation counters.
+* add filesystem-transport rclone-vs-DFS benchmark gating with mandatory CPU/RSS process evidence and hard timeouts for mounted reads.
 
 ### Bug Fixes
 
@@ -49,6 +50,8 @@
 * mount the Library settings tab and make settings tabs URL-addressable.
 * make historical migrations provider-aware so PostgreSQL can build a fresh schema.
 * let browser navigations reach the WebUI Health route while preserving `/health` as a non-browser liveness probe.
+* fix DFS prototype mount options for modern FUSE kernels and cross-user media-app access.
+* fix DFS stat timestamps for static/root DAV nodes so FUSE `getattr` does not fail on unset creation times.
 
 ### Infrastructure
 

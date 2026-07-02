@@ -43,14 +43,16 @@ Record:
 
 ## Repo-local benchmark harness
 
-The benchmark harness is intentionally independent of DFS/native mounting. Use it
-now for the rclone baseline, then run the same command against a future DFS
-prototype URL when one exists.
+The benchmark harness is intentionally transport-aware. Use filesystem transport
+for the rclone baseline and the DFS candidate so the gate measures the same
+mounted paths Plex and ARR actually consume.
 
 Required input:
 
-* `NZBDAV_BENCH_BASE_URL`: NZBDav WebDAV base URL, for example `http://localhost:3000/`.
-* `NZBDAV_BENCH_PATHS`: comma-separated WebDAV paths or absolute URLs to large media-like files.
+* `NZBDAV_BENCH_TRANSPORT`: `filesystem` for mounted-path benchmarks or `http` for WebDAV range checks. Use `filesystem` for the DFS-vs-rclone acceptance gate because Plex/ARR consume mounted paths.
+* `NZBDAV_BENCH_MOUNT_ROOT`: mount root for filesystem benchmarks, for example `/mnt/media/gateways/nzbdav`.
+* `NZBDAV_BENCH_BASE_URL`: NZBDav WebDAV base URL, for example `http://localhost:3000/`. Required for HTTP benchmarks and optional for filesystem benchmarks; when present it is used to collect `status/fullstatus` resource, cache, provider, and mount snapshots.
+* `NZBDAV_BENCH_PATHS`: comma-separated mounted paths, WebDAV paths, or absolute URLs to large media-like files. For filesystem benchmarks with `NZBDAV_BENCH_MOUNT_ROOT`, paths are logical mount-root paths and are always resolved below that root. Parent-directory escapes are rejected.
 
 Optional input:
 
@@ -58,7 +60,7 @@ Optional input:
 * `NZBDAV_BENCH_API_KEY`: SAB-compatible API key for `api?mode=fullstatus` resource snapshots.
 * `RCLONE_RC_URL` or `NZBDAV_BENCH_RCLONE_RC_URL`: rclone RC base URL.
 * `RCLONE_RC_USER` / `RCLONE_RC_PASS`: Basic auth for rclone RC.
-* `NZBDAV_BENCH_NZBDAV_PID` / `NZBDAV_BENCH_RCLONE_PID`: local process IDs for `ps` CPU/RSS snapshots.
+* `NZBDAV_BENCH_NZBDAV_PID` / `NZBDAV_BENCH_RCLONE_PID`: local process IDs for `ps` CPU/RSS snapshots. The rclone baseline must include both NZBDav and rclone process evidence. The DFS candidate must include NZBDav/DFS process evidence.
 * `NZBDAV_BENCH_RUNS`: repeated passes per path. Default: `5`.
 * `NZBDAV_BENCH_SEEK_COUNT`: seek probes per path/run. Default: `5`.
 * `NZBDAV_BENCH_SEEK_OFFSETS`: comma-separated byte offsets when HEAD does not expose file length.
@@ -69,9 +71,13 @@ Optional input:
 Example rclone baseline:
 
 ```bash
+NZBDAV_BENCH_TRANSPORT=filesystem \
+NZBDAV_BENCH_MOUNT_ROOT=/mnt/media/gateways/nzbdav \
 NZBDAV_BENCH_BASE_URL=http://localhost:3000/ \
 NZBDAV_BENCH_PATHS=/content/example-large-file.mkv \
 NZBDAV_BENCH_API_KEY=replace-with-api-key \
+NZBDAV_BENCH_NZBDAV_PID=$(pgrep -f NzbWebDAV | head -1) \
+NZBDAV_BENCH_RCLONE_PID=$(pgrep -f 'rclone mount' | head -1) \
 RCLONE_RC_URL=http://127.0.0.1:5572 \
 RCLONE_RC_USER=nzbdav \
 RCLONE_RC_PASS=replace-with-rc-password \
@@ -82,17 +88,26 @@ The command writes JSON to `artifacts/benchmarks/` by default. That directory is
 ignored by git because benchmark output is machine- and workload-specific
 evidence.
 
-When DFS/native mounting exists, run the same harness against that URL:
+When DFS/native mounting exists, run the same harness against the DFS mount root. Keep the same `NZBDAV_BENCH_PATHS`, run count, seek count, sequential window, fail-closed paths, and host:
 
 ```bash
-python3 scripts/nzbdav_benchmark.py run --scenario dfs --base-url http://localhost:3001/ --path /content/example-large-file.mkv
+python3 scripts/nzbdav_benchmark.py run \
+  --scenario dfs \
+  --transport filesystem \
+  --mount-root /mnt/media/gateways/nzbdav-dfs \
+  --base-url http://localhost:3000/ \
+  --nzbdav-pid "$(pgrep -f /tmp/nzbdav-dfs-selfcontained/NzbWebDAV | head -1)" \
+  --path /content/example-large-file.mkv
 python3 scripts/nzbdav_benchmark.py evaluate --baseline artifacts/benchmarks/rclone-YYYYMMDDTHHMMSSZ.json --candidate artifacts/benchmarks/dfs-YYYYMMDDTHHMMSSZ.json --gate
 ```
 
+For acceptance-gate runs, provide enough status/PID inputs for both artifacts to include CPU and RSS metrics. The evaluator rejects missing CPU/RSS evidence because the plan requires DFS resource use to be no worse than tuned rclone by more than 10%.
+
 The evaluator is the evidence gate:
 
+* Baseline and candidate artifacts must both use the same transport. The production acceptance gate should compare `filesystem` to `filesystem`, not WebDAV HTTP to FUSE.
 * DFS p95 seek latency must improve by at least 20% versus the tuned rclone baseline.
-* DFS CPU and RSS must not be worse by more than 10% when those snapshots are available.
+* DFS CPU and RSS must not be worse by more than 10%, and CPU/RSS evidence is mandatory for both compared stacks.
 * DFS correctness and fail-closed checks must pass.
 
 ## DFS/native prototype scenario
@@ -109,3 +124,16 @@ Record the same metrics as the baseline and add:
 ## Decision rule
 
 Accept DFS/native mounting only if it is faster and safer across the acceptance criteria: p95 seek improves at least 20%, CPU/RSS are not worse by more than 10%, and correctness/fail-closed checks pass. If it only improves one dimension while adding another long-lived mount path, keep rclone and optimize the existing backend.
+
+## Latest production result
+
+The 2026-07-02 production benchmark kept rclone as the accepted backend:
+
+* rclone baseline artifact: `artifacts/benchmarks/rclone-20260702T192559Z.json`.
+* DFS candidate artifact: `artifacts/benchmarks/dfs-20260702T202200Z.json`.
+* evaluation artifact: `artifacts/benchmarks/evaluation-20260702T202331Z.json`.
+* DFS p95 seek latency improved from `7568.446ms` to `3284.053ms`.
+* DFS CPU failed the gate at `10.37` cores versus `2.86` baseline cores.
+* DFS correctness failed because one sequential read timed out.
+
+Do not switch production to `Mount:Type=dfs` from this result. Fix the DFS CPU regression and timeout first, then rerun the same filesystem-transport benchmark gate.

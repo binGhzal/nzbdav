@@ -346,7 +346,7 @@ public sealed class DfsFileSystem(
                 FilePermissions.S_IFREG | FilePermissions.S_IRUSR | FilePermissions.S_IWUSR
                 | FilePermissions.S_IRGRP | FilePermissions.S_IROTH
         };
-        var time = new DateTimeOffset(node.CreatedAt).ToUnixTimeSeconds();
+        var time = ToUnixTimeSeconds(node.CreatedAt);
         return new Stat
         {
             st_ino = GetInode(node),
@@ -359,6 +359,19 @@ public sealed class DfsFileSystem(
             st_mtime = time,
             st_ctime = time
         };
+    }
+
+    private static long ToUnixTimeSeconds(DateTime value)
+    {
+        if (value <= DateTime.UnixEpoch) return 0;
+
+        var utc = value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        };
+        return new DateTimeOffset(utc).ToUnixTimeSeconds();
     }
 
     private static ulong GetInode(DfsDavNode node)

@@ -10,14 +10,16 @@ import json
 import math
 import os
 import re
+import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -26,6 +28,8 @@ DEFAULT_RUNS = 5
 DEFAULT_SEEK_COUNT = 5
 DEFAULT_SEQUENTIAL_BYTES = 64 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 30.0
+TRANSPORT_HTTP = "http"
+TRANSPORT_FILESYSTEM = "filesystem"
 
 
 @dataclass(frozen=True)
@@ -91,6 +95,23 @@ def join_url(base_url: str, path: str) -> str:
     if urllib.parse.urlparse(path).scheme:
         return path
     return urllib.parse.urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+
+
+def join_filesystem_path(mount_root: str | None, path: str) -> Path:
+    parsed = urllib.parse.urlparse(path)
+    if parsed.scheme == "file":
+        if mount_root:
+            raise ValueError("file:// paths are not allowed when --mount-root is set")
+        return Path(urllib.request.url2pathname(parsed.path))
+    if parsed.scheme:
+        raise ValueError(f"filesystem transport cannot read URL path: {redact_path(path)}")
+
+    if mount_root:
+        logical_path = PurePosixPath(path.lstrip("/"))
+        if any(part == ".." for part in logical_path.parts):
+            raise ValueError(f"filesystem path escapes mount root: {redact_path(path)}")
+        return Path(mount_root).joinpath(*logical_path.parts)
+    return Path(path)
 
 
 def redact_path(value: str) -> str:
@@ -170,6 +191,109 @@ def request_url(
         )
 
 
+def request_file(
+    mount_root: str | None,
+    path: str,
+    *,
+    offset: int = 0,
+    max_bytes: int | None = None,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+) -> HttpResult:
+    started = time.perf_counter()
+    bytes_read = 0
+    first_byte_ms: float | None = None
+    headers: dict[str, str] = {}
+
+    try:
+        with filesystem_deadline(timeout_seconds, path):
+            file_path = join_filesystem_path(mount_root, path)
+            stat = file_path.stat()
+            headers["content-length"] = str(stat.st_size)
+            if not file_path.is_file():
+                raise IsADirectoryError(str(file_path))
+
+            fd = os.open(file_path, os.O_RDONLY)
+            try:
+                position = max(0, offset)
+                remaining = max_bytes if max_bytes is not None else stat.st_size
+
+                while remaining is None or remaining > 0:
+                    chunk_size = 64 * 1024 if remaining is None else min(64 * 1024, remaining)
+                    if chunk_size <= 0:
+                        break
+
+                    chunk = os.pread(fd, chunk_size, position)
+                    if first_byte_ms is None:
+                        first_byte_ms = (time.perf_counter() - started) * 1000
+                    if not chunk:
+                        break
+                    bytes_read += len(chunk)
+                    position += len(chunk)
+                    if remaining is not None:
+                        remaining -= len(chunk)
+            finally:
+                os.close(fd)
+
+        if bytes_read > 0:
+            range_end = offset + bytes_read - 1
+            headers["content-range"] = f"bytes {offset}-{range_end}/{stat.st_size}"
+
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        return HttpResult(
+            status=0,
+            elapsed_ms=elapsed_ms,
+            first_byte_ms=first_byte_ms,
+            bytes_read=bytes_read,
+            headers=headers,
+        )
+    except Exception as error:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        return HttpResult(
+            status=None,
+            elapsed_ms=elapsed_ms,
+            first_byte_ms=None,
+            bytes_read=0,
+            headers=headers,
+            error=str(error),
+        )
+
+
+class filesystem_deadline:
+    def __init__(self, timeout_seconds: float, path: str):
+        self.timeout_seconds = timeout_seconds
+        self.path = path
+        self._previous_handler: Any = None
+        self._enabled = False
+
+    def __enter__(self) -> "filesystem_deadline":
+        if not supports_filesystem_alarm(self.timeout_seconds):
+            return self
+
+        self._previous_handler = signal.getsignal(signal.SIGALRM)
+        signal.signal(signal.SIGALRM, self._handle_timeout)
+        signal.setitimer(signal.ITIMER_REAL, self.timeout_seconds)
+        self._enabled = True
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        if self._enabled:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, self._previous_handler)
+        return False
+
+    def _handle_timeout(self, _signum: int, _frame: Any) -> None:
+        raise TimeoutError(f"timed out reading {redact_path(self.path)}")
+
+
+def supports_filesystem_alarm(timeout_seconds: float) -> bool:
+    return (
+        timeout_seconds > 0
+        and hasattr(signal, "SIGALRM")
+        and hasattr(signal, "setitimer")
+        and threading.current_thread() is threading.main_thread()
+    )
+
+
 def json_request(
     url: str,
     *,
@@ -234,6 +358,15 @@ def get_content_length(base_url: str, path: str, headers: dict[str, str], timeou
         return None
 
 
+def get_filesystem_content_length(mount_root: str | None, path: str, timeout_seconds: float) -> int | None:
+    try:
+        with filesystem_deadline(timeout_seconds, path):
+            file_path = join_filesystem_path(mount_root, path)
+            return file_path.stat().st_size
+    except Exception:
+        return None
+
+
 def build_seek_offsets(content_length: int | None, seek_count: int, configured_offsets: list[int]) -> list[int]:
     if configured_offsets:
         return configured_offsets[:seek_count]
@@ -257,6 +390,10 @@ def is_valid_seek_response(result: HttpResult, offset: int) -> bool:
     return result.status == 206 and result.bytes_read > 0 and content_range_starts_at(result.headers, offset)
 
 
+def is_valid_filesystem_seek(result: HttpResult, offset: int) -> bool:
+    return result.status == 0 and result.bytes_read > 0 and content_range_starts_at(result.headers, offset)
+
+
 def measure_first_byte(
     base_url: str,
     path: str,
@@ -271,6 +408,10 @@ def measure_first_byte(
         timeout_seconds=timeout_seconds,
         max_bytes=1,
     )
+
+
+def measure_filesystem_first_byte(mount_root: str | None, path: str, timeout_seconds: float) -> HttpResult:
+    return request_file(mount_root, path, offset=0, max_bytes=1, timeout_seconds=timeout_seconds)
 
 
 def measure_seek(
@@ -288,6 +429,10 @@ def measure_seek(
         timeout_seconds=timeout_seconds,
         max_bytes=1,
     )
+
+
+def measure_filesystem_seek(mount_root: str | None, path: str, offset: int, timeout_seconds: float) -> HttpResult:
+    return request_file(mount_root, path, offset=offset, max_bytes=1, timeout_seconds=timeout_seconds)
 
 
 def measure_sequential(
@@ -312,7 +457,24 @@ def measure_sequential(
     return result, mib / seconds
 
 
-def nzbdav_status_snapshot(base_url: str, api_key: str | None, timeout_seconds: float) -> dict[str, Any] | None:
+def measure_filesystem_sequential(
+    mount_root: str | None,
+    path: str,
+    byte_count: int,
+    timeout_seconds: float,
+) -> tuple[HttpResult, float | None]:
+    result = request_file(mount_root, path, offset=0, max_bytes=byte_count, timeout_seconds=timeout_seconds)
+    if not result.elapsed_ms or result.elapsed_ms <= 0 or result.bytes_read <= 0:
+        return result, None
+    mib = result.bytes_read / (1024 * 1024)
+    seconds = result.elapsed_ms / 1000
+    return result, mib / seconds
+
+
+def nzbdav_status_snapshot(base_url: str | None, api_key: str | None, timeout_seconds: float) -> dict[str, Any] | None:
+    if not base_url:
+        return None
+
     query = {"mode": "fullstatus"}
     if api_key:
         query["apikey"] = api_key
@@ -331,6 +493,8 @@ def nzbdav_status_snapshot(base_url: str, api_key: str | None, timeout_seconds: 
         "rclone_invalidations": status.get("rclone_invalidations"),
         "provider_diagnostics": status.get("provider_diagnostics"),
         "worker_queues": status.get("worker_queues"),
+        "cache": status.get("cache"),
+        "mount": status.get("mount"),
         "version": status.get("version"),
     }
 
@@ -383,8 +547,6 @@ def process_snapshot(pid: int | None, name: str) -> dict[str, Any] | None:
 
 def summarize_resources(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
     summary: dict[str, Any] = {"sources": {}, "total": {}}
-    total_cpu_samples: list[float] = []
-    total_rss_samples: list[float] = []
 
     source_values: dict[str, dict[str, list[float]]] = {}
     for snapshot in snapshots:
@@ -408,19 +570,67 @@ def summarize_resources(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
         if values["cpu"]:
             source_summary["cpu_cores_max"] = round_value(max(values["cpu"]))
             source_summary["cpu_cores_p95"] = round_value(percentile(values["cpu"], 95))
-            total_cpu_samples.append(max(values["cpu"]))
         if values["rss"]:
             source_summary["rss_bytes_max"] = int(max(values["rss"]))
             source_summary["rss_bytes_p95"] = int(percentile(values["rss"], 95) or 0)
-            total_rss_samples.append(max(values["rss"]))
         summary["sources"][source] = source_summary
 
-    if total_cpu_samples:
-        summary["total"]["cpu_cores_max"] = round_value(sum(total_cpu_samples))
-    if total_rss_samples:
-        summary["total"]["rss_bytes_max"] = int(sum(total_rss_samples))
+    cpu_total = resource_total_from_sources(summary["sources"], "cpu_cores_max")
+    rss_total = resource_total_from_sources(summary["sources"], "rss_bytes_max")
+    if cpu_total is not None:
+        summary["total"]["cpu_cores_max"] = round_value(cpu_total)
+    if rss_total is not None:
+        summary["total"]["rss_bytes_max"] = int(rss_total)
 
     return summary
+
+
+def probe_path(args: argparse.Namespace, path: str, headers: dict[str, str]) -> HttpResult:
+    if args.transport == TRANSPORT_FILESYSTEM:
+        return request_file(args.mount_root, path, offset=0, max_bytes=0, timeout_seconds=args.timeout_seconds)
+    return request_url(
+        join_url(args.base_url, path),
+        method="HEAD",
+        headers=headers,
+        timeout_seconds=args.timeout_seconds,
+        read_body=False,
+    )
+
+
+def get_path_content_length(args: argparse.Namespace, path: str, headers: dict[str, str]) -> int | None:
+    if args.transport == TRANSPORT_FILESYSTEM:
+        return get_filesystem_content_length(args.mount_root, path, args.timeout_seconds)
+    return get_content_length(args.base_url, path, headers, args.timeout_seconds)
+
+
+def measure_path_first_byte(args: argparse.Namespace, path: str, headers: dict[str, str]) -> HttpResult:
+    if args.transport == TRANSPORT_FILESYSTEM:
+        return measure_filesystem_first_byte(args.mount_root, path, args.timeout_seconds)
+    return measure_first_byte(args.base_url, path, headers, args.timeout_seconds)
+
+
+def measure_path_seek(args: argparse.Namespace, path: str, offset: int, headers: dict[str, str]) -> HttpResult:
+    if args.transport == TRANSPORT_FILESYSTEM:
+        return measure_filesystem_seek(args.mount_root, path, offset, args.timeout_seconds)
+    return measure_seek(args.base_url, path, offset, headers, args.timeout_seconds)
+
+
+def measure_path_sequential(args: argparse.Namespace, path: str, headers: dict[str, str]) -> tuple[HttpResult, float | None]:
+    if args.transport == TRANSPORT_FILESYSTEM:
+        return measure_filesystem_sequential(args.mount_root, path, args.sequential_bytes, args.timeout_seconds)
+    return measure_sequential(args.base_url, path, args.sequential_bytes, headers, args.timeout_seconds)
+
+
+def is_successful_probe(transport: str, result: HttpResult) -> bool:
+    if transport == TRANSPORT_FILESYSTEM:
+        return result.status == 0
+    return result.status is not None and 200 <= result.status < 400
+
+
+def is_successful_read(transport: str, result: HttpResult) -> bool:
+    if transport == TRANSPORT_FILESYSTEM:
+        return result.status == 0 and result.bytes_read > 0
+    return result.status in (200, 206) and result.bytes_read > 0
 
 
 def checks_passed(checks: list[dict[str, Any]]) -> bool:
@@ -431,6 +641,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     headers = auth_headers(args.webdav_user, args.webdav_pass)
     rc_headers = auth_headers(args.rclone_rc_user, args.rclone_rc_pass)
     paths = args.paths
+    transport = args.transport
     checks: list[dict[str, Any]] = []
     first_byte_samples: list[float] = []
     seek_samples: list[float] = []
@@ -441,18 +652,20 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     if not paths:
         raise SystemExit("At least one benchmark path is required")
 
+    if transport == TRANSPORT_HTTP and not args.base_url:
+        raise SystemExit("--base-url or NZBDAV_BENCH_BASE_URL is required for HTTP benchmark runs")
+
+    if transport == TRANSPORT_FILESYSTEM and not args.mount_root:
+        for path in paths:
+            if not urllib.parse.urlparse(path).scheme and not Path(path).is_absolute():
+                raise SystemExit("--mount-root is required for relative filesystem benchmark paths")
+
     for path in paths:
-        head_result = request_url(
-            join_url(args.base_url, path),
-            method="HEAD",
-            headers=headers,
-            timeout_seconds=args.timeout_seconds,
-            read_body=False,
-        )
+        head_result = probe_path(args, path, headers)
         add_check(
             checks,
-            f"HEAD {redact_path(path)}",
-            head_result.status is not None and 200 <= head_result.status < 400,
+            f"{transport} path probe {redact_path(path)}",
+            is_successful_probe(transport, head_result),
             {"status": head_result.status, "error": head_result.error},
         )
 
@@ -474,35 +687,29 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 
     for run_index in range(args.runs):
         for path in paths:
-            content_length = get_content_length(args.base_url, path, headers, args.timeout_seconds)
-            first_byte = measure_first_byte(args.base_url, path, headers, args.timeout_seconds)
+            content_length = get_path_content_length(args, path, headers)
+            first_byte = measure_path_first_byte(args, path, headers)
             if first_byte.first_byte_ms is not None and first_byte.bytes_read > 0:
                 first_byte_samples.append(first_byte.first_byte_ms)
             add_check(
                 checks,
                 f"first-byte range {redact_path(path)} run {run_index + 1}",
-                first_byte.status in (200, 206) and first_byte.bytes_read > 0,
+                is_successful_read(transport, first_byte),
                 {"status": first_byte.status, "bytes_read": first_byte.bytes_read, "error": first_byte.error},
             )
             operation_samples.append(operation_record("first_byte", path, first_byte, run_index))
 
             for offset in build_seek_offsets(content_length, args.seek_count, args.seek_offsets):
-                seek = measure_seek(args.base_url, path, offset, headers, args.timeout_seconds)
-                record_seek_result(checks, seek_samples, operation_samples, path, offset, seek, run_index)
+                seek = measure_path_seek(args, path, offset, headers)
+                record_seek_result(checks, seek_samples, operation_samples, path, offset, seek, run_index, transport)
 
-            sequential, throughput = measure_sequential(
-                args.base_url,
-                path,
-                args.sequential_bytes,
-                headers,
-                args.timeout_seconds,
-            )
+            sequential, throughput = measure_path_sequential(args, path, headers)
             if throughput is not None:
                 throughput_samples.append(throughput)
             add_check(
                 checks,
                 f"sequential read {redact_path(path)} run {run_index + 1}",
-                sequential.status in (200, 206) and sequential.bytes_read > 0,
+                is_successful_read(transport, sequential),
                 {
                     "status": sequential.status,
                     "bytes_read": sequential.bytes_read,
@@ -527,13 +734,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     for path in args.fail_closed_paths:
-        result = request_url(
-            join_url(args.base_url, path),
-            method="HEAD",
-            headers=headers,
-            timeout_seconds=args.timeout_seconds,
-            read_body=False,
-        )
+        result = probe_path(args, path, headers)
         add_check(
             checks,
             f"fail-closed path {redact_path(path)}",
@@ -546,7 +747,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "generated_at": utc_now(),
         "scenario": args.scenario,
         "inputs": {
-            "base_url": redact_url(args.base_url),
+            "transport": transport,
+            "base_url": redact_url(args.base_url) if args.base_url else None,
+            "mount_root_configured": bool(args.mount_root),
             "paths": [redact_path(path) for path in paths],
             "runs": args.runs,
             "seek_count": args.seek_count,
@@ -581,8 +784,10 @@ def record_seek_result(
     offset: int,
     seek: HttpResult,
     run_index: int,
+    transport: str = TRANSPORT_HTTP,
 ) -> None:
-    seek_valid = is_valid_seek_response(seek, offset)
+    seek_valid = is_valid_filesystem_seek(seek, offset) if transport == TRANSPORT_FILESYSTEM \
+        else is_valid_seek_response(seek, offset)
     if seek_valid and seek.first_byte_ms is not None:
         seek_samples.append(seek.first_byte_ms)
     add_check(
@@ -634,15 +839,16 @@ def get_nested(document: dict[str, Any], path: list[str]) -> Any:
 def evaluate_acceptance(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     baseline_seek = get_nested(baseline, ["metrics", "seek_latency_ms", "p95"])
     candidate_seek = get_nested(candidate, ["metrics", "seek_latency_ms", "p95"])
-    baseline_cpu = get_nested(baseline, ["resources", "summary", "total", "cpu_cores_max"])
-    candidate_cpu = get_nested(candidate, ["resources", "summary", "total", "cpu_cores_max"])
-    baseline_rss = get_nested(baseline, ["resources", "summary", "total", "rss_bytes_max"])
-    candidate_rss = get_nested(candidate, ["resources", "summary", "total", "rss_bytes_max"])
+    baseline_cpu = resource_total_metric(baseline, "cpu_cores_max")
+    candidate_cpu = resource_total_metric(candidate, "cpu_cores_max")
+    baseline_rss = resource_total_metric(baseline, "rss_bytes_max")
+    candidate_rss = resource_total_metric(candidate, "rss_bytes_max")
     baseline_checks_passed = get_nested(baseline, ["checks", "passed"]) is True
     candidate_checks_passed = get_nested(candidate, ["checks", "passed"]) is True
 
     rules = [
         comparable_inputs_rule(baseline, candidate),
+        resource_evidence_rule(baseline, candidate),
         {
             "name": "baseline correctness checks pass",
             "passed": baseline_checks_passed,
@@ -682,8 +888,101 @@ def evaluate_acceptance(baseline: dict[str, Any], candidate: dict[str, Any]) -> 
     }
 
 
+def resource_evidence_rule(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    baseline_sources = get_nested(baseline, ["resources", "summary", "sources"]) or {}
+    candidate_sources = get_nested(candidate, ["resources", "summary", "sources"]) or {}
+    requirements = [
+        {
+            "side": "baseline",
+            "name": "nzbdav process/status",
+            "sources": ["nzbdav_process", "nzbdav_status"],
+            "satisfied": any_source_has_cpu_rss(baseline_sources, ["nzbdav_process", "nzbdav_status"]),
+        },
+        {
+            "side": "baseline",
+            "name": "rclone process",
+            "sources": ["rclone_process"],
+            "satisfied": any_source_has_cpu_rss(baseline_sources, ["rclone_process"]),
+        },
+        {
+            "side": "candidate",
+            "name": "nzbdav/DFS process/status",
+            "sources": ["nzbdav_process", "nzbdav_status"],
+            "satisfied": any_source_has_cpu_rss(candidate_sources, ["nzbdav_process", "nzbdav_status"]),
+        },
+    ]
+    missing = [
+        {
+            "side": requirement["side"],
+            "name": requirement["name"],
+            "sources": requirement["sources"],
+        }
+        for requirement in requirements
+        if not requirement["satisfied"]
+    ]
+    return {
+        "name": "resource evidence includes full compared stacks",
+        "passed": not missing,
+        "baseline": list(baseline_sources.keys()),
+        "candidate": list(candidate_sources.keys()),
+        "threshold": "baseline NZBDav + rclone, candidate NZBDav/DFS",
+        "detail": "CPU/RSS sources must identify the actual processes in the rclone baseline and DFS candidate",
+        "missing": missing,
+    }
+
+
+def any_source_has_cpu_rss(sources: dict[str, Any], names: list[str]) -> bool:
+    return any(source_has_cpu_rss(sources.get(name)) for name in names)
+
+
+def source_has_cpu_rss(source: Any) -> bool:
+    return (
+        isinstance(source, dict)
+        and isinstance(source.get("cpu_cores_max"), (int, float))
+        and isinstance(source.get("rss_bytes_max"), (int, float))
+    )
+
+
+def resource_total_metric(document: dict[str, Any], metric: str) -> float | int | None:
+    sources = get_nested(document, ["resources", "summary", "sources"])
+    if isinstance(sources, dict) and sources:
+        total = resource_total_from_sources(sources, metric)
+        if total is not None:
+            return total
+    return get_nested(document, ["resources", "summary", "total", metric])
+
+
+def resource_total_from_sources(sources: dict[str, Any], metric: str) -> float | int | None:
+    totals: list[float] = []
+    add_group_metric(totals, sources, metric, ["nzbdav_process", "nzbdav_status"])
+    add_group_metric(totals, sources, metric, ["rclone_process"])
+
+    grouped_sources = {"nzbdav_process", "nzbdav_status", "rclone_process", "rclone_rc"}
+    for name, source in sources.items():
+        if name in grouped_sources or not isinstance(source, dict):
+            continue
+        value = source.get(metric)
+        if isinstance(value, (int, float)):
+            totals.append(float(value))
+
+    if not totals:
+        return None
+    total = sum(totals)
+    return int(total) if metric.endswith("_bytes_max") else total
+
+
+def add_group_metric(totals: list[float], sources: dict[str, Any], metric: str, names: list[str]) -> None:
+    values = [
+        float(source[metric])
+        for name in names
+        if isinstance((source := sources.get(name)), dict) and isinstance(source.get(metric), (int, float))
+    ]
+    if values:
+        totals.append(max(values))
+
+
 def comparable_inputs_rule(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
-    fields = ["paths", "seek_count", "seek_offsets", "sequential_bytes", "runs", "fail_closed_paths"]
+    fields = ["transport", "paths", "seek_count", "seek_offsets", "sequential_bytes", "runs", "fail_closed_paths"]
     mismatches = []
     for field in fields:
         baseline_value = get_nested(baseline, ["inputs", field])
@@ -697,7 +996,7 @@ def comparable_inputs_rule(baseline: dict[str, Any], candidate: dict[str, Any]) 
         "baseline": {field: get_nested(baseline, ["inputs", field]) for field in fields},
         "candidate": {field: get_nested(candidate, ["inputs", field]) for field in fields},
         "threshold": "exact match",
-        "detail": "paths, seek_count, seek_offsets, sequential_bytes, runs, and fail_closed_paths must match",
+        "detail": "transport, paths, seek_count, seek_offsets, sequential_bytes, runs, and fail_closed_paths must match",
         "mismatches": mismatches,
     }
 
@@ -747,11 +1046,11 @@ def resource_rule(name: str, baseline_value: float | int | None, candidate_value
     if baseline_value is None or candidate_value is None:
         return {
             "name": name,
-            "passed": True,
+            "passed": False,
             "baseline": baseline_value,
             "candidate": candidate_value,
             "threshold": 1.10,
-            "detail": "metric unavailable; resource comparison is best-effort",
+            "detail": "metric unavailable; CPU/RSS evidence is required for the acceptance gate",
         }
     if baseline_value <= 0:
         return {
@@ -830,7 +1129,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="run a benchmark scenario")
     run_parser.add_argument("--scenario", default=os.getenv("NZBDAV_BENCH_SCENARIO", "rclone"))
-    run_parser.add_argument("--base-url", default=os.getenv("NZBDAV_BENCH_BASE_URL"), required=not os.getenv("NZBDAV_BENCH_BASE_URL"))
+    run_parser.add_argument(
+        "--transport",
+        choices=[TRANSPORT_HTTP, TRANSPORT_FILESYSTEM],
+        default=os.getenv("NZBDAV_BENCH_TRANSPORT", TRANSPORT_HTTP),
+        help="http measures WebDAV URLs; filesystem measures mounted paths through rclone or DFS",
+    )
+    run_parser.add_argument("--base-url", default=os.getenv("NZBDAV_BENCH_BASE_URL"))
+    run_parser.add_argument("--mount-root", default=os.getenv("NZBDAV_BENCH_MOUNT_ROOT"))
     run_parser.add_argument("--path", action="append", default=[], help="WebDAV path or absolute URL; repeat or comma-separate")
     run_parser.add_argument("--webdav-user", default=os.getenv("NZBDAV_BENCH_WEBDAV_USER"))
     run_parser.add_argument("--webdav-pass", default=os.getenv("NZBDAV_BENCH_WEBDAV_PASS"))

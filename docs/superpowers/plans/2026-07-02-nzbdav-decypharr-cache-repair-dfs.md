@@ -28,6 +28,11 @@ Make NZBDav faster and safer for ARR/Plex Usenet workloads by improving the exis
 - Docker image runtime check passed for managed DFS assemblies in `/app/backend`; arm64 image correctly lacks `libMonoFuseHelper.so` because `Mono.Fuse.NETStandard` 1.1.0 only packages the Linux x64 native helper.
 - Publish checks passed for `linux-musl-x64` and `linux-musl-arm64`; only x64 includes `libMonoFuseHelper.so`, and DFS fails closed elsewhere.
 - Vulnerability checks passed: `dotnet list backend/NzbWebDAV.csproj package --vulnerable` and `npm --prefix frontend audit --audit-level=moderate`
+- Production filesystem benchmark artifacts were captured on 2026-07-02 under `artifacts/benchmarks/`:
+  - rclone baseline: `rclone-20260702T192559Z.json`
+  - DFS candidate: `dfs-20260702T202200Z.json`
+  - gate evaluation: `evaluation-20260702T202331Z.json`
+- DFS was not accepted. It improved p95 seek latency from `7568.446ms` to `3284.053ms`, but CPU was `10.37` cores versus the rclone baseline `2.86` cores, and one sequential read timed out. The gate rejected DFS for CPU regression and failed correctness checks.
 
 ## DFS Acceptance Gate
 
@@ -41,5 +46,5 @@ Keep `Mount:Type=rclone` as the default until repo-local benchmark artifacts sho
 
 ## Remaining Work
 
-- Run the manual production benchmark on the real media host before making DFS the preferred backend.
-- Keep `Mount:Type=rclone` as the default until the benchmark artifacts satisfy every acceptance gate.
+- Keep `Mount:Type=rclone` as the default.
+- If DFS work continues, fix the CPU regression and sequential-read timeout, then rerun the same production benchmark gate before considering DFS as a replacement backend.
