@@ -18,6 +18,12 @@ nuget
 .env.*
 !.env.example
 
+#######################
+# benchmark artifacts #
+#######################
+
+artifacts/benchmarks/
+
 ##############
 # IDE config #
 ##############
