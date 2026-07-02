@@ -64,12 +64,15 @@ app.get("/healthz", (_req, res) => {
   res.status(200).type("text/plain").send("ok");
 });
 
-// /health is always served at the unprefixed root regardless of URL_BASE so
-// container healthchecks and reverse-proxy probes don't have to know the
-// sub-path. Proxies to the backend's /health (the actual liveness signal)
-// and surfaces its status — keeps the .NET process the source of truth
-// while leaving the backend port internal.
-app.get("/health", async (_req, res) => {
+// /health is a liveness probe for non-browser callers, while browser
+// navigations pass through to the React Health route when URL_BASE is empty.
+// Probes do not send text/html Accept headers; real page loads do.
+app.get("/health", async (req, res, next) => {
+  if ((req.headers.accept ?? "").includes("text/html")) {
+    next();
+    return;
+  }
+
   try {
     const backendUrl = process.env.BACKEND_URL || "http://localhost:8080";
     const r = await fetch(`${backendUrl}/health`, { signal: AbortSignal.timeout(3000) });

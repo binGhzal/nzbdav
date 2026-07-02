@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -35,6 +36,14 @@ public class GetFullStatusController(
             ct: httpContext.RequestAborted).ConfigureAwait(false);
         var durableWorkerJobs = await dbClient.GetWorkerJobQueueStatsAsync(
             ct: httpContext.RequestAborted).ConfigureAwait(false);
+        var activeRepairRun = await dbClient.GetActiveRepairRunAsync(httpContext.RequestAborted).ConfigureAwait(false);
+        var lastRepairRun = (await dbClient.GetRepairRunsAsync(1, httpContext.RequestAborted).ConfigureAwait(false))
+            .FirstOrDefault();
+        var repairBrokenFiles = await dbClient.Ctx.RepairBrokenFiles
+            .AsNoTracking()
+            .Where(x => !x.Cleared)
+            .CountAsync(httpContext.RequestAborted)
+            .ConfigureAwait(false);
         var healthWorkers = healthCheckService.GetWorkerSnapshot();
         var status = new GetFullStatusResponse()
         {
@@ -58,6 +67,7 @@ public class GetFullStatusController(
                     configManager.GetSparseSegmentCacheOptions())),
                 ProviderDiagnostics = ProviderDiagnosticStatus.FromConfig(configManager.GetUsenetProviderConfig()),
                 WorkerQueues = WorkerQueueStatus.FromStats(activeJobs, queuedJobs, healthWorkers, healthQueue, durableWorkerJobs),
+                RepairRuns = RepairRunsStatus.FromRuns(activeRepairRun, lastRepairRun, repairBrokenFiles),
                 TotalStreamsOpened = activeStreams.TotalOpened,
                 ManagedMemoryBytes = GC.GetTotalMemory(false),
                 WorkingSetBytes = process.WorkingSet64,

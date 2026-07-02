@@ -240,6 +240,64 @@ class BackendClient {
         const data = await response.json();
         return data;
     }
+
+    public async getFullStatus(): Promise<FullStatusResponse> {
+        const url = process.env.BACKEND_URL + "/api?mode=fullstatus";
+
+        const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
+        const response = await fetch(url, {
+            method: "GET",
+            headers: { "x-api-key": apiKey }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to get full status: ${(await response.json()).error}`);
+        }
+        const data = await response.json();
+        return data.status;
+    }
+
+    public async getRepairStatus(): Promise<RepairStatusResponse> {
+        const url = process.env.BACKEND_URL + "/api/repair/status";
+
+        const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
+        const response = await fetch(url, {
+            method: "GET",
+            headers: { "x-api-key": apiKey }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to get repair status: ${(await response.json()).error}`);
+        }
+        return await response.json();
+    }
+
+    public async startRepairRun(): Promise<RepairRunEnvelope> {
+        return await this.postRepairAction<RepairRunEnvelope>("/api/repair/run", "start repair run");
+    }
+
+    public async cancelRepairRun(id: string): Promise<RepairRunEnvelope> {
+        return await this.postRepairAction<RepairRunEnvelope>(`/api/repair/run/${id}/cancel`, "cancel repair run");
+    }
+
+    public async clearRepairRuns(): Promise<{ status: boolean }> {
+        return await this.postRepairAction<{ status: boolean }>("/api/repair/clear", "clear repair runs");
+    }
+
+    private async postRepairAction<T>(path: string, description: string): Promise<T> {
+        const url = process.env.BACKEND_URL + path;
+
+        const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
+        const response = await fetch(url, {
+            method: "POST",
+            headers: { "x-api-key": apiKey }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to ${description}: ${(await response.json()).error}`);
+        }
+        return await response.json();
+    }
 }
 
 export const backendClient = new BackendClient();
@@ -365,4 +423,155 @@ export enum RepairAction {
     Repaired = 1,
     Deleted = 2,
     ActionNeeded = 3,
+}
+
+export type FullStatusResponse = {
+    paused: boolean,
+    queue_status: string,
+    jobs: number,
+    jobs_active: number,
+    max_queue_workers: number,
+    max_download_connections: number,
+    adaptive_max_download_connections: number,
+    queue_file_processing_concurrency: number,
+    healthcheck_concurrency: number,
+    max_streaming_connections: number,
+    max_total_streaming_connections: number,
+    active_streams: number,
+    rclone_invalidations: RcloneInvalidationStatus,
+    cache: CacheStatus,
+    provider_diagnostics: ProviderDiagnosticStatus[],
+    worker_queues: WorkerQueueStatus,
+    repair_runs: RepairRunsStatus,
+    total_streams_opened: number,
+    managed_memory_bytes: number,
+    working_set_bytes: number,
+    gc_memory_load_percent: number,
+    process_cpu_cores: number,
+    threadpool_threads: number,
+    threadpool_pending_work_items: number,
+}
+
+export type RcloneInvalidationStatus = {
+    pending: number,
+    ready: number,
+    failed: number,
+    max_attempts: number,
+    last_error: string | null,
+}
+
+export type CacheStatus = {
+    bytes: number,
+    max_bytes: number,
+    hits: number,
+    misses: number,
+    evictions: number,
+    files: number,
+    active_readers: number,
+    pending_fetches: number,
+}
+
+export type ProviderDiagnosticStatus = {
+    name: string,
+    host: string,
+    port: number,
+    type: string,
+    priority: number,
+    max_connections: number,
+    ssl: boolean,
+    stat_pipelining_enabled: boolean,
+}
+
+export type WorkerQueueStatus = {
+    download_active: number,
+    download_waiting: number,
+    download_ready: number,
+    download_retry: number,
+    download_quarantined: number,
+    verify_active: number,
+    verify_ready: number,
+    verify_retry: number,
+    verify_quarantined: number,
+    repair_active: number,
+    repair_action_needed: number,
+    repair_ready: number,
+    repair_retry: number,
+    repair_quarantined: number,
+}
+
+export type RepairRunsStatus = {
+    active: RepairRunSummaryStatus | null,
+    last: RepairRunSummaryStatus | null,
+    broken_files: number,
+    next_due_at: string | null,
+}
+
+export type RepairRunSummaryStatus = {
+    id: string,
+    status: string,
+    stage: string,
+    started_at: string,
+    completed_at: string | null,
+    total: number,
+    checked: number,
+    missing: number,
+    provider_errors: number,
+    unknown: number,
+    repaired: number,
+    deleted: number,
+    action_needed: number,
+    broken_files: number,
+}
+
+export type RepairStatusResponse = {
+    active_run: RepairRun | null,
+    last_run: RepairRun | null,
+    broken_files: RepairBrokenFile[],
+    verify_queue: RepairWorkerQueue,
+    repair_queue: RepairWorkerQueue,
+}
+
+export type RepairRunEnvelope = {
+    run: RepairRun,
+}
+
+export type RepairRun = {
+    id: string,
+    status: string,
+    stage: string,
+    started_at: string,
+    updated_at: string,
+    completed_at: string | null,
+    cancelled_at: string | null,
+    next_due_at: string | null,
+    total: number,
+    checked: number,
+    missing: number,
+    provider_errors: number,
+    unknown: number,
+    repaired: number,
+    deleted: number,
+    action_needed: number,
+    broken_files: number,
+    message: string | null,
+}
+
+export type RepairBrokenFile = {
+    id: string,
+    repair_run_id: string,
+    dav_item_id: string,
+    path: string,
+    reason: string,
+    created_at: string,
+}
+
+export type RepairWorkerQueue = {
+    pending: number,
+    retry: number,
+    leased: number,
+    ready: number,
+    quarantined: number,
+    completed: number,
+    cancelled: number,
+    total: number,
 }

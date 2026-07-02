@@ -9,6 +9,8 @@
 * expose runtime memory, GC, thread-pool, queue, and streaming observability in status APIs.
 * expose rclone invalidation backlog and provider diagnostic state in status/fullstatus APIs.
 * expose download, verify, and repair worker queue status in status/fullstatus APIs.
+* persist repair run status, broken-file records, and repair history APIs for operator review.
+* add Health page operations panels for repair, sparse cache, providers, workers, and degraded state.
 * add frontend Vitest coverage and Playwright frontend-server smoke coverage.
 * run background health checks and repair workers concurrently while retaining shared NNTP connection limits.
 * persist download, verify, and repair work as leased durable jobs with retry and quarantine status.
@@ -26,6 +28,7 @@
 * enable SQLite WAL, busy timeout, shared-cache connection pooling, and no-tracking reads on hot queue/history/status paths.
 * batch blob, NZB, history, and DAV cleanup workers to drain backlogs with fewer database round-trips.
 * add shared article-cache budget accounting across concurrent queue downloads.
+* add temporary sparse segment caching for random-access range reads and seeks.
 * drain replaced Usenet provider clients after config reloads instead of disposing active clients immediately.
 
 ### Bug Fixes
@@ -43,6 +46,7 @@
 * surface visible save/remove/pause errors in the settings, queue, and history web UI.
 * mount the Library settings tab and make settings tabs URL-addressable.
 * make historical migrations provider-aware so PostgreSQL can build a fresh schema.
+* let browser navigations reach the WebUI Health route while preserving `/health` as a non-browser liveness probe.
 
 ### CI
 

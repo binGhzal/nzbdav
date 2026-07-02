@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Streams.Caching;
 
@@ -191,6 +192,98 @@ public sealed class WorkerQueueStatus
             RepairReady = durableJobs.Repair.Ready,
             RepairRetry = durableJobs.Repair.Retry,
             RepairQuarantined = durableJobs.Repair.Quarantined
+        };
+    }
+}
+
+public sealed class RepairRunsStatus
+{
+    [JsonPropertyName("active")]
+    public RepairRunSummaryStatus? Active { get; init; }
+
+    [JsonPropertyName("last")]
+    public RepairRunSummaryStatus? Last { get; init; }
+
+    [JsonPropertyName("broken_files")]
+    public int BrokenFiles { get; init; }
+
+    [JsonPropertyName("next_due_at")]
+    public DateTimeOffset? NextDueAt { get; init; }
+
+    public static RepairRunsStatus FromRuns(RepairRun? active, RepairRun? last, int brokenFiles)
+    {
+        return new RepairRunsStatus
+        {
+            Active = active == null ? null : RepairRunSummaryStatus.FromRun(active),
+            Last = last == null ? null : RepairRunSummaryStatus.FromRun(last),
+            BrokenFiles = brokenFiles,
+            NextDueAt = active?.NextDueAt ?? last?.NextDueAt
+        };
+    }
+}
+
+public sealed class RepairRunSummaryStatus
+{
+    [JsonPropertyName("id")]
+    public required string Id { get; init; }
+
+    [JsonPropertyName("status")]
+    public required string Status { get; init; }
+
+    [JsonPropertyName("stage")]
+    public required string Stage { get; init; }
+
+    [JsonPropertyName("started_at")]
+    public DateTimeOffset StartedAt { get; init; }
+
+    [JsonPropertyName("completed_at")]
+    public DateTimeOffset? CompletedAt { get; init; }
+
+    [JsonPropertyName("total")]
+    public int Total { get; init; }
+
+    [JsonPropertyName("checked")]
+    public int Checked { get; init; }
+
+    [JsonPropertyName("missing")]
+    public int Missing { get; init; }
+
+    [JsonPropertyName("provider_errors")]
+    public int ProviderErrors { get; init; }
+
+    [JsonPropertyName("unknown")]
+    public int Unknown { get; init; }
+
+    [JsonPropertyName("repaired")]
+    public int Repaired { get; init; }
+
+    [JsonPropertyName("deleted")]
+    public int Deleted { get; init; }
+
+    [JsonPropertyName("action_needed")]
+    public int ActionNeeded { get; init; }
+
+    [JsonPropertyName("broken_files")]
+    public int BrokenFiles { get; init; }
+
+    public static RepairRunSummaryStatus FromRun(RepairRun run)
+    {
+        return new RepairRunSummaryStatus
+        {
+            Id = run.Id.ToString(),
+            Status = run.Status.ToString(),
+            Stage = run.Stage,
+            StartedAt = run.StartedAt,
+            CompletedAt = run.CompletedAt,
+            Total = run.Total,
+            Checked = run.Checked,
+            Missing = run.Missing,
+            ProviderErrors = run.ProviderErrors,
+            Unknown = run.Unknown,
+            Repaired = run.Repaired,
+            Deleted = run.Deleted,
+            ActionNeeded = run.ActionNeeded,
+            BrokenFiles = run.BrokenFiles
         };
     }
 }

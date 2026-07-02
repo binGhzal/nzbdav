@@ -60,6 +60,9 @@ public class GetStatusResponse
         [JsonPropertyName("worker_queues")]
         public WorkerQueueStatus WorkerQueues { get; init; } = new();
 
+        [JsonPropertyName("repair_runs")]
+        public RepairRunsStatus RepairRuns { get; init; } = new();
+
         [JsonPropertyName("total_streams_opened")]
         public long TotalStreamsOpened { get; init; }
 

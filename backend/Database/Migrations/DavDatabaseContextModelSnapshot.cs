@@ -366,6 +366,145 @@ namespace NzbWebDAV.Database.Migrations
                     b.ToTable("RcloneInvalidationItems", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.RepairBrokenFile", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Cleared")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("DavItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("RepairRunId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DavItemId", "Cleared");
+
+                    b.HasIndex("RepairRunId", "Cleared", "CreatedAt");
+
+                    b.ToTable("RepairBrokenFiles", (string)null);
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.RepairEntryHealth", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("DavItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("RepairRunId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("State")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RepairRunId", "DavItemId")
+                        .IsUnique();
+
+                    b.HasIndex("RepairRunId", "State", "UpdatedAt");
+
+                    b.ToTable("RepairEntryHealth", (string)null);
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.RepairRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ActionNeeded")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BrokenFiles")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("CancelledAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Checked")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Deleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Missing")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("NextDueAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ProviderErrors")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Repaired")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("StartedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Total")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Unknown")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status", "StartedAt");
+
+                    b.ToTable("RepairRuns", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.QueueItem", b =>
                 {
                     b.Property<Guid>("Id")
@@ -536,6 +675,24 @@ namespace NzbWebDAV.Database.Migrations
                         .IsRequired();
 
                     b.Navigation("QueueItem");
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.RepairBrokenFile", b =>
+                {
+                    b.HasOne("NzbWebDAV.Database.Models.RepairRun", null)
+                        .WithMany()
+                        .HasForeignKey("RepairRunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.RepairEntryHealth", b =>
+                {
+                    b.HasOne("NzbWebDAV.Database.Models.RepairRun", null)
+                        .WithMany()
+                        .HasForeignKey("RepairRunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

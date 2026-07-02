@@ -107,6 +107,7 @@ Set your username and password.
 
 * **Set WebDAV Password:** Create a password (you will need this for Rclone).
 * **Enforce Read-Only:** Uncheck it if you'd like to delete files from terminal. Otherwise, leave it checked.
+* **Temporary Cache:** NZBDav now keeps a sparse segment cache under `/config/cache/segments` by default. This is temporary acceleration data, not permanent media storage. Keep `/config` on a disk with enough headroom for the default 64 GiB cache, or lower `cache.max-bytes` through the config API before heavy streaming.
 
 **D. Database Settings**
 
@@ -148,6 +149,14 @@ You can find the optimal **Max Download Connections** for your network (`Setting
    * Set `Max Download Connections` to `10`. Test speed. (e.g., 500Mbps @ 70% CPU)
    * Set `Max Download Connections` to `15`. Test speed. (e.g., 1Gbps @ 85% CPU)
    * *Sweet Spot:* Stop when speed plateaus. For me, **15** (the default value) was the magic number.
+
+### 4. Repair And Operations
+
+Open `Health` in the WebUI for live repair, cache, provider, worker, and rclone invalidation status. The page can start a repair verification run, cancel an active run, and clear broken-file repair records after review.
+
+Repair checking uses a separate connection budget so background verification does not steal active streaming slots. The defaults are conservative: `repair.connection-budget-percent=20` with at least one connection. Provider errors and unknown results are retried and reported as degraded state; NZBDav only queues repair for definitive missing-on-all-provider cases.
+
+The SAB-compatible `status` and `fullstatus` responses include additive `cache`, `repair_runs`, `provider_diagnostics`, `worker_queues`, and `rclone_invalidations` fields for dashboards and ARR/Plex operational checks.
 
 ---
 

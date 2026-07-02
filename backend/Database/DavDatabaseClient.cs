@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
@@ -8,6 +10,7 @@ namespace NzbWebDAV.Database;
 public sealed class DavDatabaseClient(DavDatabaseContext ctx)
 {
     private const int MaxWorkerJobErrorLength = 1024;
+    private const int MaxRepairRunMessageLength = 1024;
 
     public DavDatabaseContext Ctx => ctx;
 
@@ -611,6 +614,615 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         int RepairActionNeeded
     );
 
+    public async Task<RepairRun> StartRepairRunAsync
+    (
+        int priority = 10,
+        DateTimeOffset? now = null,
+        CancellationToken ct = default
+    )
+    {
+        var referenceTime = now ?? DateTimeOffset.UtcNow;
+        await using var transaction = await Ctx.Database
+            .BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct)
+            .ConfigureAwait(false);
+        var activeRun = await Ctx.RepairRuns
+            .Where(x => x.Status == RepairRun.RepairRunStatus.Running)
+            .OrderByDescending(x => x.StartedAt)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        if (activeRun != null)
+        {
+            await RefreshRepairRunSummaryAsync(activeRun, referenceTime, ct).ConfigureAwait(false);
+            if (activeRun.Status == RepairRun.RepairRunStatus.Running)
+                throw new BadHttpRequestException($"Repair run {activeRun.Id} is already active.");
+        }
+
+        var items = await HealthCheckService.GetHealthCheckQueueItemsQuery(this)
+            .AsNoTracking()
+            .OrderBy(x => x.Path)
+            .Select(x => new { x.Id, x.Path })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var run = new RepairRun
+        {
+            Id = Guid.NewGuid(),
+            Status = items.Count == 0 ? RepairRun.RepairRunStatus.Completed : RepairRun.RepairRunStatus.Running,
+            Stage = items.Count == 0 ? "completed" : "queued",
+            StartedAt = referenceTime,
+            UpdatedAt = referenceTime,
+            CompletedAt = items.Count == 0 ? referenceTime : null,
+            Total = items.Count,
+            Message = items.Count == 0 ? "No eligible files found for repair verification." : null
+        };
+        Ctx.RepairRuns.Add(run);
+
+        Ctx.RepairEntryHealth.AddRange(items.Select(item => new RepairEntryHealth
+        {
+            Id = Guid.NewGuid(),
+            RepairRunId = run.Id,
+            DavItemId = item.Id,
+            Path = item.Path,
+            State = RepairEntryHealth.RepairEntryState.Pending,
+            CreatedAt = referenceTime,
+            UpdatedAt = referenceTime
+        }));
+
+        if (items.Count > 0)
+            await UpsertRepairRunVerifyJobsAsync(run.Id, items.Select(x => x.Id).ToArray(), priority, referenceTime, ct)
+                .ConfigureAwait(false);
+
+        await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        await transaction.CommitAsync(ct).ConfigureAwait(false);
+        return run;
+    }
+
+    public async Task CancelRepairRunAsync
+    (
+        Guid repairRunId,
+        DateTimeOffset? now = null,
+        CancellationToken ct = default
+    )
+    {
+        var referenceTime = now ?? DateTimeOffset.UtcNow;
+        var run = await Ctx.RepairRuns.FirstOrDefaultAsync(x => x.Id == repairRunId, ct).ConfigureAwait(false)
+                  ?? throw new BadHttpRequestException($"Repair run {repairRunId} was not found.");
+        if (run.Status is RepairRun.RepairRunStatus.Completed or RepairRun.RepairRunStatus.Cancelled)
+            return;
+
+        run.Status = RepairRun.RepairRunStatus.Cancelled;
+        run.Stage = "cancelled";
+        run.UpdatedAt = referenceTime;
+        run.CancelledAt = referenceTime;
+        run.Message = "Repair run cancelled by operator.";
+
+        await Ctx.RepairEntryHealth
+            .Where(x => x.RepairRunId == repairRunId)
+            .Where(x => x.State == RepairEntryHealth.RepairEntryState.Pending
+                        || x.State == RepairEntryHealth.RepairEntryState.Checking)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(x => x.State, RepairEntryHealth.RepairEntryState.Cancelled)
+                    .SetProperty(x => x.UpdatedAt, referenceTime)
+                    .SetProperty(x => x.Message, "Repair run cancelled by operator."),
+                cancellationToken: ct)
+            .ConfigureAwait(false);
+
+        var payloadJson = CreateRepairRunPayloadJson(repairRunId);
+        await Ctx.WorkerJobs
+            .Where(x => x.PayloadJson == payloadJson)
+            .Where(x => x.Status != WorkerJob.JobStatus.Completed
+                        && x.Status != WorkerJob.JobStatus.Cancelled)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(x => x.Status, WorkerJob.JobStatus.Cancelled)
+                    .SetProperty(x => x.UpdatedAt, referenceTime)
+                    .SetProperty(x => x.LeaseOwner, (string?)null)
+                    .SetProperty(x => x.LeaseExpiresAt, (DateTimeOffset?)null),
+                cancellationToken: ct)
+            .ConfigureAwait(false);
+
+        await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task ClearRepairRunsAsync(CancellationToken ct = default)
+    {
+        var hasActiveRuns = await Ctx.RepairRuns
+            .AnyAsync(x => x.Status == RepairRun.RepairRunStatus.Running, ct)
+            .ConfigureAwait(false);
+        if (hasActiveRuns)
+            throw new BadHttpRequestException("Cancel the active repair run before clearing repair history.");
+
+        var payloads = await Ctx.RepairRuns
+            .Select(x => CreateRepairRunPayloadJson(x.Id))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        if (payloads.Count > 0)
+        {
+            var hasActivePayloadJobs = await Ctx.WorkerJobs
+                .Where(x => x.PayloadJson != null && payloads.Contains(x.PayloadJson))
+                .AnyAsync(
+                    x => x.Status == WorkerJob.JobStatus.Pending
+                         || x.Status == WorkerJob.JobStatus.Retry
+                         || x.Status == WorkerJob.JobStatus.Leased,
+                    ct)
+                .ConfigureAwait(false);
+            if (hasActivePayloadJobs)
+                throw new BadHttpRequestException("Repair workers are still active. Cancel the repair run before clearing history.");
+
+            await Ctx.WorkerJobs
+                .Where(x => x.PayloadJson != null && payloads.Contains(x.PayloadJson))
+                .ExecuteDeleteAsync(ct)
+                .ConfigureAwait(false);
+        }
+
+        await Ctx.RepairBrokenFiles.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        await Ctx.RepairEntryHealth.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        await Ctx.RepairRuns.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task<RepairRun?> GetActiveRepairRunAsync(CancellationToken ct = default)
+    {
+        var run = await Ctx.RepairRuns
+            .Where(x => x.Status == RepairRun.RepairRunStatus.Running)
+            .OrderByDescending(x => x.StartedAt)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        if (run == null) return null;
+        await RefreshRepairRunSummaryAsync(run, ct: ct).ConfigureAwait(false);
+        return run.Status == RepairRun.RepairRunStatus.Running ? run : null;
+    }
+
+    public async Task<List<RepairRun>> GetRepairRunsAsync
+    (
+        int limit,
+        CancellationToken ct = default
+    )
+    {
+        var runs = await Ctx.RepairRuns
+            .OrderByDescending(x => x.StartedAt)
+            .Take(Math.Clamp(limit, 1, 500))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        foreach (var run in runs.Where(x => x.Status == RepairRun.RepairRunStatus.Running))
+            await RefreshRepairRunSummaryAsync(run, ct: ct).ConfigureAwait(false);
+
+        return runs;
+    }
+
+    public async Task<RepairRun> RefreshRepairRunSummaryAsync
+    (
+        RepairRun run,
+        DateTimeOffset? now = null,
+        CancellationToken ct = default
+    )
+    {
+        var referenceTime = now ?? DateTimeOffset.UtcNow;
+        await ReconcileRepairRunEntriesAsync(run.Id, referenceTime, ct).ConfigureAwait(false);
+        await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        var statusCounts = await Ctx.RepairEntryHealth
+            .AsNoTracking()
+            .Where(x => x.RepairRunId == run.Id)
+            .GroupBy(x => x.State)
+            .Select(x => new RepairEntryStateCount(x.Key, x.Count()))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        var counts = statusCounts.ToDictionary(x => x.State, x => x.Count);
+        var payloadJson = CreateRepairRunPayloadJson(run.Id);
+        var pendingJobs = await Ctx.WorkerJobs
+            .AsNoTracking()
+            .Where(x => x.PayloadJson == payloadJson)
+            .Where(x => x.Status == WorkerJob.JobStatus.Pending
+                        || x.Status == WorkerJob.JobStatus.Retry
+                        || x.Status == WorkerJob.JobStatus.Leased)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        run.Total = counts.Values.Sum();
+        run.Checked = counts
+            .Where(x => x.Key is not RepairEntryHealth.RepairEntryState.Pending
+                and not RepairEntryHealth.RepairEntryState.Checking
+                and not RepairEntryHealth.RepairEntryState.Cancelled)
+            .Sum(x => x.Value);
+        run.Missing = counts.GetValueOrDefault(RepairEntryHealth.RepairEntryState.Missing);
+        run.ProviderErrors = counts.GetValueOrDefault(RepairEntryHealth.RepairEntryState.ProviderError);
+        run.Unknown = counts.GetValueOrDefault(RepairEntryHealth.RepairEntryState.Unknown);
+        run.Repaired = counts.GetValueOrDefault(RepairEntryHealth.RepairEntryState.Repaired);
+        run.Deleted = counts.GetValueOrDefault(RepairEntryHealth.RepairEntryState.Deleted);
+        run.ActionNeeded = counts.GetValueOrDefault(RepairEntryHealth.RepairEntryState.ActionNeeded);
+        run.BrokenFiles = await Ctx.RepairBrokenFiles
+            .AsNoTracking()
+            .Where(x => x.RepairRunId == run.Id && !x.Cleared)
+            .CountAsync(ct)
+            .ConfigureAwait(false);
+        run.NextDueAt = pendingJobs
+            .Where(x => x.Status is WorkerJob.JobStatus.Pending or WorkerJob.JobStatus.Retry)
+            .Select(x => (DateTimeOffset?)x.AvailableAt)
+            .OrderBy(x => x)
+            .FirstOrDefault();
+
+        if (run.Status == RepairRun.RepairRunStatus.Running)
+        {
+            var checking = counts.GetValueOrDefault(RepairEntryHealth.RepairEntryState.Checking);
+            var pending = counts.GetValueOrDefault(RepairEntryHealth.RepairEntryState.Pending);
+            var hasPendingJobs = pendingJobs.Count > 0;
+            run.Stage = checking > 0
+                ? "checking"
+                : run.Missing > 0 && hasPendingJobs
+                    ? "repairing"
+                    : pending > 0 || hasPendingJobs
+                        ? "queued"
+                        : "completed";
+            if (run.Stage == "completed")
+            {
+                run.Status = RepairRun.RepairRunStatus.Completed;
+                run.CompletedAt = referenceTime;
+            }
+        }
+
+        run.UpdatedAt = referenceTime;
+        await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        return run;
+    }
+
+    public async Task UpsertRepairEntryAsync
+    (
+        Guid repairRunId,
+        Guid davItemId,
+        string path,
+        RepairEntryHealth.RepairEntryState state,
+        string? message,
+        DateTimeOffset? now = null,
+        CancellationToken ct = default
+    )
+    {
+        var referenceTime = now ?? DateTimeOffset.UtcNow;
+        var entry = await Ctx.RepairEntryHealth
+            .FirstOrDefaultAsync(x => x.RepairRunId == repairRunId && x.DavItemId == davItemId, ct)
+            .ConfigureAwait(false);
+        if (entry == null)
+        {
+            entry = new RepairEntryHealth
+            {
+                Id = Guid.NewGuid(),
+                RepairRunId = repairRunId,
+                DavItemId = davItemId,
+                Path = path,
+                CreatedAt = referenceTime
+            };
+            Ctx.RepairEntryHealth.Add(entry);
+        }
+
+        entry.Path = path;
+        entry.State = state;
+        entry.Message = TruncateRepairMessage(message);
+        entry.UpdatedAt = referenceTime;
+
+        if (state is RepairEntryHealth.RepairEntryState.Healthy
+            or RepairEntryHealth.RepairEntryState.Repaired
+            or RepairEntryHealth.RepairEntryState.Deleted)
+            await ClearRepairBrokenFilesAsync(davItemId, referenceTime, ct).ConfigureAwait(false);
+    }
+
+    public async Task MarkRepairVerificationFailureAsync
+    (
+        Guid repairRunId,
+        Guid davItemId,
+        string error,
+        bool quarantined,
+        DateTimeOffset? now = null,
+        CancellationToken ct = default
+    )
+    {
+        var path = await Ctx.Items
+            .AsNoTracking()
+            .Where(x => x.Id == davItemId)
+            .Select(x => x.Path)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false) ?? "";
+        var message = quarantined
+            ? $"Verification failed and job was quarantined: {error}"
+            : $"Verification failed. Will retry: {error}";
+        await UpsertRepairEntryAsync(
+                repairRunId,
+                davItemId,
+                path,
+                RepairEntryHealth.RepairEntryState.ProviderError,
+                message,
+                now,
+                ct)
+            .ConfigureAwait(false);
+    }
+
+    public async Task UpsertRepairBrokenFileAsync
+    (
+        Guid repairRunId,
+        Guid davItemId,
+        string path,
+        string reason,
+        DateTimeOffset? now = null,
+        CancellationToken ct = default
+    )
+    {
+        var referenceTime = now ?? DateTimeOffset.UtcNow;
+        var existing = await Ctx.RepairBrokenFiles
+            .FirstOrDefaultAsync(x => x.RepairRunId == repairRunId && x.DavItemId == davItemId && !x.Cleared, ct)
+            .ConfigureAwait(false);
+        if (existing == null)
+        {
+            Ctx.RepairBrokenFiles.Add(new RepairBrokenFile
+            {
+                Id = Guid.NewGuid(),
+                RepairRunId = repairRunId,
+                DavItemId = davItemId,
+                Path = path,
+                Reason = TruncateRepairMessage(reason) ?? "",
+                CreatedAt = referenceTime
+            });
+            return;
+        }
+
+        existing.Path = path;
+        existing.Reason = TruncateRepairMessage(reason) ?? "";
+    }
+
+    private async Task ClearRepairBrokenFilesAsync
+    (
+        Guid davItemId,
+        DateTimeOffset referenceTime,
+        CancellationToken ct
+    )
+    {
+        await Ctx.RepairBrokenFiles
+            .Where(x => x.DavItemId == davItemId && !x.Cleared)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(x => x.Cleared, true),
+                cancellationToken: ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task ReconcileRepairRunEntriesAsync
+    (
+        Guid repairRunId,
+        DateTimeOffset referenceTime,
+        CancellationToken ct
+    )
+    {
+        var entries = await Ctx.RepairEntryHealth
+            .Where(x => x.RepairRunId == repairRunId)
+            .Where(x => x.State == RepairEntryHealth.RepairEntryState.Pending
+                        || x.State == RepairEntryHealth.RepairEntryState.Checking)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        if (entries.Count == 0) return;
+
+        var davItemIds = entries.Select(x => x.DavItemId).ToArray();
+        var payloadJson = CreateRepairRunPayloadJson(repairRunId);
+        var verifyJobs = await Ctx.WorkerJobs
+            .AsNoTracking()
+            .Where(x => x.Kind == WorkerJob.JobKind.Verify)
+            .Where(x => x.PayloadJson == payloadJson)
+            .Where(x => davItemIds.Contains(x.TargetId))
+            .ToDictionaryAsync(x => x.TargetId, ct)
+            .ConfigureAwait(false);
+        var existingItemIds = await Ctx.Items
+            .AsNoTracking()
+            .Where(x => davItemIds.Contains(x.Id))
+            .Select(x => x.Id)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        var existingItems = existingItemIds.ToHashSet();
+
+        foreach (var entry in entries)
+        {
+            if (!verifyJobs.TryGetValue(entry.DavItemId, out var job))
+            {
+                if (existingItems.Contains(entry.DavItemId))
+                    SetRepairEntryState(
+                        entry,
+                        RepairEntryHealth.RepairEntryState.Unknown,
+                        "Repair verification job is missing.",
+                        referenceTime);
+                else
+                    await SetRepairEntryStateAsync(
+                            entry,
+                            RepairEntryHealth.RepairEntryState.Deleted,
+                            "File no longer exists.",
+                            referenceTime,
+                            ct)
+                        .ConfigureAwait(false);
+                continue;
+            }
+
+            switch (job.Status)
+            {
+                case WorkerJob.JobStatus.Completed:
+                    await ReconcileCompletedRepairEntryAsync(entry, existingItems.Contains(entry.DavItemId), referenceTime, ct)
+                        .ConfigureAwait(false);
+                    break;
+                case WorkerJob.JobStatus.Cancelled:
+                    SetRepairEntryState(
+                        entry,
+                        RepairEntryHealth.RepairEntryState.Cancelled,
+                        "Repair verification job was cancelled.",
+                        referenceTime);
+                    break;
+                case WorkerJob.JobStatus.Quarantined:
+                    SetRepairEntryState(
+                        entry,
+                        RepairEntryHealth.RepairEntryState.ProviderError,
+                        $"Repair verification job was quarantined: {job.LastError ?? "unknown error"}",
+                        referenceTime);
+                    break;
+            }
+        }
+    }
+
+    private async Task ReconcileCompletedRepairEntryAsync
+    (
+        RepairEntryHealth entry,
+        bool itemExists,
+        DateTimeOffset referenceTime,
+        CancellationToken ct
+    )
+    {
+        if (!itemExists)
+        {
+            await SetRepairEntryStateAsync(
+                    entry,
+                    RepairEntryHealth.RepairEntryState.Deleted,
+                    "File no longer exists.",
+                    referenceTime,
+                    ct)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        var latest = await Ctx.HealthCheckResults
+            .AsNoTracking()
+            .Where(x => x.DavItemId == entry.DavItemId)
+            .OrderByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        if (latest == null)
+        {
+            SetRepairEntryState(
+                entry,
+                RepairEntryHealth.RepairEntryState.Unknown,
+                "Repair verification completed without a health result.",
+                referenceTime);
+            return;
+        }
+
+        var state = GetRepairEntryStateFromHealthResult(latest);
+        await SetRepairEntryStateAsync(entry, state, latest.Message, referenceTime, ct).ConfigureAwait(false);
+    }
+
+    private static RepairEntryHealth.RepairEntryState GetRepairEntryStateFromHealthResult(HealthCheckResult result)
+    {
+        if (result.Result == HealthCheckResult.HealthResult.Healthy)
+            return RepairEntryHealth.RepairEntryState.Healthy;
+
+        return result.RepairStatus switch
+        {
+            HealthCheckResult.RepairAction.Repaired => RepairEntryHealth.RepairEntryState.Repaired,
+            HealthCheckResult.RepairAction.Deleted => RepairEntryHealth.RepairEntryState.Deleted,
+            HealthCheckResult.RepairAction.ActionNeeded => RepairEntryHealth.RepairEntryState.Missing,
+            _ when result.Message?.Contains("provider_errors", StringComparison.OrdinalIgnoreCase) == true
+                => RepairEntryHealth.RepairEntryState.ProviderError,
+            _ when result.Message?.Contains("unknown", StringComparison.OrdinalIgnoreCase) == true
+                => RepairEntryHealth.RepairEntryState.Unknown,
+            _ => RepairEntryHealth.RepairEntryState.Unknown
+        };
+    }
+
+    private async Task SetRepairEntryStateAsync
+    (
+        RepairEntryHealth entry,
+        RepairEntryHealth.RepairEntryState state,
+        string? message,
+        DateTimeOffset referenceTime,
+        CancellationToken ct
+    )
+    {
+        SetRepairEntryState(entry, state, message, referenceTime);
+        if (state is RepairEntryHealth.RepairEntryState.Healthy
+            or RepairEntryHealth.RepairEntryState.Repaired
+            or RepairEntryHealth.RepairEntryState.Deleted)
+            await ClearRepairBrokenFilesAsync(entry.DavItemId, referenceTime, ct).ConfigureAwait(false);
+    }
+
+    private static void SetRepairEntryState
+    (
+        RepairEntryHealth entry,
+        RepairEntryHealth.RepairEntryState state,
+        string? message,
+        DateTimeOffset referenceTime
+    )
+    {
+        entry.State = state;
+        entry.Message = TruncateRepairMessage(message);
+        entry.UpdatedAt = referenceTime;
+    }
+
+    public static string CreateRepairRunPayloadJson(Guid repairRunId)
+    {
+        return JsonSerializer.Serialize(new RepairRunPayload(repairRunId));
+    }
+
+    public static Guid? TryGetRepairRunId(string? payloadJson)
+    {
+        if (string.IsNullOrWhiteSpace(payloadJson)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<RepairRunPayload>(payloadJson)?.RepairRunId;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private async Task UpsertRepairRunVerifyJobsAsync
+    (
+        Guid repairRunId,
+        IReadOnlyCollection<Guid> targetIds,
+        int priority,
+        DateTimeOffset referenceTime,
+        CancellationToken ct
+    )
+    {
+        var payloadJson = CreateRepairRunPayloadJson(repairRunId);
+        var existingJobs = await Ctx.WorkerJobs
+            .Where(x => x.Kind == WorkerJob.JobKind.Verify && targetIds.Contains(x.TargetId))
+            .ToDictionaryAsync(x => x.TargetId, ct)
+            .ConfigureAwait(false);
+
+        foreach (var targetId in targetIds)
+        {
+            if (!existingJobs.TryGetValue(targetId, out var job))
+            {
+                Ctx.WorkerJobs.Add(new WorkerJob
+                {
+                    Id = Guid.NewGuid(),
+                    Kind = WorkerJob.JobKind.Verify,
+                    TargetId = targetId,
+                    Status = WorkerJob.JobStatus.Pending,
+                    Priority = priority,
+                    Attempts = 0,
+                    CreatedAt = referenceTime,
+                    UpdatedAt = referenceTime,
+                    AvailableAt = referenceTime,
+                    PayloadJson = payloadJson
+                });
+                continue;
+            }
+
+            var isExpiredLease = job.Status == WorkerJob.JobStatus.Leased
+                                 && job.LeaseExpiresAt <= referenceTime;
+            if (job.Status is WorkerJob.JobStatus.Completed
+                    or WorkerJob.JobStatus.Cancelled
+                    or WorkerJob.JobStatus.Quarantined
+                    or WorkerJob.JobStatus.Retry
+                    or WorkerJob.JobStatus.Pending
+                || isExpiredLease)
+            {
+                job.Status = WorkerJob.JobStatus.Pending;
+                job.Attempts = 0;
+                job.AvailableAt = referenceTime;
+                job.CompletedAt = null;
+                job.LeaseOwner = null;
+                job.LeaseExpiresAt = null;
+                job.LastError = null;
+            }
+
+            job.Priority = priority;
+            job.UpdatedAt = referenceTime;
+            job.PayloadJson = payloadJson;
+        }
+    }
+
     public async Task<WorkerJobQueueStats> GetWorkerJobQueueStatsAsync
     (
         DateTimeOffset? now = null,
@@ -884,4 +1496,16 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             ? error
             : error[..MaxWorkerJobErrorLength];
     }
+
+    private static string? TruncateRepairMessage(string? message)
+    {
+        if (message == null) return null;
+        return message.Length <= MaxRepairRunMessageLength
+            ? message
+            : message[..MaxRepairRunMessageLength];
+    }
+
+    private sealed record RepairRunPayload(Guid RepairRunId);
+
+    private sealed record RepairEntryStateCount(RepairEntryHealth.RepairEntryState State, int Count);
 }

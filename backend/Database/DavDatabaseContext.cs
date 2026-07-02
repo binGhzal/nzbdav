@@ -79,6 +79,9 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
     public DbSet<NzbBlobCleanupItem> NzbBlobCleanupItems => Set<NzbBlobCleanupItem>();
     public DbSet<RcloneInvalidationItem> RcloneInvalidationItems => Set<RcloneInvalidationItem>();
     public DbSet<WorkerJob> WorkerJobs => Set<WorkerJob>();
+    public DbSet<RepairRun> RepairRuns => Set<RepairRun>();
+    public DbSet<RepairEntryHealth> RepairEntryHealth => Set<RepairEntryHealth>();
+    public DbSet<RepairBrokenFile> RepairBrokenFiles => Set<RepairBrokenFile>();
 
     // blob items
     public List<DavNzbFile> BlobNzbFiles = [];
@@ -565,6 +568,169 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
             e.HasKey(i => i.ConfigName);
             e.Property(i => i.ConfigValue)
                 .IsRequired();
+        });
+
+        // RepairRun
+        b.Entity<RepairRun>(e =>
+        {
+            e.ToTable("RepairRuns");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedNever();
+
+            e.Property(i => i.Status)
+                .HasConversion<int>()
+                .IsRequired();
+
+            e.Property(i => i.Stage)
+                .HasMaxLength(64)
+                .IsRequired();
+
+            e.Property(i => i.StartedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.Property(i => i.UpdatedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.Property(i => i.CompletedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                    x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null
+                );
+
+            e.Property(i => i.CancelledAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                    x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null
+                );
+
+            e.Property(i => i.NextDueAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                    x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null
+                );
+
+            e.Property(i => i.Message)
+                .HasMaxLength(1024);
+
+            e.HasIndex(i => new { i.Status, i.StartedAt })
+                .IsUnique(false);
+        });
+
+        // RepairEntryHealth
+        b.Entity<RepairEntryHealth>(e =>
+        {
+            e.ToTable("RepairEntryHealth");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedNever();
+
+            e.Property(i => i.RepairRunId)
+                .ValueGeneratedNever()
+                .IsRequired();
+
+            e.Property(i => i.DavItemId)
+                .ValueGeneratedNever()
+                .IsRequired();
+
+            e.Property(i => i.Path)
+                .IsRequired();
+
+            e.Property(i => i.State)
+                .HasConversion<int>()
+                .IsRequired();
+
+            e.Property(i => i.Message)
+                .HasMaxLength(1024);
+
+            e.Property(i => i.CreatedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.Property(i => i.UpdatedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.HasIndex(i => new { i.RepairRunId, i.DavItemId })
+                .IsUnique();
+
+            e.HasIndex(i => new { i.RepairRunId, i.State, i.UpdatedAt })
+                .IsUnique(false);
+
+            e.HasOne<RepairRun>()
+                .WithMany()
+                .HasForeignKey(i => i.RepairRunId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // RepairBrokenFile
+        b.Entity<RepairBrokenFile>(e =>
+        {
+            e.ToTable("RepairBrokenFiles");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedNever();
+
+            e.Property(i => i.RepairRunId)
+                .ValueGeneratedNever()
+                .IsRequired();
+
+            e.Property(i => i.DavItemId)
+                .ValueGeneratedNever()
+                .IsRequired();
+
+            e.Property(i => i.Path)
+                .IsRequired();
+
+            e.Property(i => i.Reason)
+                .HasMaxLength(1024)
+                .IsRequired();
+
+            e.Property(i => i.CreatedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.Property(i => i.Cleared)
+                .IsRequired();
+
+            e.HasIndex(i => new { i.RepairRunId, i.Cleared, i.CreatedAt })
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.DavItemId, i.Cleared })
+                .IsUnique(false);
+
+            e.HasOne<RepairRun>()
+                .WithMany()
+                .HasForeignKey(i => i.RepairRunId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // BlobCleanupItem

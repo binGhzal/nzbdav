@@ -24,6 +24,8 @@ type QueueSlot = {
 const port = Number.parseInt(process.env.MOCK_BACKEND_PORT ?? "5174", 10);
 let queuePaused = false;
 let requests: RecordedRequest[] = [];
+let repairRunStatus: "Running" | "Cancelled" = "Running";
+let repairBrokenFilesCleared = false;
 
 const queueSlots: QueueSlot[] = [
   createQueueSlot("11111111-1111-1111-1111-111111111111", "Downloading Release", "movies", "Downloading", "45", "20"),
@@ -43,6 +45,30 @@ const historySlots = [
     download_time: 42,
     fail_message: "",
     nzb_blob_id: "55555555-5555-5555-5555-555555555555",
+  },
+];
+
+const healthQueueItems = [
+  {
+    id: "66666666-6666-6666-6666-666666666666",
+    name: "Unverified Movie.mkv",
+    path: "/content/Unverified Movie.mkv",
+    releaseDate: null,
+    lastHealthCheck: null,
+    nextHealthCheck: null,
+    progress: 25,
+  },
+];
+
+const healthHistoryItems = [
+  {
+    id: "77777777-7777-7777-7777-777777777777",
+    createdAt: "2026-07-02T09:00:00Z",
+    davItemId: "88888888-8888-8888-8888-888888888888",
+    path: "/content/Healthy Movie.mkv",
+    result: 0,
+    repairStatus: 0,
+    message: null,
   },
 ];
 
@@ -149,6 +175,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/__e2e/reset") {
     requests = [];
     queuePaused = false;
+    repairRunStatus = "Running";
+    repairBrokenFilesCleared = false;
     writeJson(res, { status: true });
     return;
   }
@@ -176,6 +204,7 @@ const server = http.createServer(async (req, res) => {
       configItems: [
         { configName: "api.categories", configValue: "movies,tv" },
         { configName: "api.manual-category", configValue: "movies" },
+        { configName: "repair.enable", configValue: "true" },
         { configName: "webdav.user", configValue: "admin" },
         { configName: "usenet.max-download-connections", configValue: "15" },
         { configName: "usenet.adaptive-connections-enabled", configValue: "true" },
@@ -189,6 +218,48 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === "/api/get-health-check-queue") {
+    writeJson(res, {
+      uncheckedCount: 42,
+      items: healthQueueItems,
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/get-health-check-history") {
+    writeJson(res, {
+      stats: [
+        { result: 0, repairStatus: 0, count: 12 },
+        { result: 1, repairStatus: 1, count: 2 },
+      ],
+      items: healthHistoryItems,
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/repair/status") {
+    writeJson(res, getRepairStatusResponse());
+    return;
+  }
+
+  if (url.pathname === "/api/repair/run" && req.method === "POST") {
+    repairRunStatus = "Running";
+    writeJson(res, { run: getRepairRun() });
+    return;
+  }
+
+  if (url.pathname === "/api/repair/run/run-1/cancel" && req.method === "POST") {
+    repairRunStatus = "Cancelled";
+    writeJson(res, { run: getRepairRun() });
+    return;
+  }
+
+  if (url.pathname === "/api/repair/clear" && req.method === "POST") {
+    repairBrokenFilesCleared = true;
+    writeJson(res, { status: true });
+    return;
+  }
+
   if (url.pathname === "/api") {
     const mode = url.searchParams.get("mode");
     if (mode === "queue" && !url.searchParams.get("name")) {
@@ -198,6 +269,11 @@ const server = http.createServer(async (req, res) => {
 
     if (mode === "history") {
       writeJson(res, getHistoryResponse(url));
+      return;
+    }
+
+    if (mode === "fullstatus") {
+      writeJson(res, getFullStatusResponse());
       return;
     }
 
@@ -221,6 +297,147 @@ const server = http.createServer(async (req, res) => {
 
   writeJson(res, { error: `Unhandled mock backend request: ${req.method} ${url.pathname}${url.search}` }, 404);
 });
+
+function getRepairRun() {
+  return {
+    id: "run-1",
+    status: repairRunStatus,
+    stage: repairRunStatus === "Running" ? "checking" : "cancelled",
+    started_at: "2026-07-02T08:00:00Z",
+    updated_at: "2026-07-02T08:05:00Z",
+    completed_at: null,
+    cancelled_at: repairRunStatus === "Cancelled" ? "2026-07-02T08:10:00Z" : null,
+    next_due_at: "2026-07-02T08:15:00Z",
+    total: 20,
+    checked: 8,
+    missing: 1,
+    provider_errors: 2,
+    unknown: 1,
+    repaired: 3,
+    deleted: 0,
+    action_needed: 1,
+    broken_files: repairBrokenFilesCleared ? 0 : 1,
+    message: null,
+  };
+}
+
+function getRepairStatusResponse() {
+  const brokenFiles = repairBrokenFilesCleared
+    ? []
+    : [
+        {
+          id: "broken-1",
+          repair_run_id: "run-1",
+          dav_item_id: "99999999-9999-9999-9999-999999999999",
+          path: "/content/Broken Movie.mkv",
+          reason: "Missing articles on all providers.",
+          created_at: "2026-07-02T08:04:00Z",
+        },
+      ];
+
+  return {
+    active_run: repairRunStatus === "Running" ? getRepairRun() : null,
+    last_run: getRepairRun(),
+    broken_files: brokenFiles,
+    verify_queue: {
+      pending: 3,
+      retry: 1,
+      leased: 2,
+      ready: 3,
+      quarantined: 0,
+      completed: 8,
+      cancelled: 0,
+      total: 14,
+    },
+    repair_queue: {
+      pending: 1,
+      retry: 0,
+      leased: 1,
+      ready: 1,
+      quarantined: 0,
+      completed: 3,
+      cancelled: 0,
+      total: 5,
+    },
+  };
+}
+
+function getFullStatusResponse() {
+  return {
+    status: {
+      paused: false,
+      queue_status: "Downloading",
+      jobs: 2,
+      jobs_active: 1,
+      max_queue_workers: 4,
+      max_download_connections: 40,
+      adaptive_max_download_connections: 32,
+      queue_file_processing_concurrency: 4,
+      healthcheck_concurrency: 8,
+      max_streaming_connections: 8,
+      max_total_streaming_connections: 32,
+      active_streams: 2,
+      rclone_invalidations: {
+        pending: 1,
+        ready: 0,
+        failed: 0,
+        max_attempts: 8,
+        last_error: null,
+      },
+      cache: {
+        bytes: 17_179_869_184,
+        max_bytes: 68_719_476_736,
+        hits: 7,
+        misses: 1,
+        evictions: 2,
+        files: 5,
+        active_readers: 2,
+        pending_fetches: 1,
+      },
+      provider_diagnostics: [
+        {
+          name: "provider-1",
+          host: "usenet.example.test",
+          port: 563,
+          type: "Primary",
+          priority: 0,
+          max_connections: 40,
+          ssl: true,
+          stat_pipelining_enabled: true,
+        },
+      ],
+      worker_queues: {
+        download_active: 1,
+        download_waiting: 2,
+        download_ready: 2,
+        download_retry: 0,
+        download_quarantined: 0,
+        verify_active: 2,
+        verify_ready: 3,
+        verify_retry: 1,
+        verify_quarantined: 0,
+        repair_active: 1,
+        repair_action_needed: 1,
+        repair_ready: 1,
+        repair_retry: 0,
+        repair_quarantined: 0,
+      },
+      repair_runs: {
+        active: repairRunStatus === "Running" ? getRepairRun() : null,
+        last: getRepairRun(),
+        broken_files: repairBrokenFilesCleared ? 0 : 1,
+        next_due_at: "2026-07-02T08:15:00Z",
+      },
+      total_streams_opened: 12,
+      managed_memory_bytes: 268_435_456,
+      working_set_bytes: 536_870_912,
+      gc_memory_load_percent: 22,
+      process_cpu_cores: 1.5,
+      threadpool_threads: 18,
+      threadpool_pending_work_items: 3,
+    },
+  };
+}
 
 const websocketServer = new WebSocketServer({ noServer: true });
 websocketServer.on("connection", (socket) => {

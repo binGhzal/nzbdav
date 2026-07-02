@@ -7,6 +7,8 @@ import { useCallback, useEffect, useState } from "react";
 import { receiveMessage } from "~/utils/websocket-util";
 import { Alert } from "react-bootstrap";
 import { getWebsocketUrl, withUrlBase } from "~/utils/url-base";
+import { useNavigation } from "react-router";
+import { OperationsStatus } from "./components/operations-status/operations-status";
 
 const topicNames = {
     healthItemStatus: 'hs',
@@ -19,10 +21,12 @@ const topicSubscriptions = {
 
 export async function loader() {
     const enabledKey = 'repair.enable';
-    const [queueData, historyData, config] = await Promise.all([
+    const [queueData, historyData, config, repairStatus, fullStatus] = await Promise.all([
         backendClient.getHealthCheckQueue(30),
         backendClient.getHealthCheckHistory(),
-        backendClient.getConfig([enabledKey])
+        backendClient.getConfig([enabledKey]),
+        loadOptional(() => backendClient.getRepairStatus()),
+        loadOptional(() => backendClient.getFullStatus())
     ]);
 
     return {
@@ -30,6 +34,10 @@ export async function loader() {
         queueItems: queueData.items,
         historyStats: historyData.stats,
         historyItems: historyData.items,
+        repairStatus: repairStatus.data,
+        repairStatusError: repairStatus.error,
+        fullStatus: fullStatus.data,
+        fullStatusError: fullStatus.error,
         isEnabled: config
             .filter(x => x.configName === enabledKey)
             .filter(x => x.configValue.toLowerCase() === "true")
@@ -37,11 +45,38 @@ export async function loader() {
     };
 }
 
+export async function action({ request }: Route.ActionArgs) {
+    const formData = await request.formData();
+    const intent = formData.get("intent")?.toString();
+
+    if (intent === "start") {
+        await backendClient.startRepairRun();
+        return { ok: true };
+    }
+
+    if (intent === "cancel") {
+        const runId = formData.get("runId")?.toString();
+        if (!runId) throw new Error("Repair run id is required.");
+        await backendClient.cancelRepairRun(runId);
+        return { ok: true };
+    }
+
+    if (intent === "clear") {
+        await backendClient.clearRepairRuns();
+        return { ok: true };
+    }
+
+    throw new Error("Unsupported repair action.");
+}
+
 export default function Health({ loaderData }: Route.ComponentProps) {
     const { isEnabled } = loaderData;
     const [historyStats, setHistoryStats] = useState(loaderData.historyStats);
     const [queueItems, setQueueItems] = useState(loaderData.queueItems);
     const [uncheckedCount, setUncheckedCount] = useState(loaderData.uncheckedCount);
+    const [websocketState, setWebsocketState] = useState<"connecting" | "connected" | "disconnected">("connecting");
+    const navigation = useNavigation();
+    const isActionSubmitting = navigation.state !== "idle" && navigation.formMethod?.toLowerCase() === "post";
 
     // effects
     useEffect(() => {
@@ -61,7 +96,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     const onHealthItemStatus = useCallback(async (message: string) => {
         const [davItemId, healthResult, repairAction] = message.split('|');
         setQueueItems(x => x.filter(item => item.id !== davItemId));
-        setUncheckedCount(x => x - 1);
+        setUncheckedCount(x => Math.max(0, x - 1));
         setHistoryStats(x => {
             const healthResultNum = Number(healthResult);
             const repairActionNum = Number(repairAction);
@@ -125,9 +160,19 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         function connect() {
             ws = new WebSocket(getWebsocketUrl());
             ws.onmessage = receiveMessage(onWebsocketMessage);
-            ws.onopen = () => { ws.send(JSON.stringify(topicSubscriptions)); }
-            ws.onclose = () => { !disposed && setTimeout(() => connect(), 1000); };
-            ws.onerror = () => { ws.close() };
+            ws.onopen = () => {
+                setWebsocketState("connected");
+                ws.send(JSON.stringify(topicSubscriptions));
+            }
+            ws.onclose = () => {
+                if (disposed) return;
+                setWebsocketState("disconnected");
+                setTimeout(() => connect(), 1000);
+            };
+            ws.onerror = () => {
+                setWebsocketState("disconnected");
+                ws.close()
+            };
             return () => { disposed = true; ws.close(); }
         }
 
@@ -136,6 +181,16 @@ export default function Health({ loaderData }: Route.ComponentProps) {
 
     return (
         <div className={styles.container}>
+            <div className={styles.section}>
+                <OperationsStatus
+                    fullStatus={loaderData.fullStatus}
+                    fullStatusError={loaderData.fullStatusError}
+                    repairStatus={loaderData.repairStatus}
+                    repairStatusError={loaderData.repairStatusError}
+                    websocketState={websocketState}
+                    isActionSubmitting={isActionSubmitting}
+                />
+            </div>
             <div className={styles.section}>
                 <HealthStats stats={historyStats} />
             </div>
@@ -160,4 +215,15 @@ export default function Health({ loaderData }: Route.ComponentProps) {
             </div>
         </div>
     );
+}
+
+async function loadOptional<T>(load: () => Promise<T>): Promise<{ data: T | null; error: string | null }> {
+    try {
+        return { data: await load(), error: null };
+    } catch (error) {
+        return {
+            data: null,
+            error: error instanceof Error ? error.message : String(error)
+        };
+    }
 }
