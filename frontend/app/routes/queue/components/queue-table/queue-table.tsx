@@ -12,11 +12,14 @@ import { withUrlBase } from "~/utils/url-base"
 import { WideViewport } from "../wide-viewport/wide-viewport"
 import { ThinViewport } from "../thin-viewport/thin-viewport"
 import { Pagination } from "../pagination/pagination"
+import type { QueueSortField, QueueSortOrder } from "~/clients/backend-client.server"
 
 export type QueueTableProps = {
     queueSlots: PresentationQueueSlot[],
     totalQueueCount: number,
     queueStatusFilter: QueueStatusFilter,
+    queueSort: QueueSortField,
+    queueOrder: QueueSortOrder,
     isQueuePaused: boolean,
     queueStatusText: string,
     pageNumber: number,
@@ -30,6 +33,7 @@ export type QueueTableProps = {
     onPriorityChanged: (nzo_id: string, priority: string) => void,
     onUploadClicked?: () => void;
     onQueueStatusSelected: (status: QueueStatusFilter) => void;
+    onQueueSortSelected: (sort: QueueSortField) => void;
     onPauseQueueChanged: (isPaused: boolean) => void;
     onPageSelected?: (page: number) => void;
     onPageSizeSelected?: (pageSize: number) => void;
@@ -39,6 +43,8 @@ export function QueueTable({
     queueSlots,
     totalQueueCount,
     queueStatusFilter,
+    queueSort,
+    queueOrder,
     isQueuePaused,
     queueStatusText,
     pageNumber,
@@ -52,6 +58,7 @@ export function QueueTable({
     onPriorityChanged,
     onUploadClicked,
     onQueueStatusSelected,
+    onQueueSortSelected,
     onPauseQueueChanged,
     onPageSelected,
     onPageSizeSelected,
@@ -202,7 +209,12 @@ export function QueueTable({
             {queueSlots?.length == 0 && totalQueueCount === 0 ? (
                 <EmptyQueue onUploadClicked={onUploadClicked} />
             ) : (
-                <PageTable headerCheckboxState={headerCheckboxState} onHeaderCheckboxChange={onSelectAll}>
+                <PageTable
+                    headerCheckboxState={headerCheckboxState}
+                    onHeaderCheckboxChange={onSelectAll}
+                    sortField={queueSort}
+                    sortDirection={queueOrder}
+                    onSortSelected={onQueueSortSelected}>
                     {queueSlots.map(slot =>
                         <QueueRow
                             key={slot.nzo_id}

@@ -116,6 +116,32 @@
     gap: 10px;
 }
 
+.sortButton,
+.sortButtonActive {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 70px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.sortButtonActive {
+    color: hsl(180, 22%, 92%);
+}
+
+.sortIndicator {
+    display: inline-block;
+    width: 10px;
+    text-align: center;
+    color: hsl(180, 45%, 65%);
+}
+
 /* desktop */
 @media (min-width: 900px) {
     .mobile {

@@ -168,7 +168,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         CancellationToken ct = default
     )
     {
-        return GetQueueItems(category, null, null, null, null, null, start, limit, ct);
+        return GetQueueItems(category, null, null, null, null, null, null, start, limit, ct);
     }
 
     public Task<QueueItem[]> GetQueueItems
@@ -179,6 +179,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         string? search = null,
         IReadOnlyCollection<QueueItem.PriorityOption>? priorities = null,
         IReadOnlyCollection<string>? statuses = null,
+        QueueSortOptions? sortOptions = null,
         int start = 0,
         int limit = int.MaxValue,
         CancellationToken ct = default
@@ -188,9 +189,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         if (excludeIds is { Count: > 0 })
             queueItems = queueItems.Where(q => !excludeIds.Contains(q.Id));
 
-        return queueItems
-            .OrderByDescending(q => q.Priority)
-            .ThenBy(q => q.CreatedAt)
+        return ApplyQueueSort(queueItems, sortOptions)
             .Skip(start)
             .Take(limit)
             .ToArrayAsync(cancellationToken: ct);
@@ -293,6 +292,57 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         }
 
         return queueItems;
+    }
+
+    private static IOrderedQueryable<QueueItem> ApplyQueueSort
+    (
+        IQueryable<QueueItem> queueItems,
+        QueueSortOptions? options
+    )
+    {
+        options ??= QueueSortOptions.Default;
+
+        IOrderedQueryable<QueueItem> ordered = options.Field switch
+        {
+            QueueSortField.Name => options.Descending
+                ? queueItems.OrderByDescending(q => q.JobName)
+                : queueItems.OrderBy(q => q.JobName),
+            QueueSortField.Category => options.Descending
+                ? queueItems.OrderByDescending(q => q.Category)
+                : queueItems.OrderBy(q => q.Category),
+            QueueSortField.Status => options.Descending
+                ? queueItems.OrderByDescending(q => q.Priority == QueueItem.PriorityOption.Paused ? 0 : 1)
+                : queueItems.OrderBy(q => q.Priority == QueueItem.PriorityOption.Paused ? 0 : 1),
+            QueueSortField.Size => options.Descending
+                ? queueItems.OrderByDescending(q => q.TotalSegmentBytes)
+                : queueItems.OrderBy(q => q.TotalSegmentBytes),
+            QueueSortField.CreatedAt => options.Descending
+                ? queueItems.OrderByDescending(q => q.CreatedAt)
+                : queueItems.OrderBy(q => q.CreatedAt),
+            _ => options.Descending
+                ? queueItems.OrderByDescending(q => q.Priority)
+                : queueItems.OrderBy(q => q.Priority)
+        };
+
+        return ordered
+            .ThenByDescending(q => q.Priority)
+            .ThenBy(q => q.CreatedAt)
+            .ThenBy(q => q.Id);
+    }
+
+    public sealed record QueueSortOptions(QueueSortField Field, bool Descending)
+    {
+        public static readonly QueueSortOptions Default = new(QueueSortField.Priority, true);
+    }
+
+    public enum QueueSortField
+    {
+        Priority,
+        Name,
+        Category,
+        Status,
+        Size,
+        CreatedAt
     }
 
     // history

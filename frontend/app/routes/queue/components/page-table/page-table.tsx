@@ -6,15 +6,27 @@ import { Truncate } from "../truncate/truncate";
 import { StatusBadge } from "../status-badge/status-badge";
 import { formatFileSize } from "~/utils/file-size";
 import { classNames } from "~/utils/styling";
+import type { QueueSortField, QueueSortOrder } from "~/clients/backend-client.server";
 
 export type PageTableProps = {
     children?: ReactNode,
     headerCheckboxState: TriCheckboxState,
     onHeaderCheckboxChange: (isChecked: boolean) => void,
     footer?: ReactNode,
+    sortField?: QueueSortField,
+    sortDirection?: QueueSortOrder,
+    onSortSelected?: (field: QueueSortField) => void,
 }
 
-export function PageTable({ children, headerCheckboxState, onHeaderCheckboxChange, footer }: PageTableProps) {
+export function PageTable({
+    children,
+    headerCheckboxState,
+    onHeaderCheckboxChange,
+    footer,
+    sortField,
+    sortDirection = "desc",
+    onSortSelected,
+}: PageTableProps) {
     return (
         <div className={styles.tableContainer}>
             <Table className={styles.table}>
@@ -22,12 +34,38 @@ export function PageTable({ children, headerCheckboxState, onHeaderCheckboxChang
                     <tr>
                         <th>
                             <TriCheckbox state={headerCheckboxState} onChange={onHeaderCheckboxChange}>
-                                Name
+                                <SortHeaderButton
+                                    field="name"
+                                    label="Name"
+                                    sortField={sortField}
+                                    sortDirection={sortDirection}
+                                    onSortSelected={onSortSelected} />
                             </TriCheckbox>
                         </th>
-                        <th className={styles.desktop}>Category</th>
-                        <th className={styles.desktop}>Status</th>
-                        <th className={styles.desktop}>Size</th>
+                        <th className={styles.desktop}>
+                            <SortHeaderButton
+                                field="category"
+                                label="Category"
+                                sortField={sortField}
+                                sortDirection={sortDirection}
+                                onSortSelected={onSortSelected} />
+                        </th>
+                        <th className={styles.desktop}>
+                            <SortHeaderButton
+                                field="status"
+                                label="Status"
+                                sortField={sortField}
+                                sortDirection={sortDirection}
+                                onSortSelected={onSortSelected} />
+                        </th>
+                        <th className={styles.desktop}>
+                            <SortHeaderButton
+                                field="size"
+                                label="Size"
+                                sortField={sortField}
+                                sortDirection={sortDirection}
+                                onSortSelected={onSortSelected} />
+                        </th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -39,6 +77,39 @@ export function PageTable({ children, headerCheckboxState, onHeaderCheckboxChang
                 <div className={styles.footer}>{footer}</div>
             }
         </div>
+    );
+}
+
+function SortHeaderButton({
+    field,
+    label,
+    sortField,
+    sortDirection,
+    onSortSelected,
+}: {
+    field: QueueSortField,
+    label: string,
+    sortField?: QueueSortField,
+    sortDirection: QueueSortOrder,
+    onSortSelected?: (field: QueueSortField) => void,
+}) {
+    const isActive = sortField === field;
+    if (!onSortSelected) return <>{label}</>;
+
+    return (
+        <button
+            type="button"
+            className={isActive ? styles.sortButtonActive : styles.sortButton}
+            onClick={event => {
+                event.stopPropagation();
+                onSortSelected(field);
+            }}
+            aria-label={`Sort by ${label}`}>
+            <span>{label}</span>
+            <span className={styles.sortIndicator} aria-hidden="true">
+                {isActive ? (sortDirection === "asc" ? "^" : "v") : ""}
+            </span>
+        </button>
     );
 }
 

@@ -153,20 +153,23 @@ function Body(props: BodyProps) {
     const onSave = useCallback(async () => {
         setIsSaving(true);
         setIsSaved(false);
-        const response = await fetch(withUrlBase("/settings/update"), {
-            method: "POST",
-            body: (() => {
-                const form = new FormData();
-                const changedConfig = getChangedConfig(config, newConfig);
-                form.append("config", JSON.stringify(changedConfig));
-                return form;
-            })()
-        });
-        if (response.ok) {
+        try {
+            const response = await fetch(withUrlBase("/settings/update"), {
+                method: "POST",
+                body: (() => {
+                    const form = new FormData();
+                    const changedConfig = getChangedConfig(config, newConfig);
+                    form.append("config", JSON.stringify(changedConfig));
+                    return form;
+                })()
+            });
+            if (!response.ok) return;
+
             setConfig({ ...newConfig });
+            setIsSaved(true);
+        } finally {
+            setIsSaving(false);
         }
-        setIsSaving(false);
-        setIsSaved(true);
     }, [config, newConfig, setIsSaving, setIsSaved, setConfig]);
 
     return (

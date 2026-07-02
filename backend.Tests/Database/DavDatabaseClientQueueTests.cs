@@ -110,6 +110,32 @@ public sealed class DavDatabaseClientQueueTests
     }
 
     [Fact]
+    public async Task GetQueueItems_SortsByRequestedFieldAndDirection()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var smallerMovie = CreateQueueItem("Beta", QueueItem.PriorityOption.Normal, DateTime.UtcNow);
+        smallerMovie.TotalSegmentBytes = 1024;
+        smallerMovie.Category = "movies";
+        var largerTv = CreateQueueItem("Alpha", QueueItem.PriorityOption.Low, DateTime.UtcNow.AddSeconds(1));
+        largerTv.TotalSegmentBytes = 2048;
+        largerTv.Category = "tv";
+        dbContext.QueueItems.AddRange(smallerMovie, largerTv);
+        await dbContext.SaveChangesAsync();
+
+        var dbClient = new DavDatabaseClient(dbContext);
+
+        var byName = await dbClient.GetQueueItems(
+            category: null,
+            sortOptions: new DavDatabaseClient.QueueSortOptions(DavDatabaseClient.QueueSortField.Name, Descending: false));
+        var bySize = await dbClient.GetQueueItems(
+            category: null,
+            sortOptions: new DavDatabaseClient.QueueSortOptions(DavDatabaseClient.QueueSortField.Size, Descending: true));
+
+        Assert.Equal([largerTv.Id, smallerMovie.Id], byName.Select(x => x.Id));
+        Assert.Equal([largerTv.Id, smallerMovie.Id], bySize.Select(x => x.Id));
+    }
+
+    [Fact]
     public async Task RemoveHistoryItemsAsync_SkipsExistingCleanupItems()
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();

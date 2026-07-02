@@ -76,6 +76,12 @@ class BackendClient {
         if (options.status && options.status !== "all") {
             params.set("status", options.status);
         }
+        if (options.sort && options.sort !== "priority") {
+            params.set("sort", options.sort);
+        }
+        if (options.order && options.order !== "desc") {
+            params.set("order", options.order);
+        }
 
         const url = process.env.BACKEND_URL + `/api?${params.toString()}`;
 
@@ -253,7 +259,12 @@ export type QueueRequestOptions = {
     start: number,
     limit: number,
     status?: "all" | "downloading" | "queued" | "paused",
+    sort?: QueueSortField,
+    order?: QueueSortOrder,
 }
+
+export type QueueSortField = "priority" | "name" | "category" | "status" | "size" | "created";
+export type QueueSortOrder = "asc" | "desc";
 
 export type QueueSlot = {
     nzo_id: string,

@@ -25,18 +25,14 @@ public class GetQueueController(
         var inProgressQueueItemIds = inProgressQueueItems
             .Select(x => x.queueItem.Id)
             .ToHashSet();
-        var progressPercentageById = inProgressQueueItems
-            .ToDictionary(x => x.queueItem.Id, x => x.progress);
-        var activePageItems = inProgressQueueItems
-            .Skip(request.Start)
-            .Take(request.Limit)
-            .ToList();
-
         // get total count
         var ct = request.CancellationToken;
         var priorities = request.Priorities
             .Select(x => (QueueItem.PriorityOption)(int)x)
             .ToHashSet();
+        var sortOptions = new DavDatabaseClient.QueueSortOptions(
+            ToDatabaseSortField(request.SortField),
+            request.SortDescending);
         var waitingStatuses = GetWaitingItemStatuses(request);
         var includeWaitingItems = request.Statuses.Count == 0 || waitingStatuses.Count > 0;
         var waitingTotalCount = includeWaitingItems
@@ -53,9 +49,7 @@ public class GetQueueController(
         var totalCountAll = await dbClient.GetQueueItemsCount(request.Category, ct).ConfigureAwait(false);
 
         // get queued items
-        var activeCountOnPage = activePageItems.Count;
-        var waitingStart = Math.Max(0, request.Start - inProgressQueueItems.Count);
-        var waitingLimit = Math.Max(0, request.Limit - activeCountOnPage);
+        var waitingLimit = Math.Max(0, request.Start + request.Limit);
         var queueItems = includeWaitingItems && waitingLimit > 0
             ? await dbClient.GetQueueItems(
                 request.Category,
@@ -64,22 +58,30 @@ public class GetQueueController(
                 request.Search,
                 priorities,
                 waitingStatuses,
-                waitingStart,
+                sortOptions,
+                0,
                 waitingLimit,
                 ct).ConfigureAwait(false)
             : [];
 
         // get slots
-        var visibleQueueItems = activePageItems.Select(x => x.queueItem).Concat(queueItems);
-        var slots = visibleQueueItems
+        var visibleQueueItems = inProgressQueueItems
+            .Select(x => new QueueListItem(x.queueItem, x.progress, "Downloading"))
+            .Concat(queueItems.Select(x => new QueueListItem(
+                x,
+                ProgressPercentage: null,
+                x.Priority == QueueItem.PriorityOption.Paused ? "Paused" : "Queued")));
+        var slots = QueueListItem.Order(visibleQueueItems, request)
+            .Skip(request.Start)
             .Take(request.Limit)
             .Select((queueItem, index) =>
             {
-                var isInProgress = progressPercentageById.TryGetValue(queueItem.Id, out var percentage);
-                var status = isInProgress
-                    ? "Downloading"
-                    : queueItem.Priority == QueueItem.PriorityOption.Paused ? "Paused" : "Queued";
-                return GetQueueResponse.QueueSlot.FromQueueItem(queueItem, request.Start + index, percentage, status);
+                var percentage = queueItem.ProgressPercentage ?? 0;
+                return GetQueueResponse.QueueSlot.FromQueueItem(
+                    queueItem.QueueItem,
+                    request.Start + index,
+                    percentage,
+                    queueItem.Status);
             })
             .ToList();
         var sizeLeftBytes = slots
@@ -139,6 +141,63 @@ public class GetQueueController(
         if (request.Statuses.Contains("queued")) statuses.Add("queued");
         if (request.Statuses.Contains("paused")) statuses.Add("paused");
         return statuses;
+    }
+
+    private static DavDatabaseClient.QueueSortField ToDatabaseSortField(GetQueueRequest.QueueSortField field)
+    {
+        return field switch
+        {
+            GetQueueRequest.QueueSortField.Name => DavDatabaseClient.QueueSortField.Name,
+            GetQueueRequest.QueueSortField.Category => DavDatabaseClient.QueueSortField.Category,
+            GetQueueRequest.QueueSortField.Status => DavDatabaseClient.QueueSortField.Status,
+            GetQueueRequest.QueueSortField.Size => DavDatabaseClient.QueueSortField.Size,
+            GetQueueRequest.QueueSortField.CreatedAt => DavDatabaseClient.QueueSortField.CreatedAt,
+            _ => DavDatabaseClient.QueueSortField.Priority
+        };
+    }
+
+    private sealed record QueueListItem(QueueItem QueueItem, int? ProgressPercentage, string Status)
+    {
+        public static IEnumerable<QueueListItem> Order(IEnumerable<QueueListItem> items, GetQueueRequest request)
+        {
+            var ordered = request.SortField switch
+            {
+                GetQueueRequest.QueueSortField.Name => request.SortDescending
+                    ? items.OrderByDescending(x => x.QueueItem.JobName, StringComparer.OrdinalIgnoreCase)
+                    : items.OrderBy(x => x.QueueItem.JobName, StringComparer.OrdinalIgnoreCase),
+                GetQueueRequest.QueueSortField.Category => request.SortDescending
+                    ? items.OrderByDescending(x => x.QueueItem.Category, StringComparer.OrdinalIgnoreCase)
+                    : items.OrderBy(x => x.QueueItem.Category, StringComparer.OrdinalIgnoreCase),
+                GetQueueRequest.QueueSortField.Status => request.SortDescending
+                    ? items.OrderByDescending(x => GetStatusWeight(x.Status))
+                    : items.OrderBy(x => GetStatusWeight(x.Status)),
+                GetQueueRequest.QueueSortField.Size => request.SortDescending
+                    ? items.OrderByDescending(x => x.QueueItem.TotalSegmentBytes)
+                    : items.OrderBy(x => x.QueueItem.TotalSegmentBytes),
+                GetQueueRequest.QueueSortField.CreatedAt => request.SortDescending
+                    ? items.OrderByDescending(x => x.QueueItem.CreatedAt)
+                    : items.OrderBy(x => x.QueueItem.CreatedAt),
+                _ => request.SortDescending
+                    ? items.OrderByDescending(x => x.QueueItem.Priority)
+                    : items.OrderBy(x => x.QueueItem.Priority)
+            };
+
+            return ordered
+                .ThenByDescending(x => x.QueueItem.Priority)
+                .ThenBy(x => x.QueueItem.CreatedAt)
+                .ThenBy(x => x.QueueItem.Id);
+        }
+
+        private static int GetStatusWeight(string status)
+        {
+            return status.ToLowerInvariant() switch
+            {
+                "downloading" => 2,
+                "queued" => 1,
+                "paused" => 0,
+                _ => -1
+            };
+        }
     }
 
     protected override async Task<IActionResult> Handle()

@@ -5,6 +5,7 @@
 ### Features
 
 * add queue status filters, page-size selection, and pause/resume controls to the web UI.
+* add backend-backed queue sorting by name, category, status, and size in the web UI and SAB-compatible queue endpoint.
 * expose runtime memory, GC, thread-pool, queue, and streaming observability in status APIs.
 * run background health checks and repair workers concurrently while retaining shared NNTP connection limits.
 
@@ -19,8 +20,15 @@
 ### Bug Fixes
 
 * fix queue tab filtering by sending the backend `status` filter from the web UI.
+* fix settings save feedback so failed updates no longer show as saved.
 * fix settings tab state leakage by cloning defaults and saved/draft config state.
+* clear missing-segment health-check cache when Usenet provider settings change.
 * mount the Library settings tab and make settings tabs URL-addressable.
+
+### CI
+
+* add backend and frontend verification gates before GHCR beta/latest image publishing.
+* require changelog updates on main pushes that publish pre-release images.
 
 ## [0.6.5](https://github.com/nzbdav-dev/nzbdav/compare/v0.6.4...v0.6.5) (2026-05-27)
 

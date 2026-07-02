@@ -1,7 +1,7 @@
 import { useLocation, useNavigate, useRevalidator } from "react-router";
 import type { Route } from "./+types/route";
 import styles from "./route.module.css"
-import { backendClient, type HistorySlot, type QueueSlot } from "~/clients/backend-client.server";
+import { backendClient, type HistorySlot, type QueueSlot, type QueueSortField, type QueueSortOrder } from "~/clients/backend-client.server";
 import { HistoryTable } from "./components/history-table/history-table";
 import { QueueTable } from "./components/queue-table/queue-table";
 import { useCallback, useEffect, useState, useRef } from "react";
@@ -18,10 +18,14 @@ export async function loader({ request }: Route.LoaderArgs) {
     const historyPage = getPageNumber(url.searchParams.get("historyPage"));
     const pageSize = getPageSize(url.searchParams.get("pageSize"));
     const queueStatus = getQueueStatus(url.searchParams.get("queueStatus"));
+    const queueSort = getQueueSort(url.searchParams.get("queueSort"));
+    const queueOrder = getQueueOrder(url.searchParams.get("queueOrder"));
     const queuePromise = backendClient.getQueue({
         start: (queuePage - 1) * pageSize,
         limit: pageSize,
         status: queueStatus,
+        sort: queueSort,
+        order: queueOrder,
     });
     const historyPromise = backendClient.getHistory((historyPage - 1) * pageSize, pageSize);
     const configPromise = backendClient.getConfig(["api.categories", "api.manual-category"])
@@ -43,6 +47,8 @@ export async function loader({ request }: Route.LoaderArgs) {
         totalQueueCount: queue?.noofslots || 0,
         totalHistoryCount: history?.noofslots || 0,
         queueStatus: queueStatus,
+        queueSort: queueSort,
+        queueOrder: queueOrder,
         queuePaused: queue?.paused || false,
         queueStatusText: queue?.status || "Idle",
         queuePage: queuePage,
@@ -83,6 +89,8 @@ export default function Queue(props: Route.ComponentProps) {
         props.loaderData.queuePage,
         props.loaderData.historyPage,
         props.loaderData.queueStatus,
+        props.loaderData.queueSort,
+        props.loaderData.queueOrder,
         props.loaderData.pageSize,
         props.loaderData.queueSlots,
         props.loaderData.historySlots,
@@ -118,6 +126,17 @@ export default function Queue(props: Route.ComponentProps) {
             queuePage: null,
         });
     }, [updateSearchParams]);
+
+    const onQueueSortSelected = useCallback((queueSort: QueueSortField) => {
+        const currentSort = props.loaderData.queueSort;
+        const currentOrder = props.loaderData.queueOrder;
+        const nextOrder: QueueSortOrder = currentSort === queueSort && currentOrder === "desc" ? "asc" : "desc";
+        updateSearchParams({
+            queueSort: queueSort === "priority" ? null : queueSort,
+            queueOrder: nextOrder === "desc" ? null : nextOrder,
+            queuePage: null,
+        });
+    }, [props.loaderData.queueSort, props.loaderData.queueOrder, updateSearchParams]);
 
     const requestQueueRefresh = useCallback(() => {
         window.clearTimeout(queueRefreshTimeoutRef.current);
@@ -162,6 +181,8 @@ export default function Queue(props: Route.ComponentProps) {
                         queueSlots={combinedQueueSlots}
                         totalQueueCount={totalQueueCount + (props.loaderData.queueStatus === "all" ? uploadingFiles.length : 0)}
                         queueStatusFilter={props.loaderData.queueStatus}
+                        queueSort={props.loaderData.queueSort}
+                        queueOrder={props.loaderData.queueOrder}
                         isQueuePaused={queuePaused}
                         queueStatusText={props.loaderData.queueStatusText}
                         pageNumber={props.loaderData.queuePage}
@@ -175,6 +196,7 @@ export default function Queue(props: Route.ComponentProps) {
                         onPriorityChanged={queueEvents.onChangeQueueSlotPriority}
                         onUploadClicked={dropzone.open}
                         onQueueStatusSelected={onQueueStatusSelected}
+                        onQueueSortSelected={onQueueSortSelected}
                         onPauseQueueChanged={setQueuePaused}
                         onPageSelected={page => onPageSelected("queuePage", page)}
                         onPageSizeSelected={onPageSizeSelected}
@@ -232,6 +254,15 @@ function getPageSize(value: string | null): number {
 function getQueueStatus(value: string | null): QueueStatusFilter {
     if (value === "downloading" || value === "queued" || value === "paused") return value;
     return "all";
+}
+
+function getQueueSort(value: string | null): QueueSortField {
+    if (value === "name" || value === "category" || value === "status" || value === "size" || value === "created") return value;
+    return "priority";
+}
+
+function getQueueOrder(value: string | null): QueueSortOrder {
+    return value === "asc" ? "asc" : "desc";
 }
 
 export type QueueStatusFilter = "all" | "downloading" | "queued" | "paused";
