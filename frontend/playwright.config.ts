@@ -6,6 +6,7 @@ const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_SERVER === "true";
 
 export default defineConfig({
   testDir: "./e2e",
+  workers: 1,
   timeout: 30_000,
   expect: {
     timeout: 5_000,
