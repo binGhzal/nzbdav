@@ -10,8 +10,8 @@ import { isMaintenanceSettingsUpdated, Maintenance } from "./maintenance/mainten
 import { isRepairsSettingsUpdated, isRepairsSettingsValid, RepairsSettings } from "./repairs/repairs";
 import { isRcloneSettingsUpdated, RcloneSettings } from "./rclone/rclone";
 import { isLibrarySettingsUpdated, LibrarySettings } from "./library/library";
-import { useCallback, useState } from "react";
-import { useBlocker, useLocation, useNavigate } from "react-router";
+import { useCallback, useEffect, useState } from "react";
+import { useBlocker, useLocation } from "react-router";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { withUrlBase } from "~/utils/url-base";
 
@@ -95,8 +95,11 @@ function Body(props: BodyProps) {
     const [isSaving, setIsSaving] = useState(false);
     const [isSaved, setIsSaved] = useState(false);
     const location = useLocation();
-    const navigate = useNavigate();
-    const activeTab = getSettingsTab(new URLSearchParams(location.search).get("tab"));
+    const [activeTab, setActiveTab] = useState(() => getSettingsTab(new URLSearchParams(location.search).get("tab")));
+
+    useEffect(() => {
+        setActiveTab(getSettingsTab(new URLSearchParams(location.search).get("tab")));
+    }, [location.search]);
 
     // derived variables
     const iseUsenetUpdated = isUsenetSettingsUpdated(config, newConfig);
@@ -140,11 +143,12 @@ function Body(props: BodyProps) {
 
     const onSelectTab = useCallback((tab: string | null) => {
         const nextTab = getSettingsTab(tab);
+        setActiveTab(nextTab);
         const params = new URLSearchParams(location.search);
         if (nextTab === "usenet") params.delete("tab");
         else params.set("tab", nextTab);
-        navigate(`${location.pathname}${params.size > 0 ? `?${params.toString()}` : ""}`, { replace: true });
-    }, [location.pathname, location.search, navigate]);
+        window.history.replaceState(window.history.state, "", `${location.pathname}${params.size > 0 ? `?${params.toString()}` : ""}`);
+    }, [location.pathname, location.search]);
 
     const onSave = useCallback(async () => {
         setIsSaving(true);
