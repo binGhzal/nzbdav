@@ -146,7 +146,7 @@ public class QueueItemProcessor(
             .ToMultiProgress(fileProcessors.Count);
         var fileProcessingResultsAll = await fileProcessors
             .Select(x => x!.ProcessAsync(part2Progress.SubProgress))
-            .WithConcurrencyAsync(configManager.GetAdaptiveMaxDownloadConnections() + 5)
+            .WithConcurrencyAsync(configManager.GetAdaptiveQueueFileProcessingConcurrency())
             .GetAllAsync(ct).ConfigureAwait(false);
         var fileProcessingResults = fileProcessingResultsAll
             .Where(x => x is not null)
@@ -166,7 +166,7 @@ public class QueueItemProcessor(
                 .Offset(100)
                 .ToPercentage(articlesToCheck.Count);
             var healthCheckConcurrency = configManager
-                .GetAdaptiveMaxDownloadConnections();
+                .GetAdaptiveHealthCheckConcurrency();
             await usenetClient
                 .CheckAllSegmentsAsync(articlesToCheck, healthCheckConcurrency, part3Progress, ct)
                 .ConfigureAwait(false);

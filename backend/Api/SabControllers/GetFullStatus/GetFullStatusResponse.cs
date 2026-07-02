@@ -33,6 +33,12 @@ public class GetFullStatusResponse
         [JsonPropertyName("adaptive_max_download_connections")]
         public int AdaptiveMaxDownloadConnections { get; init; }
 
+        [JsonPropertyName("queue_file_processing_concurrency")]
+        public int QueueFileProcessingConcurrency { get; init; }
+
+        [JsonPropertyName("healthcheck_concurrency")]
+        public int HealthCheckConcurrency { get; init; }
+
         [JsonPropertyName("active_streams")]
         public int ActiveStreams { get; init; }
 

@@ -14,6 +14,9 @@ public static class ContentIndexSnapshotStore
     private const string SnapshotFileName = "content-index.snapshot.json";
     private const string BackupSnapshotFileName = "content-index.snapshot.backup.json";
     private static readonly SemaphoreSlim Mutex = new(1, 1);
+    private static readonly object PruneWarningLock = new();
+    private static DateTime _lastPruneWarningUtc = DateTime.MinValue;
+    private static int _lastPruneWarningCount;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = false
@@ -26,7 +29,7 @@ public static class ContentIndexSnapshotStore
     {
         var snapshot = await CreateSnapshotAsync(dbContext, cancellationToken).ConfigureAwait(false);
         snapshot = PruneInvalidSnapshotEntries(snapshot, out var prunedEntryCount);
-        if (prunedEntryCount > 0)
+        if (ShouldLogPrunedEntryWarning(prunedEntryCount))
         {
             Log.Warning(
                 "Pruned {Count} invalid /content rows while writing recovery snapshot.",
@@ -65,6 +68,23 @@ public static class ContentIndexSnapshotStore
         finally
         {
             Mutex.Release();
+        }
+    }
+
+    private static bool ShouldLogPrunedEntryWarning(int prunedEntryCount)
+    {
+        if (prunedEntryCount <= 0) return false;
+
+        lock (PruneWarningLock)
+        {
+            var now = DateTime.UtcNow;
+            var countChangedMaterially = Math.Abs(prunedEntryCount - _lastPruneWarningCount) >= 100;
+            var intervalElapsed = now - _lastPruneWarningUtc >= TimeSpan.FromMinutes(5);
+            if (_lastPruneWarningCount != 0 && !countChangedMaterially && !intervalElapsed) return false;
+
+            _lastPruneWarningCount = prunedEntryCount;
+            _lastPruneWarningUtc = now;
+            return true;
         }
     }
 

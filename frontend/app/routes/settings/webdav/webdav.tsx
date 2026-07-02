@@ -87,6 +87,21 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
             </Form.Group>
             <hr />
             <Form.Group>
+                <Form.Label htmlFor="file-processing-concurrency-input">File Processing Concurrency Per NZB</Form.Label>
+                <Form.Control
+                    {...className([styles.input, !isValidFileProcessingConcurrency(config["queue.file-processing-concurrency"]) && styles.error])}
+                    type="text"
+                    id="file-processing-concurrency-input"
+                    aria-describedby="file-processing-concurrency-help"
+                    placeholder="0"
+                    value={config["queue.file-processing-concurrency"]}
+                    onChange={e => setNewConfig({ ...config, "queue.file-processing-concurrency": e.target.value })} />
+                <Form.Text id="file-processing-concurrency-help" muted>
+                    Number of file processors to run inside each active NZB. Use 0 for automatic CPU-based sizing.
+                </Form.Text>
+            </Form.Group>
+            <hr />
+            <Form.Group>
                 <Form.Label htmlFor="article-cache-max-megabytes-input">Temporary Article Cache Limit</Form.Label>
                 <InputGroup className={styles.input}>
                     <Form.Control
@@ -203,6 +218,7 @@ export function isWebdavSettingsUpdated(config: Record<string, string>, newConfi
         || config["usenet.max-download-connections"] !== newConfig["usenet.max-download-connections"]
         || config["usenet.adaptive-connections-enabled"] !== newConfig["usenet.adaptive-connections-enabled"]
         || config["queue.max-concurrent-downloads"] !== newConfig["queue.max-concurrent-downloads"]
+        || config["queue.file-processing-concurrency"] !== newConfig["queue.file-processing-concurrency"]
         || config["usenet.article-cache-max-megabytes"] !== newConfig["usenet.article-cache-max-megabytes"]
         || config["usenet.max-streaming-connections"] !== newConfig["usenet.max-streaming-connections"]
         || config["usenet.streaming-priority"] !== newConfig["usenet.streaming-priority"]
@@ -216,6 +232,7 @@ export function isWebdavSettingsValid(newConfig: Record<string, string>) {
     return isValidUser(newConfig["webdav.user"])
         && isValidMaxDownloadConnections(newConfig["usenet.max-download-connections"])
         && isValidMaxConcurrentQueueDownloads(newConfig["queue.max-concurrent-downloads"])
+        && isValidFileProcessingConcurrency(newConfig["queue.file-processing-concurrency"])
         && isValidArticleCacheMaxMegabytes(newConfig["usenet.article-cache-max-megabytes"])
         && isValidMaxStreamingConnections(newConfig["usenet.max-streaming-connections"])
         && isValidStreamingPriority(newConfig["usenet.streaming-priority"])
@@ -235,6 +252,12 @@ function isValidMaxConcurrentQueueDownloads(value: string): boolean {
     if (value.trim() === "") return false;
     const num = Number(value);
     return Number.isInteger(num) && num >= 0 && num <= 16;
+}
+
+function isValidFileProcessingConcurrency(value: string): boolean {
+    if (value.trim() === "") return false;
+    const num = Number(value);
+    return Number.isInteger(num) && num >= 0 && num <= 64;
 }
 
 function isValidArticleCacheMaxMegabytes(value: string): boolean {

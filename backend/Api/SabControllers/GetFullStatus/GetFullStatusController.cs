@@ -36,6 +36,8 @@ public class GetFullStatusController(
                 MaxQueueWorkers = configManager.GetAdaptiveMaxConcurrentQueueDownloads(),
                 MaxDownloadConnections = configManager.GetMaxDownloadConnections(),
                 AdaptiveMaxDownloadConnections = configManager.GetAdaptiveMaxDownloadConnections(),
+                QueueFileProcessingConcurrency = configManager.GetAdaptiveQueueFileProcessingConcurrency(),
+                HealthCheckConcurrency = configManager.GetAdaptiveHealthCheckConcurrency(),
                 ActiveStreams = activeStreams.Count,
                 TotalStreamsOpened = activeStreams.TotalOpened,
                 ProcessId = Environment.ProcessId,
