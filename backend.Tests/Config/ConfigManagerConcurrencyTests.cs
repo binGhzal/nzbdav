@@ -98,8 +98,8 @@ public class ConfigManagerConcurrencyTests
             Environment.SetEnvironmentVariable("NZBDAV_ADAPTIVE_CPU_TARGET_CORES", "1");
 
             Assert.Equal(1.00, ConfigManager.GetCpuPressureMultiplier(0.50));
-            Assert.Equal(0.75, ConfigManager.GetCpuPressureMultiplier(1.20));
-            Assert.Equal(0.40, ConfigManager.GetCpuPressureMultiplier(2.10));
+            Assert.Equal(0.60, ConfigManager.GetCpuPressureMultiplier(1.20));
+            Assert.Equal(0.35, ConfigManager.GetCpuPressureMultiplier(2.10));
         }
         finally
         {
