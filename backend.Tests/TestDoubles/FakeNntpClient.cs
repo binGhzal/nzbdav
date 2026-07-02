@@ -8,7 +8,7 @@ using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.TestDoubles;
 
-public sealed class FakeNntpClient : NntpClient
+public class FakeNntpClient : NntpClient
 {
     private sealed class TrackingMemoryStream(byte[] buffer, Action onDispose) : MemoryStream(buffer, writable: false)
     {

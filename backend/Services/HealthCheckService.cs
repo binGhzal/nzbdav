@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -22,6 +23,7 @@ namespace NzbWebDAV.Services;
 public class HealthCheckService : BackgroundService
 {
     private static readonly TimeSpan AutoRepairRetryDelay = TimeSpan.FromHours(6);
+    private static readonly TimeSpan ProviderErrorRetryDelay = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan WorkerLeaseDuration = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan MissingSegmentCacheTtl = TimeSpan.FromHours(6);
     private const int WorkerMaxAttempts = 3;
@@ -224,7 +226,7 @@ public class HealthCheckService : BackgroundService
                 return;
             }
 
-            await PerformHealthCheck(davItem, dbClient, segmentConcurrency, ct).ConfigureAwait(false);
+            await PerformHealthCheckAsync(davItem, dbClient, segmentConcurrency, ct).ConfigureAwait(false);
             await dbClient.CompleteWorkerJobAsync(workerJob, ct: ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
@@ -320,7 +322,7 @@ public class HealthCheckService : BackgroundService
             .Where(x => x.HistoryItemId == null);
     }
 
-    private async Task PerformHealthCheck
+    public async Task PerformHealthCheckAsync
     (
         DavItem davItem,
         DavDatabaseClient dbClient,
@@ -332,8 +334,21 @@ public class HealthCheckService : BackgroundService
         {
             // update the release date, if null
             var segments = await GetAllSegments(davItem, dbClient, ct).ConfigureAwait(false);
-            if (davItem.ReleaseDate == null) await UpdateReleaseDate(davItem, segments, ct).ConfigureAwait(false);
-
+            if (davItem.ReleaseDate == null)
+            {
+                try
+                {
+                    await UpdateReleaseDate(davItem, segments, ct).ConfigureAwait(false);
+                }
+                catch (UsenetArticleNotFoundException e)
+                {
+                    Log.Debug(e, "Could not update release date before health check for {Path}: {Message}", davItem.Path, e.Message);
+                }
+                catch (Exception e) when (!e.IsCancellationException())
+                {
+                    Log.Debug(e, "Could not update release date before health check for {Path}: {Message}", davItem.Path, e.Message);
+                }
+            }
 
             // setup progress tracking
             var progressHook = new Progress<int>();
@@ -346,9 +361,21 @@ public class HealthCheckService : BackgroundService
 
             // perform health check
             var progress = progressHook.ToPercentage(segments.Count);
-            await RunVerificationAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
+            var checkBatch = await RunVerificationAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
+
+            if (checkBatch.Missing > 0)
+            {
+                await RecordMissingSegmentsAsync(davItem, dbClient, checkBatch, ct).ConfigureAwait(false);
+                return;
+            }
+
+            if (checkBatch.ProviderErrors > 0 || checkBatch.Unknown > 0)
+            {
+                await RecordUnknownVerificationAsync(davItem, dbClient, checkBatch, ct).ConfigureAwait(false);
+                return;
+            }
 
             // update the database
             ClearCachedMissingSegmentIds(segments);
@@ -396,7 +423,7 @@ public class HealthCheckService : BackgroundService
         }
     }
 
-    private async Task RunVerificationAsync
+    private async Task<SegmentCheckBatch> RunVerificationAsync
     (
         List<string> segments,
         int concurrency,
@@ -404,7 +431,99 @@ public class HealthCheckService : BackgroundService
         CancellationToken ct
     )
     {
-        await _usenetClient.CheckAllSegmentsAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
+        return await _usenetClient.CheckSegmentsAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
+    }
+
+    private async Task RecordMissingSegmentsAsync
+    (
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        SegmentCheckBatch checkBatch,
+        CancellationToken ct
+    )
+    {
+        var utcNow = DateTimeOffset.UtcNow;
+        var missingSegmentIds = checkBatch.Results
+            .Where(x => x.State == SegmentCheckState.Missing)
+            .SelectMany(x => NzbSegmentIdSet.Decode(x.SegmentId))
+            .ToList();
+
+        if (FilenameUtil.IsImportantFileType(davItem.Name))
+            AddCachedMissingSegmentIds(missingSegmentIds);
+
+        ApplyMissingSegmentPolicy(davItem, dbClient, checkBatch, utcNow, SendStatus);
+        await dbClient.EnqueueWorkerJobAsync(
+                WorkerJob.JobKind.Repair,
+                davItem.Id,
+                priority: 0,
+                now: utcNow,
+                ct: ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task RecordUnknownVerificationAsync
+    (
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        SegmentCheckBatch checkBatch,
+        CancellationToken ct
+    )
+    {
+        var utcNow = DateTimeOffset.UtcNow;
+        ApplyUnknownVerificationPolicy(davItem, dbClient, checkBatch, utcNow, SendStatus);
+        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    public static void ApplyMissingSegmentPolicy
+    (
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        SegmentCheckBatch checkBatch,
+        DateTimeOffset utcNow,
+        Func<HealthCheckResult, HealthCheckResult>? onResult = null
+    )
+    {
+        davItem.LastHealthCheck = utcNow;
+        davItem.NextHealthCheck = utcNow + AutoRepairRetryDelay;
+        var result = new HealthCheckResult()
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = davItem.Id,
+            Path = davItem.Path,
+            CreatedAt = utcNow,
+            Result = HealthCheckResult.HealthResult.Unhealthy,
+            RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
+            Message = $"File had {checkBatch.Missing} missing articles. Queued automatic repair."
+        };
+        dbClient.Ctx.HealthCheckResults.Add(onResult?.Invoke(result) ?? result);
+    }
+
+    public static void ApplyUnknownVerificationPolicy
+    (
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        SegmentCheckBatch checkBatch,
+        DateTimeOffset utcNow,
+        Func<HealthCheckResult, HealthCheckResult>? onResult = null
+    )
+    {
+        davItem.LastHealthCheck = utcNow;
+        davItem.NextHealthCheck = utcNow + ProviderErrorRetryDelay;
+        var result = new HealthCheckResult()
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = davItem.Id,
+            Path = davItem.Path,
+            CreatedAt = utcNow,
+            Result = HealthCheckResult.HealthResult.Unhealthy,
+            RepairStatus = HealthCheckResult.RepairAction.None,
+            Message = string.Join(" ", [
+                "File verification could not prove articles are missing.",
+                $"checked={checkBatch.Checked}, provider_errors={checkBatch.ProviderErrors}, unknown={checkBatch.Unknown}.",
+                "Will retry before automatic repair."
+            ])
+        };
+        dbClient.Ctx.HealthCheckResults.Add(onResult?.Invoke(result) ?? result);
     }
 
     private async Task UpdateReleaseDate(DavItem davItem, List<string> segments, CancellationToken ct)

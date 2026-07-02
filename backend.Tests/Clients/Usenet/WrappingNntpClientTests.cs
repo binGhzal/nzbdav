@@ -1,4 +1,5 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Tests.TestDoubles;
 
 namespace backend.Tests.Clients.Usenet;
@@ -20,11 +21,45 @@ public sealed class WrappingNntpClientTests
         Assert.True(disposed);
     }
 
+    [Fact]
+    public async Task CheckAllSegmentsAsyncUsesCurrentInstanceCheckSegmentsAsync()
+    {
+        using var wrapper = new RecordingWrappingNntpClient(new FakeNntpClient());
+
+        await wrapper.CheckAllSegmentsAsync(["segment-1"], 1, null, CancellationToken.None);
+
+        Assert.Equal(1, wrapper.CheckSegmentsCallCount);
+    }
+
     private sealed class TestWrappingNntpClient(INntpClient client) : WrappingNntpClient(client)
     {
         public void Replace(INntpClient client, TimeSpan drainDelay)
         {
             ReplaceUnderlyingClient(client, drainDelay);
+        }
+    }
+
+    private sealed class RecordingWrappingNntpClient(INntpClient client) : WrappingNntpClient(client)
+    {
+        public int CheckSegmentsCallCount { get; private set; }
+
+        public override Task<SegmentCheckBatch> CheckSegmentsAsync
+        (
+            IEnumerable<string> segmentIds,
+            int concurrency,
+            IProgress<int>? progress,
+            CancellationToken cancellationToken
+        )
+        {
+            CheckSegmentsCallCount++;
+            var results = segmentIds
+                .Select(segmentId => new SegmentCheckResult(
+                    segmentId,
+                    SegmentCheckState.Exists,
+                    Provider: null,
+                    Error: null))
+                .ToArray();
+            return Task.FromResult(SegmentCheckBatch.FromResults(results));
         }
     }
 }

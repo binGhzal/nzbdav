@@ -132,27 +132,85 @@ public abstract class NntpClient : INntpClient
         CancellationToken cancellationToken
     )
     {
-        using var childCt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var token = childCt.Token;
+        var batch = await CheckSegmentsAsync(segmentIds, concurrency, progress, cancellationToken)
+            .ConfigureAwait(false);
+        var missing = batch.Results.FirstOrDefault(x => x.State == SegmentCheckState.Missing);
+        if (missing is not null)
+            throw new UsenetArticleNotFoundException(missing.CandidateSegmentId ?? missing.SegmentId);
 
-        var tasks = segmentIds
-            .Select(async segmentId => (
-                SegmentId: segmentId,
-                Result: await NntpClientSegmentFallbackExtensions.WithFallbackAsync(
-                    segmentId,
-                    (candidateSegmentId, ct) => StatAsync(candidateSegmentId, ct),
-                    token
-                ).ConfigureAwait(false)
-            ))
-            .WithConcurrencyAsync(concurrency, token);
+        if (!batch.IsClean)
+            throw new InvalidOperationException(
+                $"Segment check did not complete cleanly. provider_errors={batch.ProviderErrors}, unknown={batch.Unknown}");
+    }
+
+    public virtual async Task<SegmentCheckBatch> CheckSegmentsAsync
+    (
+        IEnumerable<string> segmentIds,
+        int concurrency,
+        IProgress<int>? progress,
+        CancellationToken cancellationToken
+    )
+    {
+        var segmentList = segmentIds.ToList();
+        var results = new SegmentCheckResult[segmentList.Count];
+        var tasks = segmentList
+            .Select((segmentId, index) => CheckSegmentAsync(index, segmentId, cancellationToken))
+            .WithConcurrencyAsync(Math.Max(1, concurrency), cancellationToken);
 
         var processed = 0;
         await foreach (var task in tasks.ConfigureAwait(false))
         {
             progress?.Report(++processed);
-            if (task.Result.ResponseType == UsenetResponseType.ArticleExists) continue;
-            await childCt.CancelAsync().ConfigureAwait(false);
-            throw new UsenetArticleNotFoundException(task.SegmentId);
+            results[task.Index] = task.Result;
         }
+
+        return SegmentCheckBatch.FromResults(results);
+    }
+
+    protected virtual async Task<(int Index, SegmentCheckResult Result)> CheckSegmentAsync
+    (
+        int index,
+        string segmentId,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            var response = await NntpClientSegmentFallbackExtensions.WithFallbackAsync(
+                    segmentId,
+                    (candidateSegmentId, ct) => StatAsync(candidateSegmentId, ct),
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+            return (index, CreateSegmentCheckResult(segmentId, response));
+        }
+        catch (UsenetArticleNotFoundException e)
+        {
+            return (
+                index,
+                new SegmentCheckResult(
+                    segmentId,
+                    SegmentCheckState.Missing,
+                    Provider: null,
+                    Error: e.Message,
+                    CandidateSegmentId: e.SegmentId)
+            );
+        }
+        catch (Exception e) when (!e.IsCancellationException())
+        {
+            return (index, new SegmentCheckResult(segmentId, SegmentCheckState.ProviderError, Provider: null, Error: e.Message));
+        }
+    }
+
+    protected static SegmentCheckResult CreateSegmentCheckResult(string segmentId, UsenetStatResponse response)
+    {
+        return response.ResponseType switch
+        {
+            UsenetResponseType.ArticleExists =>
+                new SegmentCheckResult(segmentId, SegmentCheckState.Exists, Provider: null, Error: null),
+            UsenetResponseType.NoArticleWithThatMessageId =>
+                new SegmentCheckResult(segmentId, SegmentCheckState.Missing, Provider: null, Error: response.ResponseMessage),
+            _ => new SegmentCheckResult(segmentId, SegmentCheckState.Unknown, Provider: null, Error: response.ResponseMessage)
+        };
     }
 }

@@ -67,6 +67,9 @@ public interface INntpClient : IDisposable
     NzbFileStream GetFileStream(
         string[] segmentIds, long fileSize, int articleBufferSize, long? requestedEndByte = null);
 
+    Task<SegmentCheckBatch> CheckSegmentsAsync(
+        IEnumerable<string> segmentIds, int concurrency, IProgress<int>? progress, CancellationToken cancellationToken);
+
     Task CheckAllSegmentsAsync(
         IEnumerable<string> segmentIds, int concurrency, IProgress<int>? progress, CancellationToken cancellationToken);
 }

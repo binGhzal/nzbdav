@@ -1,9 +1,8 @@
 ﻿using NzbWebDAV.Clients.Usenet.Connections;
+using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
-using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Websocket;
-using UsenetSharp.Models;
 
 namespace NzbWebDAV.Clients.Usenet;
 
@@ -31,12 +30,12 @@ public class UsenetStreamingClient : WrappingNntpClient
     }
 
     /// <summary>
-    /// STAT-checks every segment, failing fast on the first one that is missing on all providers.
+    /// STAT-checks every segment and returns one result per segment.
     /// When the NNTP pipelining master switch is on, segments are checked in pipelined batches
     /// (per-provider pipelining is gated further down the chain); otherwise this defers to the
     /// base one-command-per-round-trip implementation.
     /// </summary>
-    public override async Task CheckAllSegmentsAsync
+    public override async Task<SegmentCheckBatch> CheckSegmentsAsync
     (
         IEnumerable<string> segmentIds,
         int concurrency,
@@ -52,37 +51,71 @@ public class UsenetStreamingClient : WrappingNntpClient
             .Providers.Any(p => p.StatPipeliningEnabled);
         if (!_configManager.GetNntpPipeliningEnabled() || depth <= 1 || !anyProviderPipelined)
         {
-            await base.CheckAllSegmentsAsync(segmentIds, concurrency, progress, cancellationToken)
+            return await base.CheckSegmentsAsync(segmentIds, concurrency, progress, cancellationToken)
                 .ConfigureAwait(false);
-            return;
         }
 
-        using var childCt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var token = childCt.Token;
+        var segmentList = segmentIds.ToList();
+        var results = new SegmentCheckResult[segmentList.Count];
 
         // Check the segments in pipelined batches of `depth`, running up to `concurrency` batches at
         // once so every pooled connection stays busy. Depth is the user-facing lever: a deeper
         // pipeline hides more round-trip latency; if a provider handles deep batches poorly, lower it.
-        var batches = segmentIds.Chunk(depth);
+        var batches = segmentList
+            .Select((segmentId, index) => new IndexedSegment(index, segmentId))
+            .Chunk(depth);
         var tasks = batches
-            .Select(async batch => (
-                Batch: batch,
-                Results: await StatPipelinedAsync(batch, token).ConfigureAwait(false)
-            ))
-            .WithConcurrencyAsync(concurrency);
+            .Select(batch => CheckPipelinedBatchAsync(batch, cancellationToken))
+            .WithConcurrencyAsync(Math.Max(1, concurrency), cancellationToken);
 
         var processed = 0;
         await foreach (var task in tasks.ConfigureAwait(false))
         {
-            for (var i = 0; i < task.Batch.Length; i++)
+            foreach (var result in task)
             {
+                results[result.Index] = result.Result;
                 progress?.Report(++processed);
-                if (task.Results[i].ResponseType == UsenetResponseType.ArticleExists) continue;
-                await childCt.CancelAsync().ConfigureAwait(false);
-                throw new UsenetArticleNotFoundException(task.Batch[i]);
             }
         }
+
+        return SegmentCheckBatch.FromResults(results);
     }
+
+    private async Task<IReadOnlyList<IndexedSegmentCheckResult>> CheckPipelinedBatchAsync
+    (
+        IReadOnlyList<IndexedSegment> batch,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            var batchSegmentIds = batch.Select(x => x.SegmentId).ToArray();
+            var statResults = await StatPipelinedAsync(batchSegmentIds, cancellationToken).ConfigureAwait(false);
+            return batch
+                .Select((segment, i) => new IndexedSegmentCheckResult(
+                    segment.Index,
+                    CreateSegmentCheckResult(segment.SegmentId, statResults[i])
+                ))
+                .ToArray();
+        }
+        catch (Exception e) when (!e.IsCancellationException())
+        {
+            return batch
+                .Select(segment => new IndexedSegmentCheckResult(
+                    segment.Index,
+                    new SegmentCheckResult(
+                        segment.SegmentId,
+                        SegmentCheckState.ProviderError,
+                        Provider: null,
+                        Error: e.Message)
+                ))
+                .ToArray();
+        }
+    }
+
+    private readonly record struct IndexedSegment(int Index, string SegmentId);
+
+    private readonly record struct IndexedSegmentCheckResult(int Index, SegmentCheckResult Result);
 
     private static DownloadingNntpClient CreateDownloadingNntpClient
     (

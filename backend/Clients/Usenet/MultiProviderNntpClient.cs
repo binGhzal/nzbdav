@@ -80,6 +80,11 @@ public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) 
             pending = stillPending;
         }
 
+        // If any still-missing segment hit a provider error on the way through, we cannot prove it
+        // is missing on every provider. Surface the provider error so repair can retry instead of
+        // treating an unknown provider as definitive corruption.
+        if (pending.Count > 0 && lastException is not null) lastException.Throw();
+
         // Any segment that never received a result only failed because providers threw -- surface
         // that as an error rather than silently reporting the article as missing.
         for (var i = 0; i < results.Length; i++)
@@ -212,9 +217,14 @@ public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) 
             {
                 var result = await task.Invoke(provider).ConfigureAwait(false);
 
-                // if no article with that message-id is found, try again with the next provider.
-                if (!isLastProvider && result.ResponseType == UsenetResponseType.NoArticleWithThatMessageId)
-                    continue;
+                // If no article with that message-id is found, try again with the next provider.
+                // If any earlier provider errored, a later miss is not definitive; retry later
+                // instead of handing repair a partial-provider conclusion.
+                if (result.ResponseType == UsenetResponseType.NoArticleWithThatMessageId)
+                {
+                    if (!isLastProvider) continue;
+                    if (lastException is not null) lastException.Throw();
+                }
 
                 return result;
             }

@@ -446,9 +446,22 @@ public class ConfigManager
             GetHealthCheckCpuConcurrencyLimit()
         );
         healthCheckConcurrency = Math.Min(healthCheckConcurrency, GetAutomaticDownloadConnectionBudget());
+        healthCheckConcurrency = Math.Min(healthCheckConcurrency, GetRepairConnectionBudget());
         return IsAdaptiveConnectionCountEnabled()
             ? ApplyRuntimePressureLimit(healthCheckConcurrency)
             : healthCheckConcurrency;
+    }
+
+    public int GetRepairConnectionBudget()
+    {
+        var rawPercent = int.Parse(GetConfigValue("repair.connection-budget-percent") ?? "20");
+        var percent = Math.Clamp(rawPercent, 1, 100);
+        var totalConnections = Math.Max(1, GetAutomaticDownloadConnectionBudget());
+        return Math.Clamp(
+            (int)Math.Ceiling(totalConnections * (percent / 100d)),
+            1,
+            totalConnections
+        );
     }
 
     private static int GetAutomaticMaxConcurrentQueueDownloads(int downloadConnections)

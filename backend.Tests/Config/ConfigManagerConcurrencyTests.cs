@@ -105,7 +105,7 @@ public class ConfigManagerConcurrencyTests
     }
 
     [Fact]
-    public void HealthCheckConcurrencyDoesNotExceedDownloadConnections()
+    public void HealthCheckConcurrencyUsesDefaultRepairConnectionBudget()
     {
         var configManager = CreateConfigManager(
             ("usenet.max-download-connections", "8"),
@@ -113,7 +113,22 @@ public class ConfigManagerConcurrencyTests
             ("repair.healthcheck-concurrency", "200")
         );
 
-        Assert.Equal(8, configManager.GetAdaptiveHealthCheckConcurrency());
+        Assert.Equal(2, configManager.GetAdaptiveHealthCheckConcurrency());
+        Assert.Equal(2, configManager.GetRepairConnectionBudget());
+    }
+
+    [Fact]
+    public void HealthCheckConcurrencyCanUseConfiguredRepairConnectionBudget()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "8"),
+            ("usenet.adaptive-connections-enabled", "false"),
+            ("repair.healthcheck-concurrency", "200"),
+            ("repair.connection-budget-percent", "50")
+        );
+
+        Assert.Equal(4, configManager.GetAdaptiveHealthCheckConcurrency());
+        Assert.Equal(4, configManager.GetRepairConnectionBudget());
     }
 
     [Fact]
@@ -126,7 +141,8 @@ public class ConfigManagerConcurrencyTests
             ("repair.healthcheck-concurrency", "64")
         );
 
-        Assert.Equal(Math.Min(64, Environment.ProcessorCount * 2), configManager.GetAdaptiveHealthCheckConcurrency());
+        var expected = Math.Min(Math.Min(40, Environment.ProcessorCount * 2), 64);
+        Assert.Equal(expected, configManager.GetAdaptiveHealthCheckConcurrency());
     }
 
     [Fact]
