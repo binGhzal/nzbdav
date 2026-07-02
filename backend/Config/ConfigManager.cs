@@ -16,12 +16,13 @@ public class ConfigManager
     private const int MaxAutoQueueCpuConcurrency = 16;
     private const int MaxQueueFileProcessingConcurrency = 64;
     private const int MaxHealthCheckConcurrency = 64;
+    private const string CgroupCpuStatPath = "/sys/fs/cgroup/cpu.stat";
     private static readonly TimeSpan CpuSampleInterval = TimeSpan.FromSeconds(5);
 
     private readonly Dictionary<string, string> _config = new();
     private readonly object _runtimePressureLock = new();
     private DateTimeOffset _lastCpuSampleAt = DateTimeOffset.UtcNow;
-    private TimeSpan _lastProcessorTime = Process.GetCurrentProcess().TotalProcessorTime;
+    private double _lastCpuUsageSeconds = GetCurrentCpuUsageSeconds();
     private double _lastProcessCpuCores;
     private double _lastCpuPressureMultiplier = 1.00;
     public event EventHandler<ConfigEventArgs>? OnConfigChanged;
@@ -307,19 +308,51 @@ public class ConfigManager
             if (elapsed < CpuSampleInterval)
                 return (_lastProcessCpuCores, _lastCpuPressureMultiplier);
 
-            using var process = Process.GetCurrentProcess();
-            var processorTime = process.TotalProcessorTime;
-            var cpuSeconds = Math.Max(0, (processorTime - _lastProcessorTime).TotalSeconds);
+            var cpuUsageSeconds = GetCurrentCpuUsageSeconds();
+            var cpuSeconds = Math.Max(0, cpuUsageSeconds - _lastCpuUsageSeconds);
             var processCpuCores = elapsed.TotalSeconds > 0
                 ? cpuSeconds / elapsed.TotalSeconds
                 : _lastProcessCpuCores;
 
             _lastCpuSampleAt = now;
-            _lastProcessorTime = processorTime;
+            _lastCpuUsageSeconds = cpuUsageSeconds;
             _lastProcessCpuCores = processCpuCores;
             _lastCpuPressureMultiplier = GetCpuPressureMultiplier(processCpuCores);
             return (_lastProcessCpuCores, _lastCpuPressureMultiplier);
         }
+    }
+
+    private static double GetCurrentCpuUsageSeconds()
+    {
+        return TryReadCgroupCpuUsageSeconds(CgroupCpuStatPath) ?? GetCurrentProcessCpuUsageSeconds();
+    }
+
+    private static double GetCurrentProcessCpuUsageSeconds()
+    {
+        using var process = Process.GetCurrentProcess();
+        return process.TotalProcessorTime.TotalSeconds;
+    }
+
+    public static double? TryReadCgroupCpuUsageSeconds(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return null;
+            foreach (var line in File.ReadLines(path))
+            {
+                if (!line.StartsWith("usage_usec ", StringComparison.Ordinal)) continue;
+                var value = line["usage_usec ".Length..].Trim();
+                return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var usageUsec)
+                    ? Math.Max(0, usageUsec) / 1_000_000d
+                    : null;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+
+        return null;
     }
 
     public static double GetCpuPressureMultiplier(double processCpuCores)

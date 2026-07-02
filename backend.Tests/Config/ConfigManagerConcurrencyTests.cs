@@ -107,6 +107,30 @@ public class ConfigManagerConcurrencyTests
         }
     }
 
+    [Fact]
+    public void CgroupCpuUsageParserReadsUsageUsec()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"nzbdav-cpu-{Guid.NewGuid():N}.stat");
+        try
+        {
+            File.WriteAllText(path, "usage_usec 1250000\nuser_usec 900000\nsystem_usec 350000\n");
+
+            Assert.Equal(1.25, ConfigManager.TryReadCgroupCpuUsageSeconds(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CgroupCpuUsageParserIgnoresMissingFile()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"nzbdav-missing-cpu-{Guid.NewGuid():N}.stat");
+
+        Assert.Null(ConfigManager.TryReadCgroupCpuUsageSeconds(path));
+    }
+
     private static ConfigManager CreateConfigManager(params (string Name, string Value)[] values)
     {
         var configManager = new ConfigManager();
