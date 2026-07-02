@@ -96,9 +96,11 @@ public class RcloneInvalidationService : BackgroundService
     {
         if (!response.Success || response.Forgotten is not { Count: > 0 }) return [];
 
-        var forgottenPaths = response.Forgotten.ToHashSet(StringComparer.Ordinal);
+        var forgottenPaths = response.Forgotten
+            .Select(NormalizeRclonePath)
+            .ToHashSet(StringComparer.Ordinal);
         return items
-            .Where(x => forgottenPaths.Contains(x.Path))
+            .Where(x => forgottenPaths.Contains(NormalizeRclonePath(x.Path)))
             .ToList();
     }
 
@@ -107,9 +109,16 @@ public class RcloneInvalidationService : BackgroundService
         if (response.Forgotten is not { Count: > 0 })
             return "rclone vfs/forget succeeded without confirming forgotten paths";
 
-        var forgottenPaths = response.Forgotten.ToHashSet(StringComparer.Ordinal);
-        var missingCount = requestedPaths.Count(x => !forgottenPaths.Contains(x));
+        var forgottenPaths = response.Forgotten
+            .Select(NormalizeRclonePath)
+            .ToHashSet(StringComparer.Ordinal);
+        var missingCount = requestedPaths.Count(x => !forgottenPaths.Contains(NormalizeRclonePath(x)));
         return $"rclone vfs/forget did not confirm {missingCount} requested path(s)";
+    }
+
+    private static string NormalizeRclonePath(string path)
+    {
+        return path.Trim('/');
     }
 
     private static void Reschedule(List<RcloneInvalidationItem> items, string error, DateTimeOffset now)

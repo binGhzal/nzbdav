@@ -43,6 +43,7 @@
 * clear missing-segment health-check cache when Usenet provider settings change.
 * persist rclone VFS invalidations and retry failed RC forgets so mount views recover after RC outages or restarts.
 * verify rclone `vfs/forget` confirmations before deleting invalidation outbox rows.
+* accept rclone `vfs/forget` confirmations with normalized paths so successful invalidations do not remain failed.
 * refresh content snapshots after raw cleanup/delete operations so intentionally removed files are not restored on recovery.
 * apply WebDAV range-end prefetch protection to `/view` streaming responses.
 * clamp SAB queue/history pagination, reject malformed `nzo_ids` with `400`, and report completed queue items as `100%`.

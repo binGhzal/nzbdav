@@ -153,12 +153,43 @@ public sealed class RcloneInvalidationTests
         var response = new VfsForgetResponse
         {
             Success = true,
-            Forgotten = ["/content/a"]
+            Forgotten = ["content/a"]
         };
 
         var forgotten = RcloneInvalidationService.GetSuccessfullyForgottenItems(items, response);
 
         Assert.Equal(["/content/a"], forgotten.Select(x => x.Path));
+    }
+
+    [Fact]
+    public void GetSuccessfullyForgottenItems_NormalizesLeadingAndTrailingSlashes()
+    {
+        var items = new List<RcloneInvalidationItem>
+        {
+            new()
+            {
+                Id = Guid.NewGuid(),
+                Path = "/nzbs",
+                CreatedAt = DateTimeOffset.UtcNow,
+                NextAttemptAt = DateTimeOffset.UtcNow
+            },
+            new()
+            {
+                Id = Guid.NewGuid(),
+                Path = "content/sonarr/",
+                CreatedAt = DateTimeOffset.UtcNow,
+                NextAttemptAt = DateTimeOffset.UtcNow
+            }
+        };
+        var response = new VfsForgetResponse
+        {
+            Success = true,
+            Forgotten = ["nzbs", "/content/sonarr"]
+        };
+
+        var forgotten = RcloneInvalidationService.GetSuccessfullyForgottenItems(items, response);
+
+        Assert.Equal(["/nzbs", "content/sonarr/"], forgotten.Select(x => x.Path));
     }
 
     [Fact]
