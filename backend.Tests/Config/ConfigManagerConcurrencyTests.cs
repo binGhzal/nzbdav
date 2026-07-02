@@ -89,6 +89,24 @@ public class ConfigManagerConcurrencyTests
         Assert.Equal(128, configManager.GetMaxTotalStreamingConnections());
     }
 
+    [Fact]
+    public void CpuPressureMultiplierBacksOffSustainedBackendCpuBurn()
+    {
+        var original = Environment.GetEnvironmentVariable("NZBDAV_ADAPTIVE_CPU_TARGET_CORES");
+        try
+        {
+            Environment.SetEnvironmentVariable("NZBDAV_ADAPTIVE_CPU_TARGET_CORES", "1");
+
+            Assert.Equal(1.00, ConfigManager.GetCpuPressureMultiplier(0.50));
+            Assert.Equal(0.75, ConfigManager.GetCpuPressureMultiplier(1.20));
+            Assert.Equal(0.40, ConfigManager.GetCpuPressureMultiplier(2.10));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NZBDAV_ADAPTIVE_CPU_TARGET_CORES", original);
+        }
+    }
+
     private static ConfigManager CreateConfigManager(params (string Name, string Value)[] values)
     {
         var configManager = new ConfigManager();

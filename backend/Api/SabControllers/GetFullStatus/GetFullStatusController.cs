@@ -26,6 +26,7 @@ public class GetFullStatusController(
         var activeStreams = activeStreamTracker.GetSnapshot();
         var process = Process.GetCurrentProcess();
         var gcInfo = GC.GetGCMemoryInfo();
+        var runtimePressure = configManager.GetRuntimePressureSnapshot();
         var status = new GetFullStatusResponse()
         {
             Status = new GetFullStatusResponse.FullStatusObject()
@@ -47,6 +48,9 @@ public class GetFullStatusController(
                 ManagedMemoryBytes = GC.GetTotalMemory(false),
                 WorkingSetBytes = process.WorkingSet64,
                 GcMemoryLoadPercent = GetGcMemoryLoadPercent(gcInfo),
+                ProcessCpuCores = Math.Round(runtimePressure.ProcessCpuCores, 2),
+                CpuPressureMultiplier = runtimePressure.CpuPressureMultiplier,
+                RuntimePressureMultiplier = runtimePressure.EffectiveMultiplier,
                 ThreadPoolThreads = ThreadPool.ThreadCount,
                 ThreadPoolPendingWorkItems = ThreadPool.PendingWorkItemCount,
                 ProcessId = Environment.ProcessId,

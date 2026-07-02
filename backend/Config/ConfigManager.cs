@@ -1,4 +1,6 @@
-﻿using System.Text.Json;
+﻿using System.Diagnostics;
+using System.Globalization;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Database;
@@ -14,8 +16,14 @@ public class ConfigManager
     private const int MaxAutoQueueCpuConcurrency = 16;
     private const int MaxQueueFileProcessingConcurrency = 64;
     private const int MaxHealthCheckConcurrency = 64;
+    private static readonly TimeSpan CpuSampleInterval = TimeSpan.FromSeconds(5);
 
     private readonly Dictionary<string, string> _config = new();
+    private readonly object _runtimePressureLock = new();
+    private DateTimeOffset _lastCpuSampleAt = DateTimeOffset.UtcNow;
+    private TimeSpan _lastProcessorTime = Process.GetCurrentProcess().TotalProcessorTime;
+    private double _lastProcessCpuCores;
+    private double _lastCpuPressureMultiplier = 1.00;
     public event EventHandler<ConfigEventArgs>? OnConfigChanged;
 
     public async Task LoadConfig()
@@ -269,10 +277,73 @@ public class ConfigManager
         );
     }
 
-    private static int ApplyRuntimePressureLimit(int configuredLimit)
+    private int ApplyRuntimePressureLimit(int configuredLimit)
     {
-        var multiplier = Math.Min(GetMemoryPressureMultiplier(), GetThreadPoolPressureMultiplier());
+        var multiplier = GetRuntimePressureSnapshot().EffectiveMultiplier;
         return Math.Max(1, (int)Math.Floor(configuredLimit * multiplier));
+    }
+
+    public RuntimePressureSnapshot GetRuntimePressureSnapshot()
+    {
+        var cpuPressure = GetProcessCpuPressure();
+        var memoryMultiplier = GetMemoryPressureMultiplier();
+        var threadPoolMultiplier = GetThreadPoolPressureMultiplier();
+        var effectiveMultiplier = Math.Min(cpuPressure.Multiplier, Math.Min(memoryMultiplier, threadPoolMultiplier));
+        return new RuntimePressureSnapshot(
+            ProcessCpuCores: cpuPressure.ProcessCpuCores,
+            CpuPressureMultiplier: cpuPressure.Multiplier,
+            MemoryPressureMultiplier: memoryMultiplier,
+            ThreadPoolPressureMultiplier: threadPoolMultiplier,
+            EffectiveMultiplier: effectiveMultiplier
+        );
+    }
+
+    private (double ProcessCpuCores, double Multiplier) GetProcessCpuPressure()
+    {
+        lock (_runtimePressureLock)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var elapsed = now - _lastCpuSampleAt;
+            if (elapsed < CpuSampleInterval)
+                return (_lastProcessCpuCores, _lastCpuPressureMultiplier);
+
+            using var process = Process.GetCurrentProcess();
+            var processorTime = process.TotalProcessorTime;
+            var cpuSeconds = Math.Max(0, (processorTime - _lastProcessorTime).TotalSeconds);
+            var processCpuCores = elapsed.TotalSeconds > 0
+                ? cpuSeconds / elapsed.TotalSeconds
+                : _lastProcessCpuCores;
+
+            _lastCpuSampleAt = now;
+            _lastProcessorTime = processorTime;
+            _lastProcessCpuCores = processCpuCores;
+            _lastCpuPressureMultiplier = GetCpuPressureMultiplier(processCpuCores);
+            return (_lastProcessCpuCores, _lastCpuPressureMultiplier);
+        }
+    }
+
+    public static double GetCpuPressureMultiplier(double processCpuCores)
+    {
+        var targetCores = GetAdaptiveCpuTargetCores();
+        var ratio = processCpuCores / targetCores;
+        return ratio switch
+        {
+            >= 3.00 => 0.25,
+            >= 2.00 => 0.40,
+            >= 1.50 => 0.60,
+            >= 1.15 => 0.75,
+            >= 1.00 => 0.85,
+            _ => 1.00
+        };
+    }
+
+    private static double GetAdaptiveCpuTargetCores()
+    {
+        var value = EnvironmentUtil.GetVariable("NZBDAV_ADAPTIVE_CPU_TARGET_CORES");
+        if (double.TryParse(value, CultureInfo.InvariantCulture, out var parsed) && parsed > 0)
+            return Math.Clamp(parsed, 0.25, Math.Max(0.25, Environment.ProcessorCount));
+
+        return 1.00;
     }
 
     private static double GetMemoryPressureMultiplier()
@@ -304,6 +375,14 @@ public class ConfigManager
             _ => 1.00
         };
     }
+
+    public sealed record RuntimePressureSnapshot(
+        double ProcessCpuCores,
+        double CpuPressureMultiplier,
+        double MemoryPressureMultiplier,
+        double ThreadPoolPressureMultiplier,
+        double EffectiveMultiplier
+    );
 
     public SemaphorePriorityOdds GetStreamingPriority()
     {

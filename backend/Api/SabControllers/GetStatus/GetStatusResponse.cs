@@ -60,6 +60,15 @@ public class GetStatusResponse
         [JsonPropertyName("gc_memory_load_percent")]
         public double GcMemoryLoadPercent { get; init; }
 
+        [JsonPropertyName("process_cpu_cores")]
+        public double ProcessCpuCores { get; init; }
+
+        [JsonPropertyName("cpu_pressure_multiplier")]
+        public double CpuPressureMultiplier { get; init; }
+
+        [JsonPropertyName("runtime_pressure_multiplier")]
+        public double RuntimePressureMultiplier { get; init; }
+
         [JsonPropertyName("threadpool_threads")]
         public int ThreadPoolThreads { get; init; }
 
