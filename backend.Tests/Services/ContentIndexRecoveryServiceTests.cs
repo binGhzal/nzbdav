@@ -36,6 +36,7 @@ public sealed class ContentIndexRecoveryServiceTests
             });
 
             await dbContext.SaveChangesAsync();
+            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
         }
 
         await _fixture.RecreateDatabaseAsync();
@@ -71,6 +72,7 @@ public sealed class ContentIndexRecoveryServiceTests
             });
 
             await dbContext.SaveChangesAsync();
+            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
         }
 
         await using (var dbContext = await _fixture.CreateMigratedContextAsync())
@@ -105,6 +107,7 @@ public sealed class ContentIndexRecoveryServiceTests
             );
 
             await dbContext.SaveChangesAsync();
+            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
         }
 
         var libraryPath = _fixture.CreateLibraryDirectory();
@@ -178,6 +181,7 @@ public sealed class ContentIndexRecoveryServiceTests
             });
 
             await dbContext.SaveChangesAsync();
+            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
         }
 
         await File.WriteAllTextAsync(ContentIndexSnapshotStore.SnapshotFilePath, "not-json");
@@ -209,8 +213,10 @@ public sealed class ContentIndexRecoveryServiceTests
             });
 
             await dbContext.SaveChangesAsync();
+            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
             dbContext.Items.Remove(movieFile);
             await dbContext.SaveChangesAsync();
+            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
         }
 
         await _fixture.RecreateDatabaseAsync();
@@ -240,6 +246,7 @@ public sealed class ContentIndexRecoveryServiceTests
             });
 
             await dbContext.SaveChangesAsync();
+            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
         }
 
         var originalSnapshot = await File.ReadAllTextAsync(ContentIndexSnapshotStore.SnapshotFilePath);
@@ -248,6 +255,7 @@ public sealed class ContentIndexRecoveryServiceTests
         {
             dbContext.NzbFiles.Remove(await dbContext.NzbFiles.SingleAsync(x => x.Id == expectedItemId));
             await dbContext.SaveChangesAsync();
+            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
         }
 
         var snapshotAfterCorruption = await File.ReadAllTextAsync(ContentIndexSnapshotStore.SnapshotFilePath);

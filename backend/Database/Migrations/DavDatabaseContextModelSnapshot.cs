@@ -383,6 +383,8 @@ namespace NzbWebDAV.Database.Migrations
 
                     b.HasIndex("Priority", "CreatedAt");
 
+                    b.HasIndex("Priority", "PauseUntil", "CreatedAt");
+
                     b.HasIndex("Category", "Priority", "CreatedAt");
 
                     b.ToTable("QueueItems", (string)null);

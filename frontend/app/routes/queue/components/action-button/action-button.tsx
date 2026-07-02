@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { classNames } from "~/utils/styling";
 
 export type ActionButtonProps = {
-    type: "delete" | "explore" | "menu",
+    type: "delete" | "explore" | "menu" | "pause" | "resume",
     text?: string,
     disabled?: boolean,
     selected?: boolean,
@@ -23,9 +23,27 @@ export function ActionButton({ type, text, disabled, selected, onClick }: Action
                 {type === "delete" && <TrashIcon />}
                 {type === "explore" && <DirectoryIcon />}
                 {type === "menu" && "⋯"}
+                {type === "pause" && <PauseIcon />}
+                {type === "resume" && <ResumeIcon />}
                 {text && <div className={styles.text}>{text}</div>}
             </div>
         </div>
+    )
+}
+
+function PauseIcon() {
+    return (
+        <svg className={styles["pause-icon"]} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M7 4h3v16H7zM14 4h3v16h-3z" />
+        </svg>
+    )
+}
+
+function ResumeIcon() {
+    return (
+        <svg className={styles["resume-icon"]} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M7 4v16l12-8z" />
+        </svg>
     )
 }
 

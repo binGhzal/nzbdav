@@ -67,7 +67,8 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                     checked={config["usenet.adaptive-connections-enabled"] === "true"}
                     onChange={e => setNewConfig({ ...config, "usenet.adaptive-connections-enabled": "" + e.target.checked })} />
                 <Form.Text id="adaptive-connections-enabled-help" muted>
-                    Automatically lowers queue and article connection limits while the runtime is under memory pressure.
+                    Automatically sizes queue and streaming article connections from runtime pressure and workload.
+                    The configured connection values are used as fallback ceilings.
                 </Form.Text>
             </Form.Group>
             <hr />

@@ -9,8 +9,9 @@ import { isArrsSettingsUpdated, isArrsSettingsValid, ArrsSettings } from "./arrs
 import { isMaintenanceSettingsUpdated, Maintenance } from "./maintenance/maintenance";
 import { isRepairsSettingsUpdated, isRepairsSettingsValid, RepairsSettings } from "./repairs/repairs";
 import { isRcloneSettingsUpdated, RcloneSettings } from "./rclone/rclone";
+import { isLibrarySettingsUpdated, LibrarySettings } from "./library/library";
 import { useCallback, useState } from "react";
-import { useBlocker } from "react-router";
+import { useBlocker, useLocation, useNavigate } from "react-router";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { withUrlBase } from "~/utils/url-base";
 
@@ -65,7 +66,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     var configItems = await backendClient.getConfig(Object.keys(defaultConfig));
 
     // transform to a map
-    const config: Record<string, string> = defaultConfig;
+    const config: Record<string, string> = { ...defaultConfig };
     for (const item of configItems) {
         config[item.configName] = item.configValue;
     }
@@ -89,11 +90,13 @@ type BodyProps = {
 
 function Body(props: BodyProps) {
     // stateful variables
-    const [config, setConfig] = useState(props.config);
-    const [newConfig, setNewConfig] = useState(config);
+    const [config, setConfig] = useState({ ...props.config });
+    const [newConfig, setNewConfig] = useState({ ...props.config });
     const [isSaving, setIsSaving] = useState(false);
     const [isSaved, setIsSaved] = useState(false);
-    const [activeTab, setActiveTab] = useState('usenet');
+    const location = useLocation();
+    const navigate = useNavigate();
+    const activeTab = getSettingsTab(new URLSearchParams(location.search).get("tab"));
 
     // derived variables
     const iseUsenetUpdated = isUsenetSettingsUpdated(config, newConfig);
@@ -102,8 +105,9 @@ function Body(props: BodyProps) {
     const isArrsUpdated = isArrsSettingsUpdated(config, newConfig);
     const isRepairsUpdated = isRepairsSettingsUpdated(config, newConfig);
     const isRcloneUpdated = isRcloneSettingsUpdated(config, newConfig);
+    const isLibraryUpdated = isLibrarySettingsUpdated(config, newConfig);
     const isMaintenanceUpdated = isMaintenanceSettingsUpdated(config, newConfig);
-    const isUpdated = iseUsenetUpdated || isSabnzbdUpdated || isWebdavUpdated || isArrsUpdated || isRepairsUpdated || isRcloneUpdated || isMaintenanceUpdated;
+    const isUpdated = iseUsenetUpdated || isSabnzbdUpdated || isWebdavUpdated || isArrsUpdated || isRepairsUpdated || isRcloneUpdated || isLibraryUpdated || isMaintenanceUpdated;
     const navigationBlocker = useNavigationBlocker(isUpdated);
 
     const usenetTitle = iseUsenetUpdated ? "✏️ Usenet" : "Usenet";
@@ -112,6 +116,7 @@ function Body(props: BodyProps) {
     const arrsTitle = isArrsUpdated ? "✏️ Radarr/Sonarr" : "Radarr/Sonarr";
     const repairsTitle = isRepairsUpdated ? "✏️ Repairs" : "Repairs";
     const rcloneTitle = isRcloneUpdated ? "✏️ Rclone Server" : "Rclone Server";
+    const libraryTitle = isLibraryUpdated ? "✏️ Library" : "Library";
     const maintenanceTitle = isMaintenanceUpdated ? "✏️ Maintenance" : "Maintenance";
 
     const saveButtonLabel = isSaving ? "Saving..."
@@ -129,9 +134,17 @@ function Body(props: BodyProps) {
 
     // events
     const onClear = useCallback(() => {
-        setNewConfig(config);
+        setNewConfig({ ...config });
         setIsSaved(false);
     }, [config, setNewConfig]);
+
+    const onSelectTab = useCallback((tab: string | null) => {
+        const nextTab = getSettingsTab(tab);
+        const params = new URLSearchParams(location.search);
+        if (nextTab === "usenet") params.delete("tab");
+        else params.set("tab", nextTab);
+        navigate(`${location.pathname}${params.size > 0 ? `?${params.toString()}` : ""}`, { replace: true });
+    }, [location.pathname, location.search, navigate]);
 
     const onSave = useCallback(async () => {
         setIsSaving(true);
@@ -146,7 +159,7 @@ function Body(props: BodyProps) {
             })()
         });
         if (response.ok) {
-            setConfig(newConfig);
+            setConfig({ ...newConfig });
         }
         setIsSaving(false);
         setIsSaved(true);
@@ -156,7 +169,7 @@ function Body(props: BodyProps) {
         <div className={styles.container}>
             <Tabs
                 activeKey={activeTab}
-                onSelect={x => setActiveTab(x!)}
+                onSelect={onSelectTab}
                 className={styles.tabs}
             >
                 <Tab eventKey="usenet" title={usenetTitle}>
@@ -176,6 +189,9 @@ function Body(props: BodyProps) {
                 </Tab>
                 <Tab eventKey="rclone" title={rcloneTitle}>
                     <RcloneSettings config={newConfig} setNewConfig={setNewConfig} />
+                </Tab>
+                <Tab eventKey="library" title={libraryTitle}>
+                    <LibrarySettings savedConfig={config} config={newConfig} setNewConfig={setNewConfig} />
                 </Tab>
                 <Tab eventKey="maintenance" title={maintenanceTitle}>
                     <Maintenance savedConfig={config} config={newConfig} setNewConfig={setNewConfig} />
@@ -207,6 +223,11 @@ function Body(props: BodyProps) {
             />
         </div>
     );
+}
+
+function getSettingsTab(value: string | null): string {
+    const tabs = new Set(["usenet", "sabnzbd", "webdav", "arrs", "repairs", "rclone", "library", "maintenance"]);
+    return value && tabs.has(value) ? value : "usenet";
 }
 
 function getChangedConfig(

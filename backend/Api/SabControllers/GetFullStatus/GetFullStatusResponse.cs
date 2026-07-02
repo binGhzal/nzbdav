@@ -51,6 +51,21 @@ public class GetFullStatusResponse
         [JsonPropertyName("total_streams_opened")]
         public long TotalStreamsOpened { get; init; }
 
+        [JsonPropertyName("managed_memory_bytes")]
+        public long ManagedMemoryBytes { get; init; }
+
+        [JsonPropertyName("working_set_bytes")]
+        public long WorkingSetBytes { get; init; }
+
+        [JsonPropertyName("gc_memory_load_percent")]
+        public double GcMemoryLoadPercent { get; init; }
+
+        [JsonPropertyName("threadpool_threads")]
+        public int ThreadPoolThreads { get; init; }
+
+        [JsonPropertyName("threadpool_pending_work_items")]
+        public long ThreadPoolPendingWorkItems { get; init; }
+
         [JsonPropertyName("pid")]
         public int ProcessId { get; init; }
 

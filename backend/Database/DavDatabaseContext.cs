@@ -282,6 +282,9 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
             e.HasIndex(i => new { i.Priority, i.CreatedAt })
                 .IsUnique(false);
 
+            e.HasIndex(i => new { i.Priority, i.PauseUntil, i.CreatedAt })
+                .IsUnique(false);
+
             e.HasIndex(i => new { i.Category, i.Priority, i.CreatedAt })
                 .IsUnique(false);
         });

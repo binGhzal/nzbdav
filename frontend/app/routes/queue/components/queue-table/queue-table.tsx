@@ -1,7 +1,7 @@
 import { ActionButton } from "../action-button/action-button"
 import { memo, useCallback, useMemo, useState } from "react"
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal"
-import type { PresentationQueueSlot } from "../../route"
+import type { PresentationQueueSlot, QueueStatusFilter } from "../../route"
 import type { TriCheckboxState } from "../tri-checkbox/tri-checkbox"
 import { PageRow, PageTable } from "../page-table/page-table"
 import { PageSection } from "../page-section/page-section"
@@ -16,8 +16,12 @@ import { Pagination } from "../pagination/pagination"
 export type QueueTableProps = {
     queueSlots: PresentationQueueSlot[],
     totalQueueCount: number,
+    queueStatusFilter: QueueStatusFilter,
+    isQueuePaused: boolean,
+    queueStatusText: string,
     pageNumber: number,
     pageSize: number,
+    pageSizeOptions: number[],
     categories: string[],
     manualCategoryRef: React.RefObject<string>,
     onIsSelectedChanged: (nzo_ids: Set<string>, isSelected: boolean) => void,
@@ -25,14 +29,21 @@ export type QueueTableProps = {
     onRemoved: (nzo_ids: Set<string>) => void,
     onPriorityChanged: (nzo_id: string, priority: string) => void,
     onUploadClicked?: () => void;
+    onQueueStatusSelected: (status: QueueStatusFilter) => void;
+    onPauseQueueChanged: (isPaused: boolean) => void;
     onPageSelected?: (page: number) => void;
+    onPageSizeSelected?: (pageSize: number) => void;
 }
 
 export function QueueTable({
     queueSlots,
     totalQueueCount,
+    queueStatusFilter,
+    isQueuePaused,
+    queueStatusText,
     pageNumber,
     pageSize,
+    pageSizeOptions,
     categories,
     manualCategoryRef,
     onIsSelectedChanged,
@@ -40,9 +51,13 @@ export function QueueTable({
     onRemoved,
     onPriorityChanged,
     onUploadClicked,
+    onQueueStatusSelected,
+    onPauseQueueChanged,
     onPageSelected,
+    onPageSizeSelected,
 }: QueueTableProps) {
     const [pendingRemoval, setPendingRemoval] = useState<{ nzoIds: Set<string>, label: string } | null>(null);
+    const [isPausingQueue, setIsPausingQueue] = useState(false);
     const totalPages = Math.max(1, Math.ceil(totalQueueCount / pageSize));
     const selectedQueueIds = useMemo(
         () => new Set<string>(queueSlots.filter(x => !!x.isSelected).map(x => x.nzo_id)),
@@ -121,6 +136,24 @@ export function QueueTable({
         onIsRemovingChanged(queued_nzo_ids, false);
     }, [pendingRemoval, queueSlots, setPendingRemoval, onIsRemovingChanged, onRemoved]);
 
+    const onPauseResumeQueue = useCallback(async () => {
+        const nextPausedState = !isQueuePaused;
+        setIsPausingQueue(true);
+        try {
+            const mode = nextPausedState ? "pause" : "resume";
+            const response = await fetch(withUrlBase(`/api?mode=${mode}`));
+            if (response.ok) {
+                const data = await response.json();
+                if (data.status === true) {
+                    onPauseQueueChanged(nextPausedState);
+                    setIsPausingQueue(false);
+                    return;
+                }
+            }
+        } catch { }
+        setIsPausingQueue(false);
+    }, [isQueuePaused, onPauseQueueChanged, setIsPausingQueue]);
+
 
     // view
     const categoryDropdown = useMemo(() => (
@@ -144,6 +177,11 @@ export function QueueTable({
                     <ActionButton type="delete" text="Movies" onClick={() => onBulkRemove("movies", "movie")} />
                 </>
             }
+            <ActionButton
+                type={isQueuePaused ? "resume" : "pause"}
+                text={isQueuePaused ? "Resume" : "Pause"}
+                disabled={isPausingQueue}
+                onClick={onPauseResumeQueue} />
             <WideViewport width="450px">
                 <div style={{ marginLeft: '10px' }}>
                     {categoryDropdown}
@@ -159,7 +197,8 @@ export function QueueTable({
     );
 
     return (
-        <PageSection title={sectionTitle} subTitle={sectionSubTitle} badgeText={`${totalQueueCount} item(s)`}>
+        <PageSection title={sectionTitle} subTitle={sectionSubTitle} badgeText={`${queueStatusText} · ${totalQueueCount} item(s)`}>
+            <QueueFilters value={queueStatusFilter} onChange={onQueueStatusSelected} />
             {queueSlots?.length == 0 && totalQueueCount === 0 ? (
                 <EmptyQueue onUploadClicked={onUploadClicked} />
             ) : (
@@ -176,9 +215,13 @@ export function QueueTable({
                     )}
                 </PageTable>
             )}
-            {totalPages > 1 &&
-                <Pagination pageNumber={pageNumber} totalPages={totalPages} onPageSelected={onPageSelected} />
-            }
+            <Pagination
+                pageNumber={pageNumber}
+                totalPages={totalPages}
+                pageSize={pageSize}
+                pageSizeOptions={pageSizeOptions}
+                onPageSelected={onPageSelected}
+                onPageSizeSelected={onPageSizeSelected} />
 
             <ConfirmModal
                 show={pendingRemoval !== null}
@@ -188,6 +231,36 @@ export function QueueTable({
                 onCancel={onCancelRemoval} />
         </PageSection>
     );
+}
+
+function QueueFilters({
+    value,
+    onChange,
+}: {
+    value: QueueStatusFilter,
+    onChange: (status: QueueStatusFilter) => void,
+}) {
+    const filters: Array<{ value: QueueStatusFilter, label: string }> = [
+        { value: "all", label: "All" },
+        { value: "downloading", label: "Downloading" },
+        { value: "queued", label: "Queued" },
+        { value: "paused", label: "Paused" },
+    ];
+
+    return (
+        <div className={styles.queueFilters}>
+            {filters.map(filter => (
+                <button
+                    key={filter.value}
+                    type="button"
+                    className={value === filter.value ? styles.queueFilterActive : styles.queueFilter}
+                    onClick={() => onChange(filter.value)}
+                >
+                    {filter.label}
+                </button>
+            ))}
+        </div>
+    )
 }
 
 type QueueRowProps = {

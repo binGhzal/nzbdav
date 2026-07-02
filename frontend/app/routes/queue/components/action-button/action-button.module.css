@@ -116,3 +116,39 @@
         }
     }
 }
+
+.pause,
+.resume {
+    border-color: hsl(192, 100%, 20%);
+
+    .pause-icon,
+    .resume-icon {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        fill: #adb8b8;
+    }
+
+    @media not (pointer: coarse),
+    (min-width: 900px) {
+        &:hover {
+            background-color: hsl(192, 100%, 14%);
+
+            .pause-icon,
+            .resume-icon {
+                fill: white;
+                filter: drop-shadow(0 0 3px black);
+            }
+        }
+    }
+
+    &:active {
+        background-color: hsl(192, 100%, 13%);
+
+        .pause-icon,
+        .resume-icon {
+            fill: white;
+            filter: drop-shadow(0 0 3px black);
+        }
+    }
+}

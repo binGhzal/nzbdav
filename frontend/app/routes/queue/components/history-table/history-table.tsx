@@ -18,10 +18,12 @@ export type HistoryTableProps = {
     totalHistoryCount: number,
     pageNumber: number,
     pageSize: number,
+    pageSizeOptions: number[],
     onIsSelectedChanged: (nzo_ids: Set<string>, isSelected: boolean) => void,
     onIsRemovingChanged: (nzo_ids: Set<string>, isRemoving: boolean) => void,
     onRemoved: (nzo_ids: Set<string>) => void,
     onPageSelected?: (page: number) => void,
+    onPageSizeSelected?: (pageSize: number) => void,
 }
 
 export function HistoryTable({
@@ -29,10 +31,12 @@ export function HistoryTable({
     totalHistoryCount,
     pageNumber,
     pageSize,
+    pageSizeOptions,
     onIsSelectedChanged,
     onIsRemovingChanged,
     onRemoved,
     onPageSelected,
+    onPageSizeSelected,
 }: HistoryTableProps) {
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
     const totalPages = Math.max(1, Math.ceil(totalHistoryCount / pageSize));
@@ -97,9 +101,13 @@ export function HistoryTable({
                     />
                 )}
             </PageTable>
-            {totalPages > 1 &&
-                <Pagination pageNumber={pageNumber} totalPages={totalPages} onPageSelected={onPageSelected} />
-            }
+            <Pagination
+                pageNumber={pageNumber}
+                totalPages={totalPages}
+                pageSize={pageSize}
+                pageSizeOptions={pageSizeOptions}
+                onPageSelected={onPageSelected}
+                onPageSizeSelected={onPageSizeSelected} />
 
             <ConfirmModal
                 show={isConfirmingRemoval}

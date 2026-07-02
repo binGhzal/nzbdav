@@ -4,7 +4,6 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
-using Serilog;
 
 namespace NzbWebDAV.Database.Interceptors;
 
@@ -31,7 +30,7 @@ public sealed class ContentIndexSnapshotInterceptor : SaveChangesInterceptor
 
     public override int SavedChanges(SaveChangesCompletedEventData eventData, int result)
     {
-        PersistSnapshotAsync(eventData.Context, CancellationToken.None).GetAwaiter().GetResult();
+        RequestSnapshot(eventData.Context);
         return base.SavedChanges(eventData, result);
     }
 
@@ -42,7 +41,7 @@ public sealed class ContentIndexSnapshotInterceptor : SaveChangesInterceptor
         CancellationToken cancellationToken = default
     )
     {
-        await PersistSnapshotAsync(eventData.Context, cancellationToken).ConfigureAwait(false);
+        RequestSnapshot(eventData.Context);
         return await base.SavedChangesAsync(eventData, result, cancellationToken).ConfigureAwait(false);
     }
 
@@ -62,20 +61,12 @@ public sealed class ContentIndexSnapshotInterceptor : SaveChangesInterceptor
         return base.SaveChangesFailedAsync(eventData, cancellationToken);
     }
 
-    private static async Task PersistSnapshotAsync(DbContext? context, CancellationToken cancellationToken)
+    private static void RequestSnapshot(DbContext? context)
     {
         if (context is not DavDatabaseContext dbContext) return;
         if (!PendingSnapshots.TryGetValue(dbContext, out _)) return;
         PendingSnapshots.Remove(dbContext);
-
-        try
-        {
-            await ContentIndexSnapshotStore.WriteAsync(dbContext, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to persist /content recovery snapshot.");
-        }
+        ContentIndexSnapshotWriterService.RequestSnapshot();
     }
 
     private static void MarkPendingSnapshot(DbContext? dbContext)

@@ -67,8 +67,17 @@ class BackendClient {
         return data.authenticated;
     }
 
-    public async getQueue(start: number, limit: number): Promise<QueueResponse> {
-        const url = process.env.BACKEND_URL + `/api?mode=queue&start=${start}&limit=${limit}`;
+    public async getQueue(options: QueueRequestOptions): Promise<QueueResponse> {
+        const params = new URLSearchParams({
+            mode: "queue",
+            start: String(options.start),
+            limit: String(options.limit),
+        });
+        if (options.status && options.status !== "all") {
+            params.set("status", options.status);
+        }
+
+        const url = process.env.BACKEND_URL + `/api?${params.toString()}`;
 
         const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
         const response = await fetch(url, { headers: { "x-api-key": apiKey } });
@@ -233,8 +242,17 @@ export type QueueResponse = {
     slots: QueueSlot[],
     noofslots: number,
     noofslots_total: number,
+    status: string,
+    paused: boolean,
+    paused_all: boolean,
     start: number,
     limit: number,
+}
+
+export type QueueRequestOptions = {
+    start: number,
+    limit: number,
+    status?: "all" | "downloading" | "queued" | "paused",
 }
 
 export type QueueSlot = {

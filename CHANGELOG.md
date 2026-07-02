@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* add queue status filters, page-size selection, and pause/resume controls to the web UI.
+* expose runtime memory, GC, thread-pool, queue, and streaming observability in status APIs.
+* run background health checks and repair workers concurrently while retaining shared NNTP connection limits.
+
+### Performance
+
+* move `/content` recovery snapshot writes off the database save hot path into a debounced background writer.
+* make adaptive connection limits use configured values as ceilings while reacting to provider, CPU, memory, and thread-pool pressure.
+* bound repair missing-segment metadata and article-cache pending-request metadata.
+* stop forcing aggressive default thread-pool sizes; thread-pool minimum overrides are now opt-in via environment variables.
+* add a queue-selection database index for active queue worker scans.
+
+### Bug Fixes
+
+* fix queue tab filtering by sending the backend `status` filter from the web UI.
+* fix settings tab state leakage by cloning defaults and saved/draft config state.
+* mount the Library settings tab and make settings tabs URL-addressable.
+
 ## [0.6.5](https://github.com/nzbdav-dev/nzbdav/compare/v0.6.4...v0.6.5) (2026-05-27)
 
 

@@ -107,6 +107,8 @@ public class ArticleCachingNntpClient(
         finally
         {
             semaphore.Release();
+            if (!_cachedSegments.ContainsKey(segmentId))
+                _pendingRequests.TryRemove(segmentId, out _);
         }
     }
 
@@ -190,6 +192,8 @@ public class ArticleCachingNntpClient(
         finally
         {
             semaphore.Release();
+            if (!_cachedSegments.ContainsKey(segmentId))
+                _pendingRequests.TryRemove(segmentId, out _);
         }
     }
 
@@ -210,6 +214,8 @@ public class ArticleCachingNntpClient(
         finally
         {
             semaphore.Release();
+            if (!_cachedSegments.ContainsKey(segmentId))
+                _pendingRequests.TryRemove(segmentId, out _);
         }
     }
 
@@ -324,6 +330,7 @@ public class ArticleCachingNntpClient(
                 if (!_cachedSegments.TryRemove(segmentId, out _)) continue;
 
                 _cacheBytes -= cacheEntry.SizeBytes;
+                _pendingRequests.TryRemove(segmentId, out _);
                 TryDeleteCachedFile(segmentId);
             }
         }

@@ -3,6 +3,9 @@ declare const styles: {
   readonly "queueContainer": string;
   readonly "section": string;
   readonly "sectionTitle": string;
+  readonly "queueFilters": string;
+  readonly "queueFilter": string;
+  readonly "queueFilterActive": string;
   readonly "alert": string;
   readonly "list": string;
   readonly "listItem": string;
@@ -10,4 +13,3 @@ declare const styles: {
   readonly "activeDropzone": string;
 };
 export = styles;
-

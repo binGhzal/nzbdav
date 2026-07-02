@@ -30,12 +30,7 @@ class Program
     {
         EnvironmentUtil.LoadDotEnvFile();
 
-        // Update thread-pool
-        var coreCount = Environment.ProcessorCount;
-        var minThreads = Math.Max(coreCount * 2, 50); // 2x cores, minimum 50
-        var maxThreads = Math.Max(coreCount * 50, 1000); // 50x cores, minimum 1000
-        ThreadPool.SetMinThreads(minThreads, minThreads);
-        ThreadPool.SetMaxThreads(maxThreads, maxThreads);
+        ConfigureThreadPool();
 
         // Initialize logger
         var defaultLevel = LogEventLevel.Information;
@@ -95,6 +90,7 @@ class Program
             .AddSingleton<StreamingConnectionLimiter>()
             .AddSingleton<UsenetStreamingClient>()
             .AddSingleton<QueueManager>()
+            .AddHostedService<ContentIndexSnapshotWriterService>()
             .AddHostedService<ContentIndexRecoveryService>()
             .AddHostedService<HealthCheckService>()
             .AddHostedService<ArrMonitoringService>()
@@ -164,6 +160,22 @@ class Program
             """
         );
         Environment.Exit(1);
+    }
+
+    private static void ConfigureThreadPool()
+    {
+        var configuredMinWorkerThreads = EnvironmentUtil.GetLongVariable("NZBDAV_THREADPOOL_MIN_WORKERS");
+        var configuredMinIoThreads = EnvironmentUtil.GetLongVariable("NZBDAV_THREADPOOL_MIN_IO");
+        if (configuredMinWorkerThreads == null && configuredMinIoThreads == null) return;
+
+        ThreadPool.GetMinThreads(out var currentMinWorkers, out var currentMinIo);
+        var minWorkers = configuredMinWorkerThreads is > 0
+            ? (int)Math.Min(configuredMinWorkerThreads.Value, int.MaxValue)
+            : currentMinWorkers;
+        var minIo = configuredMinIoThreads is > 0
+            ? (int)Math.Min(configuredMinIoThreads.Value, int.MaxValue)
+            : currentMinIo;
+        ThreadPool.SetMinThreads(minWorkers, minIo);
     }
 
     private static async Task PerformDatabaseVacuumIfEnabled()

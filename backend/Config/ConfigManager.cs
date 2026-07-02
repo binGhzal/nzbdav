@@ -162,9 +162,20 @@ public class ConfigManager
     public int GetAdaptiveMaxDownloadConnections()
     {
         var maxDownloadConnections = Math.Max(1, GetMaxDownloadConnections());
+        if (!IsAdaptiveConnectionCountEnabled()) return maxDownloadConnections;
+
+        var providerConnections = Math.Max(1, GetUsenetProviderConfig().TotalPooledConnections);
+        var cpuBasedConnections = Math.Clamp(Environment.ProcessorCount * 4, 4, 64);
+        var automaticTarget = Math.Min(maxDownloadConnections, Math.Min(providerConnections, cpuBasedConnections));
+        return ApplyRuntimePressureLimit(automaticTarget);
+    }
+
+    public int GetAdaptiveMaxStreamingConnections()
+    {
+        var maxStreamingConnections = Math.Max(1, GetMaxStreamingConnections());
         return IsAdaptiveConnectionCountEnabled()
-            ? ApplyMemoryPressureLimit(maxDownloadConnections)
-            : maxDownloadConnections;
+            ? ApplyRuntimePressureLimit(maxStreamingConnections)
+            : maxStreamingConnections;
     }
 
     public int GetMaxStreamingConnections()
@@ -173,7 +184,7 @@ public class ConfigManager
         if (configValue > 0) return Math.Clamp(configValue, 1, 64);
 
         var articleBufferSize = Math.Max(1, GetArticleBufferSize());
-        return Math.Min(articleBufferSize, GetAdaptiveMaxDownloadConnections());
+        return Math.Min(articleBufferSize, Math.Max(1, GetMaxDownloadConnections()));
     }
 
     public int GetMaxTotalStreamingConnections()
@@ -195,7 +206,7 @@ public class ConfigManager
     {
         var maxTotalStreamingConnections = GetMaxTotalStreamingConnections();
         return IsAdaptiveConnectionCountEnabled()
-            ? ApplyMemoryPressureLimit(maxTotalStreamingConnections)
+            ? ApplyRuntimePressureLimit(maxTotalStreamingConnections)
             : maxTotalStreamingConnections;
     }
 
@@ -214,7 +225,7 @@ public class ConfigManager
     {
         var maxConcurrentQueueDownloads = GetMaxConcurrentQueueDownloads();
         return IsAdaptiveConnectionCountEnabled()
-            ? ApplyMemoryPressureLimit(maxConcurrentQueueDownloads)
+            ? ApplyRuntimePressureLimit(maxConcurrentQueueDownloads)
             : maxConcurrentQueueDownloads;
     }
 
@@ -237,7 +248,7 @@ public class ConfigManager
     {
         var queueFileProcessingConcurrency = GetQueueFileProcessingConcurrency();
         return IsAdaptiveConnectionCountEnabled()
-            ? ApplyMemoryPressureLimit(queueFileProcessingConcurrency)
+            ? ApplyRuntimePressureLimit(queueFileProcessingConcurrency)
             : queueFileProcessingConcurrency;
     }
 
@@ -258,21 +269,40 @@ public class ConfigManager
         );
     }
 
-    private static int ApplyMemoryPressureLimit(int configuredLimit)
+    private static int ApplyRuntimePressureLimit(int configuredLimit)
+    {
+        var multiplier = Math.Min(GetMemoryPressureMultiplier(), GetThreadPoolPressureMultiplier());
+        return Math.Max(1, (int)Math.Floor(configuredLimit * multiplier));
+    }
+
+    private static double GetMemoryPressureMultiplier()
     {
         var memoryInfo = GC.GetGCMemoryInfo();
         var thresholdBytes = memoryInfo.HighMemoryLoadThresholdBytes;
-        if (thresholdBytes <= 0) return configuredLimit;
+        if (thresholdBytes <= 0) return 1.00;
 
         var pressure = memoryInfo.MemoryLoadBytes / (double)thresholdBytes;
-        var multiplier = pressure switch
+        return pressure switch
         {
             >= 0.95 => 0.25,
             >= 0.90 => 0.50,
             >= 0.80 => 0.75,
             _ => 1.00
         };
-        return Math.Max(1, (int)Math.Floor(configuredLimit * multiplier));
+    }
+
+    private static double GetThreadPoolPressureMultiplier()
+    {
+        var pendingWorkItems = ThreadPool.PendingWorkItemCount;
+        if (pendingWorkItems <= 0) return 1.00;
+
+        var cpuCount = Math.Max(1, Environment.ProcessorCount);
+        return pendingWorkItems switch
+        {
+            var pending when pending >= cpuCount * 64L => 0.50,
+            var pending when pending >= cpuCount * 32L => 0.75,
+            _ => 1.00
+        };
     }
 
     public SemaphorePriorityOdds GetStreamingPriority()
@@ -315,7 +345,7 @@ public class ConfigManager
         );
         healthCheckConcurrency = Math.Min(healthCheckConcurrency, Math.Max(1, GetMaxDownloadConnections()));
         return IsAdaptiveConnectionCountEnabled()
-            ? ApplyMemoryPressureLimit(healthCheckConcurrency)
+            ? ApplyRuntimePressureLimit(healthCheckConcurrency)
             : healthCheckConcurrency;
     }
 

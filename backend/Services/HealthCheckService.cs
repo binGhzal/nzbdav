@@ -23,10 +23,13 @@ public class HealthCheckService : BackgroundService
 {
     private static readonly TimeSpan AutoRepairRetryDelay = TimeSpan.FromHours(6);
     private static readonly TimeSpan MissingSegmentCacheTtl = TimeSpan.FromHours(6);
+    private const int MaxMissingSegmentCacheEntries = 100_000;
 
     private readonly ConfigManager _configManager;
     private readonly INntpClient _usenetClient;
     private readonly WebsocketManager _websocketManager;
+    private readonly object _activeHealthChecksLock = new();
+    private readonly HashSet<Guid> _activeHealthChecks = [];
 
     private static readonly Dictionary<string, DateTimeOffset> _missingSegmentIds = [];
 
@@ -62,27 +65,25 @@ public class HealthCheckService : BackgroundService
                     continue;
                 }
 
-                // get concurrency
-                var concurrency = _configManager.GetAdaptiveHealthCheckConcurrency();
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                var startedWorker = false;
+                var segmentConcurrency = _configManager.GetAdaptiveHealthCheckConcurrency();
+                var itemConcurrency = GetHealthCheckItemConcurrency(segmentConcurrency);
+                var workerSegmentConcurrency = Math.Max(1, segmentConcurrency / itemConcurrency);
 
-                // get the davItem to health-check
-                await using var dbContext = new DavDatabaseContext();
-                var dbClient = new DavDatabaseClient(dbContext);
-                var currentDateTime = DateTimeOffset.UtcNow;
-                var davItem = await GetHealthCheckQueueItems(dbClient)
-                    .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
-                    .FirstOrDefaultAsync(cts.Token).ConfigureAwait(false);
-
-                // if there is no item to health-check, don't do anything
-                if (davItem == null)
+                while (GetActiveHealthCheckCount() < itemConcurrency)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(5), cts.Token).ConfigureAwait(false);
-                    continue;
+                    var davItemId = await GetNextHealthCheckItemId(stoppingToken).ConfigureAwait(false);
+                    if (davItemId == null) break;
+                    if (!TryMarkHealthCheckActive(davItemId.Value)) continue;
+
+                    startedWorker = true;
+                    _ = RunHealthCheckWorkerAsync(davItemId.Value, workerSegmentConcurrency, stoppingToken);
                 }
 
-                // perform the health check
-                await PerformHealthCheck(davItem, dbClient, concurrency, cts.Token).ConfigureAwait(false);
+                var delay = startedWorker
+                    ? TimeSpan.FromMilliseconds(250)
+                    : GetActiveHealthCheckCount() > 0 ? TimeSpan.FromSeconds(1) : TimeSpan.FromSeconds(5);
+                await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (SigtermUtil.IsSigtermTriggered())
             {
@@ -94,6 +95,87 @@ public class HealthCheckService : BackgroundService
                 Log.Error(e, $"Unexpected error performing background health checks: {e.Message}");
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
             }
+        }
+    }
+
+    private static int GetHealthCheckItemConcurrency(int segmentConcurrency)
+    {
+        return Math.Clamp(segmentConcurrency / 2, 1, 4);
+    }
+
+    private int GetActiveHealthCheckCount()
+    {
+        lock (_activeHealthChecksLock)
+        {
+            return _activeHealthChecks.Count;
+        }
+    }
+
+    private Guid[] GetActiveHealthCheckIds()
+    {
+        lock (_activeHealthChecksLock)
+        {
+            return _activeHealthChecks.ToArray();
+        }
+    }
+
+    private bool TryMarkHealthCheckActive(Guid davItemId)
+    {
+        lock (_activeHealthChecksLock)
+        {
+            return _activeHealthChecks.Add(davItemId);
+        }
+    }
+
+    private void ClearHealthCheckActive(Guid davItemId)
+    {
+        lock (_activeHealthChecksLock)
+        {
+            _activeHealthChecks.Remove(davItemId);
+        }
+    }
+
+    private async Task<Guid?> GetNextHealthCheckItemId(CancellationToken ct)
+    {
+        await using var dbContext = new DavDatabaseContext();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var currentDateTime = DateTimeOffset.UtcNow;
+        var activeHealthCheckIds = GetActiveHealthCheckIds();
+        IQueryable<DavItem> query = GetHealthCheckQueueItems(dbClient)
+            .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime);
+
+        if (activeHealthCheckIds.Length > 0)
+            query = query.Where(x => !activeHealthCheckIds.Contains(x.Id));
+
+        return await query
+            .Select(x => (Guid?)x.Id)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task RunHealthCheckWorkerAsync(Guid davItemId, int segmentConcurrency, CancellationToken ct)
+    {
+        try
+        {
+            await using var dbContext = new DavDatabaseContext();
+            var dbClient = new DavDatabaseClient(dbContext);
+            var davItem = await dbContext.Items
+                .FirstOrDefaultAsync(x => x.Id == davItemId, ct)
+                .ConfigureAwait(false);
+            if (davItem == null) return;
+
+            await PerformHealthCheck(davItem, dbClient, segmentConcurrency, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
+        {
+        }
+        catch (Exception e)
+        {
+            Log.Error(e, "Unexpected error performing background health check for {DavItemId}: {Message}", davItemId, e.Message);
+        }
+        finally
+        {
+            ClearHealthCheckActive(davItemId);
         }
     }
 
@@ -164,9 +246,7 @@ public class HealthCheckService : BackgroundService
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
             if (FilenameUtil.IsImportantFileType(davItem.Name))
-                lock (_missingSegmentIds)
-                    foreach (var segmentId in NzbSegmentIdSet.Decode(e.SegmentId))
-                        _missingSegmentIds[segmentId] = DateTimeOffset.UtcNow;
+                AddCachedMissingSegmentIds(NzbSegmentIdSet.Decode(e.SegmentId));
 
             // when usenet article is missing, perform repairs
             await Repair(davItem, dbClient, ct).ConfigureAwait(false);
@@ -432,6 +512,18 @@ public class HealthCheckService : BackgroundService
         }
     }
 
+    private static void AddCachedMissingSegmentIds(IEnumerable<string> segmentIds)
+    {
+        lock (_missingSegmentIds)
+        {
+            var utcNow = DateTimeOffset.UtcNow;
+            PruneExpiredMissingSegmentIds(utcNow);
+            foreach (var segmentId in segmentIds)
+                _missingSegmentIds[segmentId] = utcNow;
+            PruneOldestMissingSegmentIds();
+        }
+    }
+
     private static void PruneExpiredMissingSegmentIds(DateTimeOffset utcNow)
     {
         var expiredSegmentIds = _missingSegmentIds
@@ -439,6 +531,20 @@ public class HealthCheckService : BackgroundService
             .Select(x => x.Key)
             .ToList();
         foreach (var segmentId in expiredSegmentIds)
+            _missingSegmentIds.Remove(segmentId);
+    }
+
+    private static void PruneOldestMissingSegmentIds()
+    {
+        var excessCount = _missingSegmentIds.Count - MaxMissingSegmentCacheEntries;
+        if (excessCount <= 0) return;
+
+        var oldestSegmentIds = _missingSegmentIds
+            .OrderBy(x => x.Value)
+            .Take(excessCount)
+            .Select(x => x.Key)
+            .ToList();
+        foreach (var segmentId in oldestSegmentIds)
             _missingSegmentIds.Remove(segmentId);
     }
 }

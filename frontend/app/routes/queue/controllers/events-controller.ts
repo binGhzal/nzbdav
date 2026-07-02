@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import type { HistorySlot, QueueSlot } from "~/clients/backend-client.server";
-import type { PresentationHistorySlot, PresentationQueueSlot, UploadingFile } from "../route";
+import type { PresentationHistorySlot, PresentationQueueSlot, QueueStatusFilter, UploadingFile } from "../route";
 
 export type QueueEvents = {
     onAddQueueSlot: (queueSlot: QueueSlot) => void,
@@ -25,16 +25,23 @@ export function useQueueEvents(
     setTotalQueueCount: (value: React.SetStateAction<number>) => void,
     uploadQueueRef: React.RefObject<UploadingFile[]>,
     pageNumber: number,
-    pageSize: number
+    pageSize: number,
+    queueStatusFilter: QueueStatusFilter,
+    onQueueNeedsRefresh?: () => void
 ) {
     const onAddQueueSlot = useCallback((queueSlot: QueueSlot) => {
         uploadQueueRef.current = uploadQueueRef.current.filter(x => x.queueSlot.status === "uploading" || x.queueSlot.filename !== queueSlot.filename);
         setUploadingFiles(files => files.filter(f => f.queueSlot.filename !== queueSlot.filename));
+        if (!matchesQueueStatus(queueSlot, queueStatusFilter)) {
+            return;
+        }
+
         setTotalQueueCount(count => count + 1);
         if (pageNumber === 1) {
             setQueueSlots(slots => sortQueueSlots([...slots, queueSlot]).slice(0, pageSize));
         }
-    }, [pageNumber, pageSize, setQueueSlots, setTotalQueueCount]);
+        onQueueNeedsRefresh?.();
+    }, [pageNumber, pageSize, queueStatusFilter, setQueueSlots, setTotalQueueCount, onQueueNeedsRefresh]);
 
     const onSelectQueueSlots = useCallback((ids: Set<string>, isSelected: boolean) => {
         setUploadingFiles(files => files.map(x => ids.has(x.queueSlot.nzo_id) ? { ...x, queueSlot: { ...x.queueSlot, isSelected } } : x));
@@ -50,24 +57,50 @@ export function useQueueEvents(
             .filter(x => x.queueSlot.status === "uploading")
             .map(x => x.queueSlot.nzo_id));
         const queuedIds = new Set([...ids].filter(id => !uploadingIds.has(id)));
+        var visibleQueuedCount = 0;
+        setQueueSlots(slots => {
+            visibleQueuedCount = slots.filter(x => queuedIds.has(x.nzo_id)).length;
+            return slots.filter(x => !ids.has(x.nzo_id));
+        });
         uploadQueueRef.current = uploadQueueRef.current.filter(x => x.queueSlot.status === "uploading" || !ids.has(x.queueSlot.nzo_id));
         setUploadingFiles(files => files.filter(x => x.queueSlot.status === "uploading" || !ids.has(x.queueSlot.nzo_id)));
-        if (queuedIds.size > 0) {
-            setTotalQueueCount(count => Math.max(0, count - queuedIds.size));
+        if (visibleQueuedCount > 0) {
+            setTotalQueueCount(count => Math.max(0, count - visibleQueuedCount));
         }
-        setQueueSlots(slots => slots.filter(x => !ids.has(x.nzo_id)));
-    }, [setQueueSlots, setTotalQueueCount]);
+        if (queuedIds.size > 0) {
+            onQueueNeedsRefresh?.();
+        }
+    }, [setQueueSlots, setTotalQueueCount, onQueueNeedsRefresh]);
 
     const onChangeQueueSlotPriority = useCallback((id: string, priority: string) => {
         setQueueSlots(slots => sortQueueSlots(
-            slots.map(x => x.nzo_id === id ? { ...x, priority } : x)
+            slots
+                .map(x => x.nzo_id === id ? { ...x, priority } : x)
+                .filter(x => matchesQueueStatus(x, queueStatusFilter))
         ));
-    }, [setQueueSlots]);
+        onQueueNeedsRefresh?.();
+    }, [queueStatusFilter, setQueueSlots, onQueueNeedsRefresh]);
 
     const onChangeQueueSlotStatus = useCallback((message: string) => {
         const [nzo_id, status] = message.split('|');
-        setQueueSlots(slots => slots.map(x => x.nzo_id === nzo_id ? { ...x, status } : x));
-    }, [setQueueSlots]);
+        setQueueSlots(slots => {
+            var didRemoveVisibleSlot = false;
+            const nextSlots = slots
+                .map(x => x.nzo_id === nzo_id ? { ...x, status } : x)
+                .filter(x => {
+                    const shouldKeep = matchesQueueStatus(x, queueStatusFilter);
+                    if (!shouldKeep && x.nzo_id === nzo_id) {
+                        didRemoveVisibleSlot = true;
+                    }
+                    return shouldKeep;
+                });
+            if (didRemoveVisibleSlot) {
+                setTotalQueueCount(count => Math.max(0, count - 1));
+            }
+            return nextSlots;
+        });
+        onQueueNeedsRefresh?.();
+    }, [queueStatusFilter, setQueueSlots, setTotalQueueCount, onQueueNeedsRefresh]);
 
     const onChangeQueueSlotPercentage = useCallback((message: string) => {
         const [nzo_id, true_percentage] = message.split('|');
@@ -138,4 +171,15 @@ function sortQueueSlots(slots: PresentationQueueSlot[]): PresentationQueueSlot[]
     return [...slots].sort((a, b) =>
         (priorityWeights[b.priority] ?? 0) - (priorityWeights[a.priority] ?? 0)
     );
+}
+
+function matchesQueueStatus(slot: Pick<QueueSlot, "status" | "priority">, filter: QueueStatusFilter): boolean {
+    if (filter === "all") return true;
+
+    const status = slot.status?.toLowerCase();
+    const priority = slot.priority?.toLowerCase();
+    if (filter === "paused") return status === "paused" || priority === "paused";
+    if (filter === "downloading") return status === "downloading";
+    if (filter === "queued") return status === "queued" && priority !== "paused";
+    return true;
 }

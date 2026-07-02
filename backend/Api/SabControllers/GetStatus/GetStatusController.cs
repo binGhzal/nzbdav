@@ -23,6 +23,8 @@ public class GetStatusController(
         var queuedJobs = await dbClient.GetQueueItemsCount(null, httpContext.RequestAborted).ConfigureAwait(false);
         var isPaused = configManager.IsQueuePaused();
         var activeStreams = activeStreamTracker.GetSnapshot();
+        var process = Process.GetCurrentProcess();
+        var gcInfo = GC.GetGCMemoryInfo();
         var response = new GetStatusResponse()
         {
             Status = new GetStatusResponse.StatusObject
@@ -37,10 +39,15 @@ public class GetStatusController(
                 AdaptiveMaxDownloadConnections = configManager.GetAdaptiveMaxDownloadConnections(),
                 QueueFileProcessingConcurrency = configManager.GetAdaptiveQueueFileProcessingConcurrency(),
                 HealthCheckConcurrency = configManager.GetAdaptiveHealthCheckConcurrency(),
-                MaxStreamingConnections = configManager.GetMaxStreamingConnections(),
+                MaxStreamingConnections = configManager.GetAdaptiveMaxStreamingConnections(),
                 MaxTotalStreamingConnections = configManager.GetAdaptiveMaxTotalStreamingConnections(),
                 ActiveStreams = activeStreams.Count,
                 TotalStreamsOpened = activeStreams.TotalOpened,
+                ManagedMemoryBytes = GC.GetTotalMemory(false),
+                WorkingSetBytes = process.WorkingSet64,
+                GcMemoryLoadPercent = GetGcMemoryLoadPercent(gcInfo),
+                ThreadPoolThreads = ThreadPool.ThreadCount,
+                ThreadPoolPendingWorkItems = ThreadPool.PendingWorkItemCount,
                 ProcessId = Environment.ProcessId,
                 Uptime = GetUptime(),
                 Version = ConfigManager.AppVersion,
@@ -74,5 +81,11 @@ public class GetStatusController(
     {
         var uptime = DateTime.Now - Process.GetCurrentProcess().StartTime;
         return ((long)uptime.TotalSeconds).ToString();
+    }
+
+    private static double GetGcMemoryLoadPercent(GCMemoryInfo gcInfo)
+    {
+        if (gcInfo.HighMemoryLoadThresholdBytes <= 0) return 0;
+        return Math.Round(gcInfo.MemoryLoadBytes * 100.0 / gcInfo.HighMemoryLoadThresholdBytes, 2);
     }
 }

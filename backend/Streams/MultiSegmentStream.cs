@@ -13,6 +13,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly INntpClient _usenetClient;
     private readonly Channel<Task<Stream>> _streamTasks;
     private readonly ContextualCancellationTokenSource _cts;
+    private readonly Task _downloadTask;
     private readonly int? _endSegmentCount;
     private Stream? _stream;
     private bool _disposed;
@@ -45,7 +46,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         _streamTasks = Channel.CreateBounded<Task<Stream>>(articleBufferSize);
         _cts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _endSegmentCount = endSegmentCount;
-        _ = DownloadSegments(_cts.Token);
+        _downloadTask = DownloadSegments(_cts.Token);
     }
 
     private async Task DownloadSegments(CancellationToken cancellationToken)
@@ -65,7 +66,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
                 // if we never get a chance to write the stream to the writer
                 // then make sure the stream gets disposed.
-                _ = Task.Run(async () => await (await streamTask).DisposeAsync(), CancellationToken.None);
+                ObserveAndDisposeStreamTask(streamTask);
                 break;
             }
         }
@@ -136,8 +137,46 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
         // ensure that streams that were never read from the channel get disposed
         while (_streamTasks.Reader.TryRead(out var streamTask))
-            _ = Task.Run(async () => await (await streamTask).DisposeAsync(), CancellationToken.None);
+            ObserveAndDisposeStreamTask(streamTask);
+
+        _ = ObserveProducerTask(_downloadTask);
 
         base.Dispose();
+    }
+
+    private static void ObserveAndDisposeStreamTask(Task<Stream> streamTask)
+    {
+        _ = DisposeStreamTaskAsync(streamTask);
+    }
+
+    private static async Task DisposeStreamTaskAsync(Task<Stream> streamTask)
+    {
+        try
+        {
+            var stream = await streamTask.ConfigureAwait(false);
+            await stream.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+            // The owning stream is already closing; failed cleanup is recoverable.
+        }
+    }
+
+    private static async Task ObserveProducerTask(Task producerTask)
+    {
+        try
+        {
+            await producerTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+            // The producer can fault while cancellation is unwinding.
+        }
     }
 }
