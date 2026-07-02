@@ -1,10 +1,12 @@
 ﻿using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 
 #nullable disable
 
 namespace NzbWebDAV.Database.Migrations
 {
     /// <inheritdoc />
+    [DbContext(typeof(DavDatabaseContext))]
     [Migration("20260702142000_Add-QueueSelection-Index")]
     public partial class AddQueueSelectionIndex : Migration
     {

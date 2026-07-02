@@ -25,10 +25,11 @@ public class RemoveFromQueueController(
         if (nzoIds.Count > 0)
         {
             await queueManager.RemoveQueueItemsAsync(nzoIds, dbClient, request.CancellationToken).ConfigureAwait(false);
+            dbClient.Ctx.EnqueueRcloneVfsForgetPaths(["/nzbs"]);
+            await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
             _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, string.Join(",", nzoIds));
         }
 
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
         return new RemoveFromQueueResponse() { Status = true };
     }
 

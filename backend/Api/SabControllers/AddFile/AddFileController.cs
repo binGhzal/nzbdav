@@ -78,8 +78,8 @@ public class AddFileController(
             // save
             dbClient.Ctx.QueueItems.Add(queueItem);
             dbClient.Ctx.NzbNames.Add(nzbName);
+            dbClient.Ctx.EnqueueRcloneVfsForgetPaths(["/nzbs"]);
             await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
-            _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
         }
         catch
         {

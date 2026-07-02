@@ -98,6 +98,7 @@ class Program
             .AddHostedService<NzbBlobCleanupService>()
             .AddHostedService<HistoryCleanupService>()
             .AddHostedService<DavCleanupService>()
+            .AddHostedService<RcloneInvalidationService>()
             .AddHostedService<UsenetFileToBlobstoreMigrationService>()
             .AddHostedService<RemoveOrphanedFilesSchedulerService>()
             .AddScoped<DavDatabaseContext>()

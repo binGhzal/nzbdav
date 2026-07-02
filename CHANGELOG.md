@@ -23,6 +23,7 @@
 * fix settings save feedback so failed updates no longer show as saved.
 * fix settings tab state leakage by cloning defaults and saved/draft config state.
 * clear missing-segment health-check cache when Usenet provider settings change.
+* persist rclone VFS invalidations and retry failed RC forgets so mount views recover after RC outages or restarts.
 * mount the Library settings tab and make settings tabs URL-addressable.
 
 ### CI

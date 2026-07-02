@@ -42,8 +42,8 @@ public class HistoryCleanupService : BackgroundService
                         .Where(x => x.HistoryItemId == cleanupItem.Id)
                         .ExecuteDeleteAsync(stoppingToken);
 
-                    // Trigger rclone vfs/forget for deleted items
-                    _ = DavDatabaseContext.RcloneVfsForget(deletedItems);
+                    // Queue rclone vfs/forget for deleted items
+                    dbContext.EnqueueRcloneVfsForget(deletedItems);
                 }
                 else
                 {

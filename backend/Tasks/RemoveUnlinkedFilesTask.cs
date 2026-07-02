@@ -168,13 +168,14 @@ public class RemoveUnlinkedFilesTask(
             var idsToDelete = string.Join(",", itemsToDelete.Select(x => $"'{x.Id}'"));
             await dbContext.Database.ExecuteSqlRawAsync($"DELETE FROM DavItems WHERE Id IN ({idsToDelete})");
 
-            // Trigger rclone vfs/forget for deleted items
-            _ = DavDatabaseContext.RcloneVfsForget(itemsToDelete.Select(x => new DavItem
+            // Queue rclone vfs/forget for deleted items
+            dbContext.EnqueueRcloneVfsForget(itemsToDelete.Select(x => new DavItem
             {
                 Id = Guid.Parse(x.Id),
                 Type = (DavItem.ItemType)x.Type,
                 Path = x.Path
             }).ToList());
+            await dbContext.SaveChangesAsync();
 
             // Track removed paths
             _allRemovedPaths.AddRange(itemsToDelete.Select(x => x.Path));
@@ -215,13 +216,14 @@ public class RemoveUnlinkedFilesTask(
             var idsToDelete = string.Join(",", emptyDirs.Select(x => $"'{x.Id}'"));
             await dbContext.Database.ExecuteSqlRawAsync($"DELETE FROM DavItems WHERE Id IN ({idsToDelete})");
 
-            // Trigger rclone vfs/forget for deleted directories
-            _ = DavDatabaseContext.RcloneVfsForget(emptyDirs.Select(x => new DavItem
+            // Queue rclone vfs/forget for deleted directories
+            dbContext.EnqueueRcloneVfsForget(emptyDirs.Select(x => new DavItem
             {
                 Id = Guid.Parse(x.Id),
                 Type = (DavItem.ItemType)x.Type,
                 Path = x.Path
             }).ToList());
+            await dbContext.SaveChangesAsync();
 
             removed += emptyDirs.Count;
             Report($"Removing empty directories...\nRemoved {removed}...");

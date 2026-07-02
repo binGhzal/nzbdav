@@ -40,8 +40,8 @@ public class DavCleanupService : BackgroundService
                     .Where(x => x.ParentId == cleanupItem.Id)
                     .ExecuteDeleteAsync(stoppingToken);
 
-                // Trigger rclone vfs/forget for deleted children
-                _ = DavDatabaseContext.RcloneVfsForget(deletedItems);
+                // Queue rclone vfs/forget for deleted children
+                dbContext.EnqueueRcloneVfsForget(deletedItems);
 
                 // Remove the queue item from database
                 dbContext.DavCleanupItems.Remove(cleanupItem);

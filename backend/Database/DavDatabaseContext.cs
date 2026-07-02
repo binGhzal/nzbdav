@@ -45,6 +45,7 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
     public DbSet<DavCleanupItem> DavCleanupItems => Set<DavCleanupItem>();
     public DbSet<NzbName> NzbNames => Set<NzbName>();
     public DbSet<NzbBlobCleanupItem> NzbBlobCleanupItems => Set<NzbBlobCleanupItem>();
+    public DbSet<RcloneInvalidationItem> RcloneInvalidationItems => Set<RcloneInvalidationItem>();
 
     // blob items
     public List<DavNzbFile> BlobNzbFiles = [];
@@ -508,6 +509,53 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
             e.Property(i => i.Id)
                 .ValueGeneratedNever();
         });
+
+        // RcloneInvalidationItem
+        b.Entity<RcloneInvalidationItem>(e =>
+        {
+            e.ToTable("RcloneInvalidationItems");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedNever();
+
+            e.Property(i => i.Path)
+                .IsRequired();
+
+            e.Property(i => i.CreatedAt)
+                .ValueGeneratedNever()
+                .IsRequired()
+                .HasConversion(
+                    x => x.ToUnixTimeSeconds(),
+                    x => DateTimeOffset.FromUnixTimeSeconds(x)
+                );
+
+            e.Property(i => i.NextAttemptAt)
+                .ValueGeneratedNever()
+                .IsRequired()
+                .HasConversion(
+                    x => x.ToUnixTimeSeconds(),
+                    x => DateTimeOffset.FromUnixTimeSeconds(x)
+                );
+
+            e.Property(i => i.LastAttemptAt)
+                .ValueGeneratedNever()
+                .IsRequired(false)
+                .HasConversion(
+                    x => x.HasValue ? x.Value.ToUnixTimeSeconds() : (long?)null,
+                    x => x.HasValue ? DateTimeOffset.FromUnixTimeSeconds(x.Value) : null
+                );
+
+            e.Property(i => i.Attempts)
+                .IsRequired();
+
+            e.Property(i => i.LastError)
+                .HasMaxLength(1024)
+                .IsRequired(false);
+
+            e.HasIndex(i => new { i.NextAttemptAt, i.CreatedAt });
+            e.HasIndex(i => i.Path);
+        });
     }
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = new CancellationToken())
@@ -524,8 +572,8 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
 
             // save db changes
             var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();
+            EnqueueRcloneVfsForget(addedOrRemovedDavItems);
             var result = await base.SaveChangesAsync(cancellationToken);
-            _ = RcloneVfsForget(addedOrRemovedDavItems);
 
             // clear pending blob writes
             BlobNzbFiles.Clear();
@@ -583,22 +631,67 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
             .ToList();
     }
 
-    public static Task RcloneVfsForget(List<DavItem> addedOrRemovedDavItems)
+    public void EnqueueRcloneVfsForget(List<DavItem> addedOrRemovedDavItems)
     {
-        if (!RcloneClient.IsRemoteControlEnabled) return Task.CompletedTask;
-        if (RcloneClient.Host == null) return Task.CompletedTask;
-        if (addedOrRemovedDavItems.Count == 0) return Task.CompletedTask;
+        if (!ShouldQueueRcloneInvalidations()) return;
+        if (addedOrRemovedDavItems.Count == 0) return;
+
         var vfsForgetPaths = GetRcloneVfsForgetDirectories(addedOrRemovedDavItems);
-        if (vfsForgetPaths.Count == 0) return Task.CompletedTask;
-        return RcloneClient.ForgetVfsPaths(vfsForgetPaths);
+        EnqueueRcloneVfsForgetPaths(vfsForgetPaths);
     }
 
-    public static Task RcloneVfsForget(List<string> paths)
+    public void EnqueueRcloneVfsForgetPaths(IEnumerable<string> paths)
     {
-        if (!RcloneClient.IsRemoteControlEnabled) return Task.CompletedTask;
-        if (RcloneClient.Host == null) return Task.CompletedTask;
-        if (paths.Count == 0) return Task.CompletedTask;
-        return RcloneClient.ForgetVfsPaths(paths);
+        if (!ShouldQueueRcloneInvalidations()) return;
+
+        var pathList = paths
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (pathList.Count == 0) return;
+
+        var now = DateTimeOffset.UtcNow;
+        RcloneInvalidationItems.AddRange(pathList.Select(path => new RcloneInvalidationItem
+        {
+            Id = Guid.NewGuid(),
+            Path = path,
+            CreatedAt = now,
+            NextAttemptAt = now
+        }));
+    }
+
+    public static async Task EnqueueRcloneVfsForgetAsync
+    (
+        List<DavItem> addedOrRemovedDavItems,
+        CancellationToken cancellationToken = default
+    )
+    {
+        if (!ShouldQueueRcloneInvalidations()) return;
+        if (addedOrRemovedDavItems.Count == 0) return;
+
+        await using var dbContext = new DavDatabaseContext();
+        dbContext.EnqueueRcloneVfsForget(addedOrRemovedDavItems);
+        await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task EnqueueRcloneVfsForgetPathsAsync
+    (
+        IEnumerable<string> paths,
+        CancellationToken cancellationToken = default
+    )
+    {
+        if (!ShouldQueueRcloneInvalidations()) return;
+
+        await using var dbContext = new DavDatabaseContext();
+        dbContext.EnqueueRcloneVfsForgetPaths(paths);
+        await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool ShouldQueueRcloneInvalidations()
+    {
+        return RcloneClient.IsRemoteControlEnabled && RcloneClient.Host != null;
     }
 
     public void ClearChangeTracker()

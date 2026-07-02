@@ -361,10 +361,10 @@ public class QueueItemProcessor(
         var historySlot = GetHistoryResponse.HistorySlot.FromHistoryItem(historyItem, mountFolder, configManager);
         dbClient.Ctx.QueueItems.Remove(queueItem);
         dbClient.Ctx.HistoryItems.Add(historyItem);
+        dbClient.Ctx.EnqueueRcloneVfsForgetPaths(["/nzbs"]);
         await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, queueItem.Id.ToString());
         _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemAdded, historySlot.ToJson());
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
         _ = RefreshMonitoredDownloads();
     }
 
