@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Utils;
+using Serilog;
 
 namespace NzbWebDAV.Services;
 
@@ -24,6 +25,14 @@ public static class ContentIndexSnapshotStore
     public static async Task WriteAsync(DavDatabaseContext dbContext, CancellationToken cancellationToken)
     {
         var snapshot = await CreateSnapshotAsync(dbContext, cancellationToken).ConfigureAwait(false);
+        snapshot = PruneInvalidSnapshotEntries(snapshot, out var prunedEntryCount);
+        if (prunedEntryCount > 0)
+        {
+            Log.Warning(
+                "Pruned {Count} invalid /content rows while writing recovery snapshot.",
+                prunedEntryCount);
+        }
+
         if (!TryValidate(snapshot, out var validationError))
         {
             throw new InvalidOperationException(
@@ -274,6 +283,81 @@ public static class ContentIndexSnapshotStore
             NzbFiles = nzbFiles,
             RarFiles = rarFiles,
             MultipartFiles = multipartFiles,
+        };
+    }
+
+    private static ContentIndexSnapshot PruneInvalidSnapshotEntries(ContentIndexSnapshot snapshot, out int prunedEntryCount)
+    {
+        var nzbFileIds = snapshot.NzbFiles.Select(x => x.Id).ToHashSet();
+        var rarFileIds = snapshot.RarFiles.Select(x => x.Id).ToHashSet();
+        var multipartFileIds = snapshot.MultipartFiles.Select(x => x.Id).ToHashSet();
+        var eligibleItems = snapshot.Items
+            .Where(item => HasRequiredMetadata(item, nzbFileIds, rarFileIds, multipartFileIds))
+            .ToDictionary(x => x.Id);
+        var reachableItemIds = new HashSet<Guid>();
+
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var item in eligibleItems.Values)
+            {
+                if (reachableItemIds.Contains(item.Id)) continue;
+                var parentIsReachable = item.ParentId == DavItem.ContentFolder.Id
+                                        || item.ParentId != null
+                                        && reachableItemIds.Contains(item.ParentId.Value);
+                if (!parentIsReachable) continue;
+                reachableItemIds.Add(item.Id);
+                changed = true;
+            }
+        }
+
+        var items = snapshot.Items
+            .Where(x => reachableItemIds.Contains(x.Id))
+            .ToList();
+        var itemIds = items.Select(x => x.Id).ToHashSet();
+        var nzbFiles = snapshot.NzbFiles.Where(x => itemIds.Contains(x.Id)).ToList();
+        var rarFiles = snapshot.RarFiles.Where(x => itemIds.Contains(x.Id)).ToList();
+        var multipartFiles = snapshot.MultipartFiles.Where(x => itemIds.Contains(x.Id)).ToList();
+
+        prunedEntryCount =
+            snapshot.Items.Count - items.Count
+            + snapshot.NzbFiles.Count - nzbFiles.Count
+            + snapshot.RarFiles.Count - rarFiles.Count
+            + snapshot.MultipartFiles.Count - multipartFiles.Count;
+
+        if (prunedEntryCount == 0) return snapshot;
+
+        return new ContentIndexSnapshot
+        {
+            Version = snapshot.Version,
+            GeneratedAtUtc = snapshot.GeneratedAtUtc,
+            Items = items,
+            NzbFiles = nzbFiles,
+            RarFiles = rarFiles,
+            MultipartFiles = multipartFiles,
+        };
+    }
+
+    private static bool HasRequiredMetadata
+    (
+        DavItem item,
+        HashSet<Guid> nzbFileIds,
+        HashSet<Guid> rarFileIds,
+        HashSet<Guid> multipartFileIds
+    )
+    {
+        return item.Type switch
+        {
+            DavItem.ItemType.Directory => true,
+            DavItem.ItemType.UsenetFile => item.SubType switch
+            {
+                DavItem.ItemSubType.NzbFile => nzbFileIds.Contains(item.Id),
+                DavItem.ItemSubType.RarFile => rarFileIds.Contains(item.Id),
+                DavItem.ItemSubType.MultipartFile => multipartFileIds.Contains(item.Id),
+                _ => false
+            },
+            _ => false
         };
     }
 

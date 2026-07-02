@@ -317,16 +317,34 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             var davItems = results.Where(r => r.DavItem != null).Select(r => r.DavItem!).ToList();
             Ctx.Items.RemoveRange(davItems);
             Ctx.HistoryItems.RemoveRange(historyItems);
-            Ctx.HistoryCleanupItems.AddRange(historyItems.Select(x => new HistoryCleanupItem
-            {
-                Id = x.Id,
-                DeleteMountedFiles = deleteFiles
-            }));
+            await AddMissingHistoryCleanupItemsAsync(historyItems.Select(x => x.Id).ToList(), deleteFiles, ct)
+                .ConfigureAwait(false);
             return;
         }
 
-        Ctx.HistoryItems.RemoveRange(ids.Select(id => new HistoryItem() { Id = id }));
-        Ctx.HistoryCleanupItems.AddRange(ids.Select(x => new HistoryCleanupItem
+        var existingHistoryItems = await Ctx.HistoryItems
+            .Where(x => ids.Contains(x.Id))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        Ctx.HistoryItems.RemoveRange(existingHistoryItems);
+        await AddMissingHistoryCleanupItemsAsync(existingHistoryItems.Select(x => x.Id).ToList(), deleteFiles, ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task AddMissingHistoryCleanupItemsAsync(List<Guid> ids, bool deleteFiles, CancellationToken ct)
+    {
+        if (ids.Count == 0) return;
+
+        var existingCleanupIds = await Ctx.HistoryCleanupItems
+            .Where(x => ids.Contains(x.Id))
+            .Select(x => x.Id)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        var existingCleanupIdSet = existingCleanupIds.ToHashSet();
+
+        Ctx.HistoryCleanupItems.AddRange(ids
+            .Where(x => !existingCleanupIdSet.Contains(x))
+            .Select(x => new HistoryCleanupItem
         {
             Id = x,
             DeleteMountedFiles = deleteFiles

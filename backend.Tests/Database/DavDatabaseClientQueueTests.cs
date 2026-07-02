@@ -109,6 +109,48 @@ public sealed class DavDatabaseClientQueueTests
         Assert.Equal(1, pausedCount);
     }
 
+    [Fact]
+    public async Task RemoveHistoryItemsAsync_SkipsExistingCleanupItems()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var historyItem = CreateHistoryItem();
+        dbContext.HistoryItems.Add(historyItem);
+        dbContext.HistoryCleanupItems.Add(new HistoryCleanupItem
+        {
+            Id = historyItem.Id,
+            DeleteMountedFiles = false
+        });
+        await dbContext.SaveChangesAsync();
+
+        var dbClient = new DavDatabaseClient(dbContext);
+        await dbClient.RemoveHistoryItemsAsync([historyItem.Id], deleteFiles: false);
+        await dbContext.SaveChangesAsync();
+
+        Assert.Empty(dbContext.HistoryItems);
+        Assert.Single(dbContext.HistoryCleanupItems);
+    }
+
+    [Fact]
+    public async Task RemoveHistoryItemsAsync_DeleteFilesSkipsExistingCleanupItems()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var historyItem = CreateHistoryItem();
+        dbContext.HistoryItems.Add(historyItem);
+        dbContext.HistoryCleanupItems.Add(new HistoryCleanupItem
+        {
+            Id = historyItem.Id,
+            DeleteMountedFiles = true
+        });
+        await dbContext.SaveChangesAsync();
+
+        var dbClient = new DavDatabaseClient(dbContext);
+        await dbClient.RemoveHistoryItemsAsync([historyItem.Id], deleteFiles: true);
+        await dbContext.SaveChangesAsync();
+
+        Assert.Empty(dbContext.HistoryItems);
+        Assert.Single(dbContext.HistoryCleanupItems);
+    }
+
     private static QueueItem CreateQueueItem
     (
         string jobName,
@@ -137,6 +179,21 @@ public sealed class DavDatabaseClientQueueTests
         {
             Id = id,
             NzbContents = "<nzb />"
+        };
+    }
+
+    private static HistoryItem CreateHistoryItem()
+    {
+        return new HistoryItem
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = DateTime.UtcNow,
+            FileName = "Example.nzb",
+            JobName = "Example",
+            Category = "movies",
+            DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+            TotalSegmentBytes = 1024,
+            DownloadTimeSeconds = 1
         };
     }
 }

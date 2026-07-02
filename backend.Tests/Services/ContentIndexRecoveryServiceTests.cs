@@ -223,7 +223,7 @@ public sealed class ContentIndexRecoveryServiceTests
     }
 
     [Fact]
-    public async Task SnapshotWriter_PreservesLastKnownGoodSnapshot_WhenMetadataRowsDisappear()
+    public async Task SnapshotWriter_PrunesItemsWithMissingMetadata_WhenMetadataRowsDisappear()
     {
         var expectedItemId = Guid.NewGuid();
 
@@ -251,7 +251,8 @@ public sealed class ContentIndexRecoveryServiceTests
         }
 
         var snapshotAfterCorruption = await File.ReadAllTextAsync(ContentIndexSnapshotStore.SnapshotFilePath);
-        Assert.Equal(originalSnapshot, snapshotAfterCorruption);
+        Assert.NotEqual(originalSnapshot, snapshotAfterCorruption);
+        Assert.DoesNotContain(expectedItemId.ToString(), snapshotAfterCorruption);
     }
 
     private static DavItem CreateDirectory(string name, DavItem parent)
@@ -388,6 +389,7 @@ public sealed class ContentIndexDatabaseFixture : IAsyncLifetime
         await dbContext.QueueNzbContents.ExecuteDeleteAsync();
         await dbContext.QueueItems.ExecuteDeleteAsync();
         await dbContext.BlobCleanupItems.ExecuteDeleteAsync();
+        await dbContext.HistoryCleanupItems.ExecuteDeleteAsync();
         await dbContext.HistoryItems.ExecuteDeleteAsync();
         await dbContext.Items
             .Where(x => x.Path.StartsWith(ContentPathUtil.ForwardSlashPrefix) || x.Path.StartsWith(ContentPathUtil.BackslashPrefix))

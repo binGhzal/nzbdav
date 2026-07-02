@@ -42,6 +42,29 @@ public class DownloadingNntpClientTests
         Assert.Equal(1, innerClient.MaxActiveBodyDownloads);
     }
 
+    [Fact]
+    public async Task StreamingContextIgnoresLateCallbacksAfterStreamLimiterIsDisposed()
+    {
+        using var innerClient = new BlockingNntpClient();
+        using var client = new DownloadingNntpClient(innerClient, CreateConfigManager());
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var connectionLimiter = new SemaphoreSlim(1);
+        using var priorityContext = timeout.Token.SetContext(new DownloadPriorityContext
+        {
+            Priority = SemaphorePriority.High,
+            ConnectionLimiter = connectionLimiter
+        });
+
+        var request = client.DecodedBodyAsync("segment-1", timeout.Token);
+        await innerClient.WaitForStartedCountAsync(1, timeout.Token);
+
+        connectionLimiter.Dispose();
+        await innerClient.ReleaseOneAsync(timeout.Token);
+
+        var response = await request;
+        Assert.Equal("segment-1", response.SegmentId);
+    }
+
     private static ConfigManager CreateConfigManager()
     {
         var configManager = new ConfigManager();

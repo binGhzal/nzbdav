@@ -23,7 +23,15 @@ public class DownloadingNntpClient : WrappingNntpClient
         {
             if (Interlocked.Exchange(ref _released, 1) != 0) return;
             downloadSemaphore.Release();
-            streamSemaphore?.Release();
+            try
+            {
+                streamSemaphore?.Release();
+            }
+            catch (ObjectDisposedException)
+            {
+                // A streaming response can complete while the NNTP callback is still unwinding.
+                // The shared download lease is already returned; the per-stream limiter is gone.
+            }
         }
     }
 
