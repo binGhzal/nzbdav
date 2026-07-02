@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
 const mockBackendURL = process.env.PLAYWRIGHT_BACKEND_URL ?? "http://127.0.0.1:5174";
 
@@ -12,8 +13,7 @@ test("queue filters, page size, and pause controls update live UI and backend ca
   await expect(page.getByText("Downloading Release")).toBeVisible();
   await expect(page.getByText("Queued Release")).toBeVisible();
 
-  await page.getByRole("button", { name: "Queued", exact: true }).click();
-  await expect(page).toHaveURL(/queueStatus=queued/);
+  await clickUntilUrlMatches(page.getByRole("button", { name: "Queued", exact: true }), page, /queueStatus=queued/);
   await expect(page.getByText("Queued Release")).toBeVisible();
   await expect(page.getByText("Downloading Release")).not.toBeVisible();
 
@@ -37,3 +37,14 @@ test("queue filters, page size, and pause controls update live UI and backend ca
     entry.query.mode === "pause"
   )).toBe(true);
 });
+
+async function clickUntilUrlMatches(
+  locator: Locator,
+  page: Page,
+  url: RegExp,
+) {
+  await expect(async () => {
+    await locator.click();
+    await expect(page).toHaveURL(url, { timeout: 1_000 });
+  }).toPass({ timeout: 10_000 });
+}

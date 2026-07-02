@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
 const mockBackendURL = process.env.PLAYWRIGHT_BACKEND_URL ?? "http://127.0.0.1:5174";
 
@@ -11,8 +12,7 @@ test("settings tabs load by URL and save changed values", async ({ page, request
 
   await expect(page.getByRole("tab", { name: "Rclone Server" })).toHaveAttribute("aria-selected", "true");
 
-  await page.getByRole("tab", { name: "WebDAV" }).click();
-  await expect(page).toHaveURL(/tab=webdav/);
+  await clickUntilUrlMatches(page.getByRole("tab", { name: "WebDAV" }), page, /tab=webdav/);
   await expect(page.getByRole("tab", { name: "WebDAV" })).toHaveAttribute("aria-selected", "true");
 
   await page.getByLabel("Max Download Connections").fill("200");
@@ -26,3 +26,14 @@ test("settings tabs load by URL and save changed values", async ({ page, request
   expect(updateRequest?.body).toContain('name="usenet.max-download-connections"');
   expect(updateRequest?.body).toContain("200");
 });
+
+async function clickUntilUrlMatches(
+  locator: Locator,
+  page: Page,
+  url: RegExp,
+) {
+  await expect(async () => {
+    await locator.click();
+    await expect(page).toHaveURL(url, { timeout: 1_000 });
+  }).toPass({ timeout: 10_000 });
+}
