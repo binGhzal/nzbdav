@@ -40,6 +40,19 @@ public sealed class DfsDavPathResolverTests
         Assert.Equal(movie.Id, idNode.Item?.Id);
     }
 
+    [Theory]
+    [InlineData("/.ids/6/a/8/9/6/.gitignore")]
+    [InlineData("/.ids/6/a/8/9/6/.ignore")]
+    public async Task ResolveAsync_InvalidIdsLeaf_ReturnsNull(string path)
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var resolver = CreateResolver(dbContext);
+
+        var node = await resolver.ResolveAsync(path);
+
+        Assert.Null(node);
+    }
+
     [Fact]
     public async Task CompletedSymlinkPath_ResolvesAsSymlinkAndCanBeSuppressedByUnlink()
     {

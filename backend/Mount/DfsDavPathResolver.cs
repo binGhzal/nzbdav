@@ -135,6 +135,8 @@ public sealed class DfsDavPathResolver(DavDatabaseClient dbClient, ConfigManager
         }
 
         if (parts.Count != DavItem.IdPrefixLength + 2) return null;
+        if (!Guid.TryParse(parts[^1], out _)) return null;
+
         var item = await dbClient.GetFileById(parts[^1]).ConfigureAwait(false);
         return item == null ? null : FromDavFile(item, "/" + string.Join('/', parts));
     }
