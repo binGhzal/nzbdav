@@ -78,6 +78,107 @@ public class RarAggregatorTests
         Assert.Equal(50, multipartFile.Metadata.FileParts[1].FilePartByteRange.StartInclusive);
     }
 
+    [Fact]
+    public void UpdateDatabaseStoresMinimalSegmentSlicesForArchiveRanges()
+    {
+        using var dbContext = new DavDatabaseContext();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var mountDirectory = CreateMountDirectory();
+        var aggregator = new RarAggregator(dbClient, mountDirectory, checkedFullHealth: false);
+        var nzbFile = CreateNzbFile(("segment-1", 1, 4), ("segment-2", 2, 4), ("segment-3", 3, 4));
+
+        aggregator.UpdateDatabase([
+            new RarProcessor.Result
+            {
+                StoredFileSegments =
+                [
+                    CreateStoredFileSegment(
+                        archiveName: "archive-a",
+                        pathWithinArchive: "episode.mkv",
+                        byteRangeWithinPart: new LongRange(2, 9),
+                        fileUncompressedSize: 7,
+                        partSize: 12,
+                        nzbFile: nzbFile)
+                ]
+            }
+        ]);
+
+        var multipartFile = Assert.Single(dbContext.BlobMultipartFiles);
+        var filePart = Assert.Single(multipartFile.Metadata.FileParts);
+
+        Assert.Equal(["segment-1", "segment-2", "segment-3"], filePart.SegmentIds);
+        Assert.Equal(3, filePart.SegmentSlices.Length);
+        Assert.Equal("segment-1", filePart.SegmentSlices[0].SegmentId);
+        Assert.Equal(new LongRange(2, 4), filePart.SegmentSlices[0].SegmentByteRange);
+        Assert.Equal(new LongRange(0, 2), filePart.SegmentSlices[0].FilePartByteRange);
+        Assert.Equal("segment-2", filePart.SegmentSlices[1].SegmentId);
+        Assert.Equal(new LongRange(0, 4), filePart.SegmentSlices[1].SegmentByteRange);
+        Assert.Equal(new LongRange(2, 6), filePart.SegmentSlices[1].FilePartByteRange);
+        Assert.Equal("segment-3", filePart.SegmentSlices[2].SegmentId);
+        Assert.Equal(new LongRange(0, 1), filePart.SegmentSlices[2].SegmentByteRange);
+        Assert.Equal(new LongRange(6, 7), filePart.SegmentSlices[2].FilePartByteRange);
+    }
+
+    [Fact]
+    public void UpdateDatabaseFallsBackWhenSegmentBytesDoNotMatchDecodedPartSize()
+    {
+        using var dbContext = new DavDatabaseContext();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var mountDirectory = CreateMountDirectory();
+        var aggregator = new RarAggregator(dbClient, mountDirectory, checkedFullHealth: false);
+        var nzbFile = CreateNzbFile(("segment-1", 1, 5), ("segment-2", 2, 5));
+
+        aggregator.UpdateDatabase([
+            new RarProcessor.Result
+            {
+                StoredFileSegments =
+                [
+                    CreateStoredFileSegment(
+                        archiveName: "archive-a",
+                        pathWithinArchive: "episode.mkv",
+                        byteRangeWithinPart: new LongRange(2, 8),
+                        fileUncompressedSize: 6,
+                        partSize: 8,
+                        nzbFile: nzbFile)
+                ]
+            }
+        ]);
+
+        var filePart = Assert.Single(Assert.Single(dbContext.BlobMultipartFiles).Metadata.FileParts);
+        Assert.Empty(filePart.SegmentSlices);
+        Assert.Equal(["segment-1", "segment-2"], filePart.SegmentIds);
+    }
+
+    [Fact]
+    public void UpdateDatabaseFallsBackWhenAnySegmentBytesAreMissing()
+    {
+        using var dbContext = new DavDatabaseContext();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var mountDirectory = CreateMountDirectory();
+        var aggregator = new RarAggregator(dbClient, mountDirectory, checkedFullHealth: false);
+        var nzbFile = CreateNzbFile(("segment-1", 1, 4), ("segment-2", 2, 0));
+
+        aggregator.UpdateDatabase([
+            new RarProcessor.Result
+            {
+                StoredFileSegments =
+                [
+                    CreateStoredFileSegment(
+                        archiveName: "archive-a",
+                        pathWithinArchive: "episode.mkv",
+                        byteRangeWithinPart: new LongRange(1, 4),
+                        fileUncompressedSize: 3,
+                        partSize: 4,
+                        nzbFile: nzbFile)
+                ]
+            }
+        ]);
+
+        var filePart = Assert.Single(Assert.Single(dbContext.BlobMultipartFiles).Metadata.FileParts);
+        Assert.Empty(filePart.SegmentSlices);
+        Assert.Equal(["segment-1", "segment-2"], filePart.SegmentIds);
+    }
+
     private static DavItem CreateMountDirectory()
     {
         var categoryDirectory = DavItem.New(
@@ -112,12 +213,14 @@ public class RarAggregatorTests
         string pathWithinArchive,
         int partNumberFromFilename = 1,
         LongRange? byteRangeWithinPart = null,
-        long fileUncompressedSize = 100)
+        long fileUncompressedSize = 100,
+        long partSize = 100,
+        NzbFile? nzbFile = null)
     {
         return new RarProcessor.StoredFileSegment
         {
-            NzbFile = new NzbFile { Subject = $"{archiveName}.part01.rar" },
-            PartSize = 100,
+            NzbFile = nzbFile ?? new NzbFile { Subject = $"{archiveName}.part01.rar" },
+            PartSize = partSize,
             ArchiveName = archiveName,
             PartNumber = new RarProcessor.PartNumber
             {
@@ -130,5 +233,21 @@ public class RarAggregatorTests
             AesParams = null,
             FileUncompressedSize = fileUncompressedSize
         };
+    }
+
+    private static NzbFile CreateNzbFile(params (string MessageId, int Number, long Bytes)[] segments)
+    {
+        var nzbFile = new NzbFile { Subject = "archive-a.part01.rar" };
+        foreach (var segment in segments)
+        {
+            nzbFile.Segments.Add(new NzbSegment
+            {
+                MessageId = segment.MessageId,
+                Number = segment.Number,
+                Bytes = segment.Bytes
+            });
+        }
+
+        return nzbFile;
     }
 }

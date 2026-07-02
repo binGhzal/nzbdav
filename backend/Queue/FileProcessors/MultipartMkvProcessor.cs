@@ -4,6 +4,7 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
+using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Queue.FileProcessors;
 
@@ -40,6 +41,10 @@ public class MultipartMkvProcessor : BaseProcessor
                 SegmentIds = fileInfo.NzbFile.GetSegmentIds(),
                 SegmentIdByteRange = LongRange.FromStartAndSize(0, partSize),
                 FilePartByteRange = LongRange.FromStartAndSize(0, partSize),
+                SegmentSlices = SegmentSliceUtil.CreateSlices(
+                    fileInfo.NzbFile,
+                    partSize,
+                    LongRange.FromStartAndSize(0, partSize)),
             });
         }
 

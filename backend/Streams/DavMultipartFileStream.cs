@@ -2,6 +2,8 @@
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models;
+using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
 
@@ -108,34 +110,90 @@ public class DavMultipartFileStream(
             running += parts[i].FilePartByteRange.Count;
         }
 
-        var streams = parts
-            .Select((x, i) =>
-            {
-                var offset = (i == 0) ? additionalOffset : 0;
-                var stream = usenetClient.GetFileStream(
-                    x.SegmentIds, x.SegmentIdByteRange.Count, articleBufferSize, GetPartEndByte(x, partFileStarts[i]));
-                stream.Seek(x.FilePartByteRange.StartInclusive + offset, SeekOrigin.Begin);
-                return Task.FromResult(stream.LimitLength(x.FilePartByteRange.Count - offset));
-            });
+        var streams = parts.SelectMany((part, i) =>
+            GetPartStreams(
+                part,
+                i == 0 ? additionalOffset : 0,
+                GetPartEndExclusive(part, partFileStarts[i])));
         return new CombinedStream(streams);
     }
 
-    // Translates the file-absolute requested end byte into this part's segment-data coordinate so the
-    // part's prefetch stops at the requested end. Null = no cap (the whole part is within the request).
-    private long? GetPartEndByte(DavMultipartFile.FilePart part, long partFileStart)
+    private IEnumerable<Task<Stream>> GetPartStreams(
+        DavMultipartFile.FilePart part,
+        long offset,
+        long? partEndExclusive)
+    {
+        var partLength = part.FilePartByteRange.Count;
+        var effectiveEndExclusive = Math.Min(partEndExclusive ?? partLength, partLength);
+        if (offset >= effectiveEndExclusive)
+            yield break;
+
+        if (part.SegmentSlices is not { Length: > 0 })
+        {
+            yield return Task.FromResult(GetLegacyPartStream(part, offset, effectiveEndExclusive));
+            yield break;
+        }
+
+        var wantedRange = new LongRange(offset, effectiveEndExclusive);
+        foreach (var slice in part.SegmentSlices.OrderBy(x => x.FilePartByteRange.StartInclusive))
+        {
+            var overlap = GetOverlap(slice.FilePartByteRange, wantedRange);
+            if (overlap == null) continue;
+            yield return GetSliceStream(slice, overlap);
+        }
+    }
+
+    private Stream GetLegacyPartStream(
+        DavMultipartFile.FilePart part,
+        long offset,
+        long effectiveEndExclusive)
+    {
+        var requestedPartEndByte = effectiveEndExclusive < part.FilePartByteRange.Count
+            ? part.FilePartByteRange.StartInclusive + effectiveEndExclusive - 1
+            : (long?)null;
+        var stream = usenetClient.GetFileStream(
+            part.SegmentIds,
+            part.SegmentIdByteRange.Count,
+            articleBufferSize,
+            requestedPartEndByte);
+        stream.Seek(part.FilePartByteRange.StartInclusive + offset, SeekOrigin.Begin);
+        return stream.LimitLength(effectiveEndExclusive - offset);
+    }
+
+    private async Task<Stream> GetSliceStream(
+        DavMultipartFile.SegmentSlice slice,
+        LongRange wantedRange)
+    {
+        var offsetWithinSlice = wantedRange.StartInclusive - slice.FilePartByteRange.StartInclusive;
+        var segmentOffset = slice.SegmentByteRange.StartInclusive + offsetWithinSlice;
+        var stream = MultiSegmentStream.Create(
+            new[] { slice.SegmentId }.AsMemory(),
+            usenetClient,
+            articleBufferSize,
+            CancellationToken.None,
+            1);
+        await stream.DiscardBytesAsync(segmentOffset, CancellationToken.None).ConfigureAwait(false);
+        return stream.LimitLength(wantedRange.Count);
+    }
+
+    // Translates the file-absolute requested end byte into this part's output coordinate.
+    // Null = no cap (the whole part is within the request).
+    private long? GetPartEndExclusive(DavMultipartFile.FilePart part, long partFileStart)
     {
         if (!requestedEndByte.HasValue)
-        {
             return null;
-        }
 
-        var lastWantedByteInPart = requestedEndByte.Value - partFileStart;
-        if (lastWantedByteInPart < 0 || lastWantedByteInPart >= part.FilePartByteRange.Count - 1)
-        {
-            return null;
-        }
+        return Math.Clamp(
+            requestedEndByte.Value - partFileStart + 1,
+            0,
+            part.FilePartByteRange.Count);
+    }
 
-        return part.FilePartByteRange.StartInclusive + lastWantedByteInPart;
+    private static LongRange? GetOverlap(LongRange first, LongRange second)
+    {
+        var start = Math.Max(first.StartInclusive, second.StartInclusive);
+        var end = Math.Min(first.EndExclusive, second.EndExclusive);
+        return start < end ? new LongRange(start, end) : null;
     }
 
     protected override void Dispose(bool disposing)

@@ -9,15 +9,24 @@ public class NzbFile
 
     public string[] GetSegmentIds()
     {
-        return GetLogicalSegments()
-            .Select(x => NzbSegmentIdSet.Encode(x.Select(segment => segment.MessageId).ToArray()))
+        return GetLogicalSegmentInfos()
+            .Select(x => x.SegmentId)
             .ToArray();
+    }
+
+    public IReadOnlyList<LogicalSegmentInfo> GetLogicalSegmentInfos()
+    {
+        return GetLogicalSegments()
+            .Select(x => new LogicalSegmentInfo(
+                NzbSegmentIdSet.Encode(x.Select(segment => segment.MessageId).ToArray()),
+                x[0].Bytes))
+            .ToList();
     }
 
     public long GetTotalYencodedSize()
     {
-        return GetLogicalSegments()
-            .Select(x => x[0].Bytes)
+        return GetLogicalSegmentInfos()
+            .Select(x => x.Bytes)
             .Sum();
     }
 
@@ -76,4 +85,6 @@ public class NzbFile
             .Select(segment => new List<NzbSegment> { segment })
             .ToList();
     }
+
+    public sealed record LogicalSegmentInfo(string SegmentId, long Bytes);
 }

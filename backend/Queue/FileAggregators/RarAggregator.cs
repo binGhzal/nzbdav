@@ -63,7 +63,11 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
                     {
                         SegmentIds = x.NzbFile.GetSegmentIds(),
                         SegmentIdByteRange = LongRange.FromStartAndSize(0, x.PartSize),
-                        FilePartByteRange = x.ByteRangeWithinPart
+                        FilePartByteRange = x.ByteRangeWithinPart,
+                        SegmentSlices = SegmentSliceUtil.CreateSlices(
+                            x.NzbFile,
+                            x.PartSize,
+                            x.ByteRangeWithinPart)
                     }).ToArray(),
                 }
             };

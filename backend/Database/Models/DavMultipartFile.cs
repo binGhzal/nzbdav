@@ -41,5 +41,23 @@ public partial class DavMultipartFile
         // note: this range should always be fully contained within the SegmentIdByteRange above.
         [MemoryPackOrder(2)]
         public LongRange FilePartByteRange { get; set; }
+
+        // Minimal segment-level slices for the file part. Older records may not have this field;
+        // SegmentIds/SegmentIdByteRange/FilePartByteRange remain the compatibility fallback.
+        [MemoryPackOrder(3)]
+        public SegmentSlice[] SegmentSlices { get; set; } = [];
+    }
+
+    [MemoryPackable(GenerateType.VersionTolerant)]
+    public partial class SegmentSlice
+    {
+        [MemoryPackOrder(0)]
+        public string SegmentId { get; set; } = "";
+
+        [MemoryPackOrder(1)]
+        public LongRange SegmentByteRange { get; set; }
+
+        [MemoryPackOrder(2)]
+        public LongRange FilePartByteRange { get; set; }
     }
 }
