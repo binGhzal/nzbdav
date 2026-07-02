@@ -26,6 +26,7 @@ type ConnectionDetails = {
     User: string;
     Pass: string;
     MaxConnections: number;
+    Priority?: number;
     StatPipeliningEnabled?: boolean;
 };
 
@@ -265,6 +266,18 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                                                 </div>
                                             </div>
 
+                                            <div className={styles["provider-detail-item"]}>
+                                                <div className={styles["provider-detail-icon"]}>
+                                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                        <path d="M3 6h18M7 12h10M10 18h4" />
+                                                    </svg>
+                                                </div>
+                                                <div className={styles["provider-detail-content"]}>
+                                                    <span className={styles["provider-detail-label"]}>Priority</span>
+                                                    <span className={styles["provider-detail-value"]}>{provider.Priority ?? 100}</span>
+                                                </div>
+                                            </div>
+
                                         </div>
                                     </div>
                                 </div>
@@ -300,6 +313,7 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
     const [user, setUser] = useState(provider?.User || "");
     const [pass, setPass] = useState(provider?.Pass || "");
     const [maxConnections, setMaxConnections] = useState(provider?.MaxConnections?.toString() || "");
+    const [priority, setPriority] = useState((provider?.Priority ?? 100).toString());
     const [type, setType] = useState<ProviderType>(provider?.Type ?? ProviderType.Pooled);
     const [statPipeliningEnabled, setStatPipeliningEnabled] = useState(provider?.StatPipeliningEnabled ?? false);
     const [isTestingConnection, setIsTestingConnection] = useState(false);
@@ -325,6 +339,7 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
             setUser(provider?.User || "");
             setPass(provider?.Pass || "");
             setMaxConnections(provider?.MaxConnections?.toString() || "");
+            setPriority((provider?.Priority ?? 100).toString());
             setType(provider?.Type ?? ProviderType.Pooled);
             setStatPipeliningEnabled(provider?.StatPipeliningEnabled ?? false);
             setConnectionTested(false);
@@ -431,9 +446,10 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
             User: user,
             Pass: pass,
             MaxConnections: parseInt(maxConnections, 10),
+            Priority: parseInt(priority, 10),
             StatPipeliningEnabled: statPipeliningEnabled,
         });
-    }, [type, host, port, useSsl, user, pass, maxConnections, statPipeliningEnabled, onSave]);
+    }, [type, host, port, useSsl, user, pass, maxConnections, priority, statPipeliningEnabled, onSave]);
 
     const handleOverlayClick = useCallback((e: React.MouseEvent) => {
         if (e.target === e.currentTarget) {
@@ -445,7 +461,8 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
         && isPositiveInteger(port)
         && user.trim() !== ""
         && pass.trim() !== ""
-        && isPositiveInteger(maxConnections);
+        && isPositiveInteger(maxConnections)
+        && isNonNegativeInteger(priority);
 
     const canSave = isFormValid && (connectionTested || type == ProviderType.Disabled);
 
@@ -563,6 +580,20 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
                             </select>
                         </div>
 
+                        <div className={styles["form-group"]}>
+                            <label htmlFor="provider-priority" className={styles["form-label"]}>
+                                Priority
+                            </label>
+                            <input
+                                type="text"
+                                id="provider-priority"
+                                className={`${styles["form-input"]} ${!isNonNegativeInteger(priority) && priority !== "" ? styles.error : ""}`}
+                                placeholder="100"
+                                value={priority}
+                                onChange={(e) => setPriority(e.target.value)}
+                            />
+                        </div>
+
                         <div className={`${styles["form-group"]} ${styles["full-width"]}`}>
                             <div className={styles["form-checkbox-wrapper"]}>
                                 <input
@@ -668,4 +699,9 @@ export function isUsenetSettingsUpdated(config: Record<string, string>, newConfi
 export function isPositiveInteger(value: string) {
     const num = Number(value);
     return Number.isInteger(num) && num > 0 && value.trim() === num.toString();
+}
+
+function isNonNegativeInteger(value: string) {
+    const num = Number(value);
+    return Number.isInteger(num) && num >= 0 && value.trim() === num.toString();
 }

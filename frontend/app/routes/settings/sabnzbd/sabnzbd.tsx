@@ -78,13 +78,14 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                 >
                     <option value="symlinks">Symlinks — Plex</option>
                     <option value="strm">STRM Files — Emby/Jellyfin</option>
+                    <option value="both">Symlinks + STRM Files</option>
                 </Form.Select>
                 <Form.Text id="import-strategy-help" muted>
-                    If you need to be able to stream from Plex, you will need to configure rclone and should select the `Symlinks` option here. If you only need to stream through Emby or Jellyfin, then you can skip rclone altogether and select the `STRM Files` option.
+                    Use Symlinks for Plex through rclone, STRM files for direct HTTP streaming clients, or both when you need both output formats.
                 </Form.Text>
             </Form.Group>
             {/* <hr /> */}
-            {config["api.import-strategy"] === 'symlinks' &&
+            {(config["api.import-strategy"] === 'symlinks' || config["api.import-strategy"] === 'both') &&
                 <Form.Group className={styles.subGroup}>
                     <Form.Label htmlFor="mount-dir-input">Rclone Mount Directory</Form.Label>
                     <Form.Control
@@ -100,7 +101,7 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                     </Form.Text>
                 </Form.Group>
             }
-            {config["api.import-strategy"] === 'strm' && <>
+            {(config["api.import-strategy"] === 'strm' || config["api.import-strategy"] === 'both') && <>
                 <Form.Group className={styles.subGroup}>
                     <Form.Label htmlFor="completed-downloads-dir-input">Completed Downloads Dir</Form.Label>
                     <Form.Control

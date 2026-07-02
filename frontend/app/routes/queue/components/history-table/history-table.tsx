@@ -11,17 +11,31 @@ import styles from "../../route.module.css"
 import { PageSection } from "../page-section/page-section"
 import { DropdownOptions } from "~/routes/explore/dropdown-options/dropdown-options"
 import { ExportNzb, Remove } from "~/routes/explore/item-menu/item-menu"
+import { Pagination } from "../pagination/pagination"
 
 export type HistoryTableProps = {
     historySlots: PresentationHistorySlot[],
     totalHistoryCount: number,
+    pageNumber: number,
+    pageSize: number,
     onIsSelectedChanged: (nzo_ids: Set<string>, isSelected: boolean) => void,
     onIsRemovingChanged: (nzo_ids: Set<string>, isRemoving: boolean) => void,
     onRemoved: (nzo_ids: Set<string>) => void,
+    onPageSelected?: (page: number) => void,
 }
 
-export function HistoryTable({ historySlots, totalHistoryCount, onIsSelectedChanged, onIsRemovingChanged, onRemoved }: HistoryTableProps) {
+export function HistoryTable({
+    historySlots,
+    totalHistoryCount,
+    pageNumber,
+    pageSize,
+    onIsSelectedChanged,
+    onIsRemovingChanged,
+    onRemoved,
+    onPageSelected,
+}: HistoryTableProps) {
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
+    const totalPages = Math.max(1, Math.ceil(totalHistoryCount / pageSize));
     var selectedCount = historySlots.filter(x => !!x.isSelected).length;
     var headerCheckboxState: TriCheckboxState = selectedCount === 0 ? 'none' : selectedCount === historySlots.length ? 'all' : 'some';
 
@@ -71,7 +85,7 @@ export function HistoryTable({ historySlots, totalHistoryCount, onIsSelectedChan
     );
 
     return (
-        <PageSection title={sectionTitle}>
+        <PageSection title={sectionTitle} badgeText={`${totalHistoryCount} item(s)`}>
             <PageTable headerCheckboxState={headerCheckboxState} onHeaderCheckboxChange={onSelectAll}>
                 {historySlots.map(slot =>
                     <HistoryRow
@@ -83,6 +97,9 @@ export function HistoryTable({ historySlots, totalHistoryCount, onIsSelectedChan
                     />
                 )}
             </PageTable>
+            {totalPages > 1 &&
+                <Pagination pageNumber={pageNumber} totalPages={totalPages} onPageSelected={onPageSelected} />
+            }
 
             <ConfirmModal
                 show={isConfirmingRemoval}

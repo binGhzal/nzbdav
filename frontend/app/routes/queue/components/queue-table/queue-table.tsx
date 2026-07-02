@@ -11,29 +11,39 @@ import styles from "../../route.module.css"
 import { withUrlBase } from "~/utils/url-base"
 import { WideViewport } from "../wide-viewport/wide-viewport"
 import { ThinViewport } from "../thin-viewport/thin-viewport"
+import { Pagination } from "../pagination/pagination"
 
 export type QueueTableProps = {
     queueSlots: PresentationQueueSlot[],
     totalQueueCount: number,
+    pageNumber: number,
+    pageSize: number,
     categories: string[],
     manualCategoryRef: React.RefObject<string>,
     onIsSelectedChanged: (nzo_ids: Set<string>, isSelected: boolean) => void,
     onIsRemovingChanged: (nzo_ids: Set<string>, isRemoving: boolean) => void,
     onRemoved: (nzo_ids: Set<string>) => void,
+    onPriorityChanged: (nzo_id: string, priority: string) => void,
     onUploadClicked?: () => void;
+    onPageSelected?: (page: number) => void;
 }
 
 export function QueueTable({
     queueSlots,
     totalQueueCount,
+    pageNumber,
+    pageSize,
     categories,
     manualCategoryRef,
     onIsSelectedChanged,
     onIsRemovingChanged,
     onRemoved,
+    onPriorityChanged,
     onUploadClicked,
+    onPageSelected,
 }: QueueTableProps) {
     const [pendingRemoval, setPendingRemoval] = useState<{ nzoIds: Set<string>, label: string } | null>(null);
+    const totalPages = Math.max(1, Math.ceil(totalQueueCount / pageSize));
     const selectedQueueIds = useMemo(
         () => new Set<string>(queueSlots.filter(x => !!x.isSelected).map(x => x.nzo_id)),
         [queueSlots]
@@ -149,8 +159,8 @@ export function QueueTable({
     );
 
     return (
-        <PageSection title={sectionTitle} subTitle={sectionSubTitle}>
-            {queueSlots?.length == 0 ? (
+        <PageSection title={sectionTitle} subTitle={sectionSubTitle} badgeText={`${totalQueueCount} item(s)`}>
+            {queueSlots?.length == 0 && totalQueueCount === 0 ? (
                 <EmptyQueue onUploadClicked={onUploadClicked} />
             ) : (
                 <PageTable headerCheckboxState={headerCheckboxState} onHeaderCheckboxChange={onSelectAll}>
@@ -161,10 +171,14 @@ export function QueueTable({
                             onIsSelectedChanged={onRowIsSelectedChanged}
                             onIsRemovingChanged={onRowIsRemovingChanged}
                             onRemoved={onRowRemoved}
+                            onPriorityChanged={onPriorityChanged}
                         />
                     )}
                 </PageTable>
             )}
+            {totalPages > 1 &&
+                <Pagination pageNumber={pageNumber} totalPages={totalPages} onPageSelected={onPageSelected} />
+            }
 
             <ConfirmModal
                 show={pendingRemoval !== null}
@@ -180,12 +194,29 @@ type QueueRowProps = {
     slot: PresentationQueueSlot
     onIsSelectedChanged: (nzo_id: string, isSelected: boolean) => void,
     onIsRemovingChanged: (nzo_id: string, isRemoving: boolean) => void,
-    onRemoved: (nzo_id: string) => void
+    onRemoved: (nzo_id: string) => void,
+    onPriorityChanged: (nzo_id: string, priority: string) => void
 }
 
-export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, onRemoved }: QueueRowProps) => {
+const priorityOptions = ["Force", "High", "Normal", "Low", "Paused"];
+const priorityValues: Record<string, string> = {
+    Force: "2",
+    High: "1",
+    Normal: "0",
+    Low: "-1",
+    Paused: "-2"
+};
+
+export const QueueRow = memo(({
+    slot,
+    onIsSelectedChanged,
+    onIsRemovingChanged,
+    onRemoved,
+    onPriorityChanged
+}: QueueRowProps) => {
     // state
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
+    const [isChangingPriority, setIsChangingPriority] = useState(false);
     const isActivelyUploading = slot.isUploading && slot.status == "uploading";
 
     // events
@@ -222,7 +253,44 @@ export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, 
         onIsRemovingChanged(slot.nzo_id, false);
     }, [slot.nzo_id, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
 
+    const onChangePriority = useCallback(async (priority: string) => {
+        if (slot.isUploading || priority === slot.priority) return;
+
+        setIsChangingPriority(true);
+        try {
+            const url = withUrlBase('/api?mode=queue&name=priority')
+                + `&value=${encodeURIComponent(slot.nzo_id)}`
+                + `&value2=${encodeURIComponent(priorityValues[priority] ?? "0")}`;
+            const response = await fetch(url);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.status === true) {
+                    onPriorityChanged(slot.nzo_id, priority);
+                    setIsChangingPriority(false);
+                    return;
+                }
+            }
+        } catch { }
+        setIsChangingPriority(false);
+    }, [slot.isUploading, slot.priority, slot.nzo_id, onPriorityChanged, setIsChangingPriority]);
+
     // view
+    const priority = priorityOptions.includes(slot.priority) ? slot.priority : "Normal";
+    const actions = (
+        <>
+            {!slot.isUploading &&
+                <div style={{ minWidth: "92px", opacity: isChangingPriority ? 0.5 : 1 }}>
+                    <SimpleDropdown
+                        type="bordered"
+                        options={priorityOptions}
+                        value={priority}
+                        onChange={onChangePriority} />
+                </div>
+            }
+            <ActionButton type="delete" disabled={!!slot.isRemoving || isActivelyUploading} onClick={onRemove} />
+        </>
+    );
+
     return (
         <>
             <PageRow
@@ -234,7 +302,7 @@ export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, 
                 status={slot.status}
                 percentage={slot.true_percentage}
                 fileSizeBytes={Number(slot.mb) * 1024 * 1024}
-                actions={<ActionButton type="delete" disabled={!!slot.isRemoving || isActivelyUploading} onClick={onRemove} />}
+                actions={actions}
                 onRowSelectionChanged={isSelected => onIsSelectedChanged(slot.nzo_id, isSelected)}
                 error={slot.error}
             />

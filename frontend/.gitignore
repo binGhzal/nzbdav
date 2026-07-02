@@ -2,6 +2,8 @@
 /node_modules/
 *.tsbuildinfo
 .env
+/server.js
+/vite.config.js
 
 # React Router
 /.react-router/

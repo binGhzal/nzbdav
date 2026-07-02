@@ -1,8 +1,11 @@
+import fs from "node:fs";
 import compression from "compression";
 import express from "express";
 import morgan from "morgan";
 import http from "http";
 import { WebSocketServer } from "ws";
+
+loadDotEnvFile();
 
 // Short-circuit the type-checking of the built output.
 const BUILD_PATH = "../build/server/index.js";
@@ -22,6 +25,36 @@ function normalizeUrlBase(raw: string | undefined): string {
   return withLeading.replace(/\/+$/, "");
 }
 const URL_BASE = normalizeUrlBase(process.env.URL_BASE);
+
+function loadDotEnvFile() {
+  const candidates = process.env.NZBDAV_ENV_FILE
+    ? [process.env.NZBDAV_ENV_FILE]
+    : [".env", "../.env"];
+  const envPath = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!envPath) return;
+
+  for (const rawLine of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
+    let line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (line.startsWith("export ")) line = line.slice("export ".length).trimStart();
+
+    const separator = line.indexOf("=");
+    if (separator <= 0) continue;
+
+    const key = line.slice(0, separator).trim();
+    if (!key || process.env[key] !== undefined) continue;
+
+    process.env[key] = unquoteEnvValue(line.slice(separator + 1).trim());
+  }
+}
+
+function unquoteEnvValue(value: string) {
+  if (value.length < 2) return value;
+  const quote = value[0];
+  if ((quote !== "\"" && quote !== "'") || value[value.length - 1] !== quote) return value;
+  const unquoted = value.slice(1, -1);
+  return quote === "\"" ? unquoted.replace(/\\n/g, "\n").replace(/\\"/g, "\"") : unquoted;
+}
 
 // Initialize the express app
 const app = express();

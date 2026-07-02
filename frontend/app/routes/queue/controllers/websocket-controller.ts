@@ -24,10 +24,8 @@ const topicSubscriptions = {
 export function initializeQueueHistoryWebsocket(
     queueEvents: QueueEvents,
     historyEvents: HistoryEvents,
-    disableLiveView: boolean,
 ) {
     const onWebsocketMessage = useCallback((topic: string, message: string) => {
-        if (disableLiveView) return;
         if (topic == topicNames.queueItemAdded)
             queueEvents.onAddQueueSlot(JSON.parse(message));
         else if (topic == topicNames.queueItemRemoved)
@@ -43,11 +41,9 @@ export function initializeQueueHistoryWebsocket(
     }, [
         queueEvents,
         historyEvents,
-        disableLiveView
     ]);
 
     useEffect(() => {
-        if (disableLiveView) return;
         let ws: WebSocket;
         let disposed = false;
         function connect() {
@@ -60,5 +56,5 @@ export function initializeQueueHistoryWebsocket(
         }
 
         return connect();
-    }, [onWebsocketMessage, disableLiveView]);
+    }, [onWebsocketMessage]);
 }

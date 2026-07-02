@@ -202,8 +202,9 @@ nzbdav_rclone:
       condition: service_healthy
       restart: true
   # Optimized mounting flags for streaming
-  # 0M buffer size prevents double-caching (Kernel + RClone)
-  # 512M read-ahead ensures smooth playback
+  # 0M buffer size prevents large per-open-file RAM buffering
+  # Parallel VFS chunk streams improve high-latency read throughput
+  # 512M read-ahead is disk-backed when vfs-cache-mode=full
   command: >
     mount nzbdav: /mnt/remote/nzbdav
       --uid=1000
@@ -213,9 +214,12 @@ nzbdav_rclone:
       --use-cookies
       --vfs-cache-mode=full
       --vfs-cache-max-size=20G
-      --vfs-cache-max-age=24h
+      --vfs-cache-max-age=6h
+      --vfs-cache-poll-interval=1m
       --buffer-size=0M
       --vfs-read-ahead=512M
+      --vfs-read-chunk-size=4M
+      --vfs-read-chunk-streams=16
       --dir-cache-time=20s
 ```
 
@@ -241,9 +245,12 @@ ls -la /mnt/remote/nzbdav
 * **`--use-cookies`**: **Performance**. Without this, Rclone re-authenticates on every single request, causing massive slowdowns.
 * **`--allow-other`**: **Permissions**. Ensures other containers (like Radarr/Plex) can see the mounted files.
 * **`--vfs-cache-mode=full`**: **Performance**. Enables the full VFS cache, which is required for seeking and proper file handling.
-* **`--buffer-size 0M`**: **Stability**. Prevents double-caching (RAM + Disk). 
+* **`--buffer-size=0M`**: **Memory Management**. Prevents large per-open-file RAM buffering. With full VFS cache, use disk-backed read-ahead for smoothing instead.
 * **`--vfs-read-ahead=512M`**: **Smooth Playback**. Buffers 512MB into VFS disk cache ahead of the current position to handle high-bitrate spikes without stuttering.
+* **`--vfs-read-chunk-size=4M`**: **Chunk Granularity**. Uses smaller source reads so parallel chunk streams can fill the VFS cache quickly instead of waiting on one large serial read.
+* **`--vfs-read-chunk-streams=16`**: **Parallel Chunking**. Reads multiple VFS chunks concurrently, which is useful on high-latency links. Start here, then adjust based on provider/server limits.
 * **`--vfs-cache-max-size=20G`**: **Disk Management**. Limits the local disk space used by the cache. Adjust based on your available storage.
+* **`--vfs-cache-max-age=6h`**: **Temporary Storage**. Expires idle cache entries so storage usage stays temporary.
 * **`--dir-cache-time=20s`**: **Responsiveness**. Keeps the directory cache short so new downloads/links appear quickly in the mount.
 
 These flags are optimized for streaming. 
@@ -251,6 +258,7 @@ These flags are optimized for streaming.
 Remember: `unnecessary flags = potential pitfalls`.
 
 #### Rclone flags reference
+* [Rclone mount VFS documentation](https://rclone.org/commands/rclone_mount/)
 * [Rclone Forum Discussion on Buffer Size](https://forum.rclone.org/t/whats-the-suitable-value-to-set-for-buffer-size-with-vfs-read-ahead/39971/4)
 
 ---
@@ -349,5 +357,4 @@ In the AIOStreams UI:
 ### 3. Install to Stremio
 
 Go to the **Save & Install** tab, click **Save**, and then install the addon to Stremio.
-
 
