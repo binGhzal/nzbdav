@@ -35,6 +35,11 @@ Make NZBDav faster and safer for ARR/Plex Usenet workloads by improving the exis
 - DFS was not accepted. It improved p95 seek latency from `7568.446ms` to `3284.053ms`, but CPU was `10.37` cores versus the rclone baseline `2.86` cores, and one sequential read timed out. The gate rejected DFS for CPU regression and failed correctness checks.
 - Local DFS read-path remediation added direct `IFileRangeReader` handling for DFS opens, sparse-cache-backed RAR/multipart reads, and serialized range reads for AES fallback streams.
 - Post-remediation local checks passed: `dotnet test backend.Tests/backend.Tests.csproj --filter "FullyQualifiedName~Streams"`, `dotnet test backend.Tests/backend.Tests.csproj`, and `git diff --check`.
+- Post-remediation production benchmark artifacts were captured on the production host under `/opt/media-stack/artifacts/nzbdav-bench/`:
+  - rclone baseline: `rclone-20260702T203750Z.json`
+  - patched DFS candidate: `dfs-patched-20260702T210018Z.json`
+  - gate evaluation: `evaluation-20260702T210030Z.json`
+- Patched DFS was not accepted. Correctness, fail-closed, CPU, and RSS checks passed, but p95 seek latency regressed from rclone `0.610ms` to DFS `6025.497ms`; the evaluator rejected the candidate with a seek-latency ratio of `9877.864` against the required `<= 0.8`.
 
 ## DFS Acceptance Gate
 
@@ -49,4 +54,4 @@ Keep `Mount:Type=rclone` as the default until repo-local benchmark artifacts sho
 ## Remaining Work
 
 - Keep `Mount:Type=rclone` as the default.
-- Rerun the same production DFS-vs-rclone benchmark gate after the read-path remediation. Do not consider DFS as a replacement backend unless CPU, RSS, sequential-read correctness, fail-closed, and ARR import/delete gates pass.
+- Do not consider DFS as a replacement backend until random seek performance beats tuned rclone by the required 20% while preserving the now-passing correctness, fail-closed, CPU, and RSS checks.

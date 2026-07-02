@@ -19,6 +19,7 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
         long? requestedEndByte = null,
         SparseSegmentCacheOptions? cacheOptions = null)
     {
+        fileParts ??= [];
         var inner = new UncachedDavMultipartFileRangeReader(fileParts, usenetClient, articleBufferSize);
         if (cacheOptions is { Enabled: true })
         {
@@ -70,12 +71,14 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
         {
             AddRange(sha256, part.SegmentIdByteRange);
             AddRange(sha256, part.FilePartByteRange);
-            AddLong(sha256, part.SegmentIds.Length);
-            foreach (var segmentId in part.SegmentIds)
+            var segmentIds = part.SegmentIds ?? [];
+            AddLong(sha256, segmentIds.Length);
+            foreach (var segmentId in segmentIds)
                 AddString(sha256, segmentId);
 
-            AddLong(sha256, part.SegmentSlices.Length);
-            foreach (var slice in part.SegmentSlices)
+            var segmentSlices = part.SegmentSlices ?? [];
+            AddLong(sha256, segmentSlices.Length);
+            foreach (var slice in segmentSlices)
             {
                 AddString(sha256, slice.SegmentId);
                 AddRange(sha256, slice.SegmentByteRange);
@@ -216,7 +219,7 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
                 ? part.FilePartByteRange.StartInclusive + partEndExclusive - 1
                 : (long?)null;
             await using var stream = usenetClient.GetFileStream(
-                part.SegmentIds,
+                part.SegmentIds ?? [],
                 part.SegmentIdByteRange.Count,
                 articleBufferSize,
                 requestedPartEndByte);

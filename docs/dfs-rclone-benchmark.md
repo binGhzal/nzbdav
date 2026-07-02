@@ -138,4 +138,14 @@ The 2026-07-02 production benchmark kept rclone as the accepted backend:
 
 Do not switch production to `Mount:Type=dfs` from this result. Fix the DFS CPU regression and timeout first, then rerun the same filesystem-transport benchmark gate.
 
-Follow-up local remediation moved DFS reads onto direct `IFileRangeReader` handles and extended the sparse cache to RAR/multipart streams. This is not acceptance evidence by itself; rerun the production benchmark gate with the same rclone baseline inputs before changing the default mount backend.
+Follow-up remediation moved DFS reads onto direct `IFileRangeReader` handles, extended the sparse cache to RAR/multipart streams, and fixed legacy blob-backed multipart files whose version-tolerant `SegmentSlices` field deserializes as `null`.
+
+The patched production benchmark on 2026-07-02 still kept rclone as the accepted backend:
+
+* rclone baseline artifact: `/opt/media-stack/artifacts/nzbdav-bench/rclone-20260702T203750Z.json`.
+* patched DFS candidate artifact: `/opt/media-stack/artifacts/nzbdav-bench/dfs-patched-20260702T210018Z.json`.
+* evaluation artifact: `/opt/media-stack/artifacts/nzbdav-bench/evaluation-20260702T210030Z.json`.
+* DFS correctness, fail-closed, CPU, and RSS checks passed.
+* DFS p95 seek latency failed the gate at `6025.497ms` versus rclone `0.610ms`.
+
+Do not switch production to `Mount:Type=dfs` from this result. Keep rclone as the default and optimize the DFS random-seek path before running the gate again.

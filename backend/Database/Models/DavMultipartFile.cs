@@ -10,7 +10,7 @@ public partial class DavMultipartFile
     public Guid Id { get; set; } // foreign key to DavItem.Id
 
     [MemoryPackOrder(1)]
-    public Meta Metadata { get; set; }
+    public Meta Metadata { get; set; } = new();
 
     // navigation helpers
     [MemoryPackIgnore]
