@@ -18,6 +18,7 @@ namespace NzbWebDAV.Clients.Usenet;
 public class ArticleCachingNntpClient(
     INntpClient usenetClient,
     long maxCacheBytes = long.MaxValue,
+    long? sharedMaxCacheBytes = null,
     bool leaveOpen = true,
     ArticleCacheBudget? sharedBudget = null
 ) : WrappingNntpClient(usenetClient), IAsyncDisposable
@@ -29,7 +30,7 @@ public class ArticleCachingNntpClient(
     private readonly long _maxCacheBytes = maxCacheBytes > 0 ? maxCacheBytes : long.MaxValue;
     private readonly ArticleCacheBudget _sharedBudget = ConfigureSharedBudget(
         sharedBudget ?? ArticleCacheBudget.Shared,
-        maxCacheBytes);
+        sharedMaxCacheBytes ?? maxCacheBytes);
     private long _cacheBytes;
     private bool _disposed;
 

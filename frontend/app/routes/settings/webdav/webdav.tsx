@@ -1,6 +1,6 @@
 import { Form, InputGroup } from "react-bootstrap";
 import styles from "./webdav.module.css"
-import { type Dispatch, type SetStateAction } from "react";
+import { type Dispatch, type SetStateAction, useState } from "react";
 import { className } from "~/utils/styling";
 import { isPositiveInteger } from "../usenet/usenet";
 
@@ -9,7 +9,13 @@ type SabnzbdSettingsProps = {
     setNewConfig: Dispatch<SetStateAction<Record<string, string>>>
 };
 
+const MAX_CONCURRENT_QUEUE_DOWNLOADS = 128;
+const MAX_STREAMING_CONNECTIONS = 256;
+const MAX_TOTAL_STREAMING_CONNECTIONS = 512;
+
 export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
+    const [showAdvancedThroughput, setShowAdvancedThroughput] = useState(false);
+
     return (
         <div className={styles.container}>
             <Form.Group>
@@ -72,116 +78,127 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                 </Form.Text>
             </Form.Group>
             <hr />
-            <Form.Group>
-                <Form.Label htmlFor="max-concurrent-queue-downloads-input">Concurrent Queue Downloads</Form.Label>
-                <Form.Control
-                    {...className([styles.input, !isValidMaxConcurrentQueueDownloads(config["queue.max-concurrent-downloads"]) && styles.error])}
-                    type="text"
-                    id="max-concurrent-queue-downloads-input"
-                    aria-describedby="max-concurrent-queue-downloads-help"
-                    placeholder="0"
-                    value={config["queue.max-concurrent-downloads"]}
-                    onChange={e => setNewConfig({ ...config, "queue.max-concurrent-downloads": e.target.value })} />
-                <Form.Text id="max-concurrent-queue-downloads-help" muted>
-                    Number of NZBs to process at the same time. Use 0 for automatic sizing. When adaptive sizing is on, NZBDav sizes this from available download connections.
-                </Form.Text>
-            </Form.Group>
-            <hr />
-            <Form.Group>
-                <Form.Label htmlFor="file-processing-concurrency-input">File Processing Concurrency Per NZB</Form.Label>
-                <Form.Control
-                    {...className([styles.input, !isValidFileProcessingConcurrency(config["queue.file-processing-concurrency"]) && styles.error])}
-                    type="text"
-                    id="file-processing-concurrency-input"
-                    aria-describedby="file-processing-concurrency-help"
-                    placeholder="0"
-                    value={config["queue.file-processing-concurrency"]}
-                    onChange={e => setNewConfig({ ...config, "queue.file-processing-concurrency": e.target.value })} />
-                <Form.Text id="file-processing-concurrency-help" muted>
-                    Number of file processors to run inside each active NZB. Use 0 for automatic sizing. When adaptive sizing is on, NZBDav sizes this from available download connections.
-                </Form.Text>
-            </Form.Group>
-            <hr />
-            <Form.Group>
-                <Form.Label htmlFor="article-cache-max-megabytes-input">Temporary Article Cache Limit</Form.Label>
-                <InputGroup className={styles.input}>
-                    <Form.Control
-                        className={!isValidArticleCacheMaxMegabytes(config["usenet.article-cache-max-megabytes"]) ? styles.error : undefined}
-                        type="text"
-                        id="article-cache-max-megabytes-input"
-                        aria-describedby="article-cache-max-megabytes-help"
-                        placeholder="256"
-                        value={config["usenet.article-cache-max-megabytes"]}
-                        onChange={e => setNewConfig({ ...config, "usenet.article-cache-max-megabytes": e.target.value })} />
-                    <InputGroup.Text>MB</InputGroup.Text>
-                </InputGroup>
-                <Form.Text id="article-cache-max-megabytes-help" muted>
-                    Per active queue job limit for decoded article files kept in temporary storage.
-                </Form.Text>
-            </Form.Group>
-            <hr />
-            <Form.Group>
-                <Form.Label htmlFor="max-streaming-connections-input">Max Streaming Connections Per Stream</Form.Label>
-                <Form.Control
-                    {...className([styles.input, !isValidMaxStreamingConnections(config["usenet.max-streaming-connections"]) && styles.error])}
-                    type="text"
-                    id="max-streaming-connections-input"
-                    aria-describedby="max-streaming-connections-help"
-                    placeholder="0"
-                    value={config["usenet.max-streaming-connections"]}
-                    onChange={e => setNewConfig({ ...config, "usenet.max-streaming-connections": e.target.value })} />
-                <Form.Text id="max-streaming-connections-help" muted>
-                    Maximum article connections one WebDAV stream can use. Use 0 for automatic sizing from the buffer and global connection limits.
-                </Form.Text>
-            </Form.Group>
-            <hr />
-            <Form.Group>
-                <Form.Label htmlFor="max-total-streaming-connections-input">Max Total Streaming Connections</Form.Label>
-                <Form.Control
-                    {...className([styles.input, !isValidMaxTotalStreamingConnections(config["usenet.max-total-streaming-connections"]) && styles.error])}
-                    type="text"
-                    id="max-total-streaming-connections-input"
-                    aria-describedby="max-total-streaming-connections-help"
-                    placeholder="0"
-                    value={config["usenet.max-total-streaming-connections"]}
-                    onChange={e => setNewConfig({ ...config, "usenet.max-total-streaming-connections": e.target.value })} />
-                <Form.Text id="max-total-streaming-connections-help" muted>
-                    Total article connections shared by all WebDAV streams. Use 0 for automatic CPU-based sizing.
-                </Form.Text>
-            </Form.Group>
-            <hr />
-            <Form.Group>
-                <Form.Label htmlFor="streaming-priority-input">Streaming Priority (vs Queue)</Form.Label>
-                <InputGroup className={styles.input}>
-                    <Form.Control
-                        className={!isValidStreamingPriority(config["usenet.streaming-priority"]) ? styles.error : undefined}
-                        type="text"
-                        id="streaming-priority-input"
-                        aria-describedby="streaming-priority-help"
-                        placeholder="80"
-                        value={config["usenet.streaming-priority"]}
-                        onChange={e => setNewConfig({ ...config, "usenet.streaming-priority": e.target.value })} />
-                    <InputGroup.Text>%</InputGroup.Text>
-                </InputGroup>
-                <Form.Text id="streaming-priority-help" muted>
-                    When streaming from the webdav while the queue is also active, how much bandwidth should be dedicated to streaming?
-                </Form.Text>
-            </Form.Group>
-            <hr />
-            <Form.Group>
-                <Form.Label htmlFor="article-buffer-size-input">Article Buffer Size</Form.Label>
-                <Form.Control
-                    {...className([styles.input, !isValidArticleBufferSize(config["usenet.article-buffer-size"]) && styles.error])}
-                    type="text"
-                    id="article-buffer-size-input"
-                    aria-describedby="article-buffer-size-help"
-                    placeholder="40"
-                    value={config["usenet.article-buffer-size"]}
-                    onChange={e => setNewConfig({ ...config, "usenet.article-buffer-size": e.target.value })} />
-                <Form.Text id="article-buffer-size-help" muted>
-                    The number of articles to buffer ahead, per stream, when reading from the webdav.
-                </Form.Text>
-            </Form.Group>
+            <button
+                type="button"
+                className={styles.advancedToggle}
+                aria-expanded={showAdvancedThroughput}
+                onClick={() => setShowAdvancedThroughput(value => !value)}>
+                {showAdvancedThroughput ? "Hide Advanced Throughput" : "Show Advanced Throughput"}
+            </button>
+            {showAdvancedThroughput && (
+                <div className={styles.advancedSection}>
+                    <Form.Group>
+                        <Form.Label htmlFor="max-concurrent-queue-downloads-input">Concurrent Queue Downloads</Form.Label>
+                        <Form.Control
+                            {...className([styles.input, !isValidMaxConcurrentQueueDownloads(config["queue.max-concurrent-downloads"]) && styles.error])}
+                            type="text"
+                            id="max-concurrent-queue-downloads-input"
+                            aria-describedby="max-concurrent-queue-downloads-help"
+                            placeholder="0"
+                            value={config["queue.max-concurrent-downloads"]}
+                            onChange={e => setNewConfig({ ...config, "queue.max-concurrent-downloads": e.target.value })} />
+                        <Form.Text id="max-concurrent-queue-downloads-help" muted>
+                            Number of NZBs to process at the same time. Use 0 for automatic sizing. When adaptive sizing is on, NZBDav sizes this from available download connections.
+                        </Form.Text>
+                    </Form.Group>
+                    <hr />
+                    <Form.Group>
+                        <Form.Label htmlFor="file-processing-concurrency-input">File Processing Concurrency Per NZB</Form.Label>
+                        <Form.Control
+                            {...className([styles.input, !isValidFileProcessingConcurrency(config["queue.file-processing-concurrency"]) && styles.error])}
+                            type="text"
+                            id="file-processing-concurrency-input"
+                            aria-describedby="file-processing-concurrency-help"
+                            placeholder="0"
+                            value={config["queue.file-processing-concurrency"]}
+                            onChange={e => setNewConfig({ ...config, "queue.file-processing-concurrency": e.target.value })} />
+                        <Form.Text id="file-processing-concurrency-help" muted>
+                            Number of file processors to run inside each active NZB. Use 0 for automatic sizing. When adaptive sizing is on, NZBDav sizes this from available download connections.
+                        </Form.Text>
+                    </Form.Group>
+                    <hr />
+                    <Form.Group>
+                        <Form.Label htmlFor="article-cache-max-megabytes-input">Temporary Article Cache Limit</Form.Label>
+                        <InputGroup className={styles.input}>
+                            <Form.Control
+                                className={!isValidArticleCacheMaxMegabytes(config["usenet.article-cache-max-megabytes"]) ? styles.error : undefined}
+                                type="text"
+                                id="article-cache-max-megabytes-input"
+                                aria-describedby="article-cache-max-megabytes-help"
+                                placeholder="256"
+                                value={config["usenet.article-cache-max-megabytes"]}
+                                onChange={e => setNewConfig({ ...config, "usenet.article-cache-max-megabytes": e.target.value })} />
+                            <InputGroup.Text>MB</InputGroup.Text>
+                        </InputGroup>
+                        <Form.Text id="article-cache-max-megabytes-help" muted>
+                            Total temporary decoded-article cache budget shared by active queue downloads.
+                        </Form.Text>
+                    </Form.Group>
+                    <hr />
+                    <Form.Group>
+                        <Form.Label htmlFor="max-streaming-connections-input">Max Streaming Connections Per Stream</Form.Label>
+                        <Form.Control
+                            {...className([styles.input, !isValidMaxStreamingConnections(config["usenet.max-streaming-connections"]) && styles.error])}
+                            type="text"
+                            id="max-streaming-connections-input"
+                            aria-describedby="max-streaming-connections-help"
+                            placeholder="0"
+                            value={config["usenet.max-streaming-connections"]}
+                            onChange={e => setNewConfig({ ...config, "usenet.max-streaming-connections": e.target.value })} />
+                        <Form.Text id="max-streaming-connections-help" muted>
+                            Maximum article connections one WebDAV stream can use. Use 0 for automatic sizing from the buffer and global connection limits.
+                        </Form.Text>
+                    </Form.Group>
+                    <hr />
+                    <Form.Group>
+                        <Form.Label htmlFor="max-total-streaming-connections-input">Max Total Streaming Connections</Form.Label>
+                        <Form.Control
+                            {...className([styles.input, !isValidMaxTotalStreamingConnections(config["usenet.max-total-streaming-connections"]) && styles.error])}
+                            type="text"
+                            id="max-total-streaming-connections-input"
+                            aria-describedby="max-total-streaming-connections-help"
+                            placeholder="0"
+                            value={config["usenet.max-total-streaming-connections"]}
+                            onChange={e => setNewConfig({ ...config, "usenet.max-total-streaming-connections": e.target.value })} />
+                        <Form.Text id="max-total-streaming-connections-help" muted>
+                            Total article connections shared by all WebDAV streams. Use 0 for automatic CPU-based sizing.
+                        </Form.Text>
+                    </Form.Group>
+                    <hr />
+                    <Form.Group>
+                        <Form.Label htmlFor="streaming-priority-input">Streaming Priority (vs Queue)</Form.Label>
+                        <InputGroup className={styles.input}>
+                            <Form.Control
+                                className={!isValidStreamingPriority(config["usenet.streaming-priority"]) ? styles.error : undefined}
+                                type="text"
+                                id="streaming-priority-input"
+                                aria-describedby="streaming-priority-help"
+                                placeholder="80"
+                                value={config["usenet.streaming-priority"]}
+                                onChange={e => setNewConfig({ ...config, "usenet.streaming-priority": e.target.value })} />
+                            <InputGroup.Text>%</InputGroup.Text>
+                        </InputGroup>
+                        <Form.Text id="streaming-priority-help" muted>
+                            When streaming from the webdav while the queue is also active, how much bandwidth should be dedicated to streaming?
+                        </Form.Text>
+                    </Form.Group>
+                    <hr />
+                    <Form.Group>
+                        <Form.Label htmlFor="article-buffer-size-input">Article Buffer Size</Form.Label>
+                        <Form.Control
+                            {...className([styles.input, !isValidArticleBufferSize(config["usenet.article-buffer-size"]) && styles.error])}
+                            type="text"
+                            id="article-buffer-size-input"
+                            aria-describedby="article-buffer-size-help"
+                            placeholder="40"
+                            value={config["usenet.article-buffer-size"]}
+                            onChange={e => setNewConfig({ ...config, "usenet.article-buffer-size": e.target.value })} />
+                        <Form.Text id="article-buffer-size-help" muted>
+                            The number of articles to buffer ahead, per stream, when reading from the webdav.
+                        </Form.Text>
+                    </Form.Group>
+                </div>
+            )}
             <hr />
             <Form.Group>
                 <Form.Check
@@ -269,7 +286,7 @@ function isValidMaxDownloadConnections(value: string): boolean {
 function isValidMaxConcurrentQueueDownloads(value: string): boolean {
     if (value.trim() === "") return false;
     const num = Number(value);
-    return Number.isInteger(num) && num >= 0 && num <= 16;
+    return Number.isInteger(num) && num >= 0 && num <= MAX_CONCURRENT_QUEUE_DOWNLOADS;
 }
 
 function isValidFileProcessingConcurrency(value: string): boolean {
@@ -285,13 +302,13 @@ function isValidArticleCacheMaxMegabytes(value: string): boolean {
 function isValidMaxStreamingConnections(value: string): boolean {
     if (value.trim() === "") return false;
     const num = Number(value);
-    return Number.isInteger(num) && num >= 0 && num <= 64;
+    return Number.isInteger(num) && num >= 0 && num <= MAX_STREAMING_CONNECTIONS;
 }
 
 function isValidMaxTotalStreamingConnections(value: string): boolean {
     if (value.trim() === "") return false;
     const num = Number(value);
-    return Number.isInteger(num) && num >= 0 && num <= 128;
+    return Number.isInteger(num) && num >= 0 && num <= MAX_TOTAL_STREAMING_CONNECTIONS;
 }
 
 function isValidStreamingPriority(value: string): boolean {

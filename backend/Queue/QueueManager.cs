@@ -193,7 +193,8 @@ public class QueueManager : IDisposable
 
             var cachingUsenetClient = new ArticleCachingNntpClient(
                 _usenetClient,
-                maxCacheBytes: _configManager.GetArticleCacheMaxBytes());
+                maxCacheBytes: _configManager.GetArticleCacheMaxBytesPerQueueWorker(),
+                sharedMaxCacheBytes: _configManager.GetArticleCacheMaxBytes());
             var queueItemCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var inProgressQueueItem = BeginProcessingQueueItem(
                 dbContext,

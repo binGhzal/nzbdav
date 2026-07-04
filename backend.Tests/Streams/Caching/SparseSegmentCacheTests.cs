@@ -26,6 +26,7 @@ public sealed class SparseSegmentCacheTests
             Assert.Equal([2, 3], second);
             Assert.Equal(1, inner.ReadCalls);
             Assert.Equal(1, manager.GetSnapshot().Hits);
+            Assert.Equal(1, manager.GetSnapshot().Misses);
         }
         finally
         {

@@ -13,3 +13,24 @@
 .error {
     border: 1px solid red !important;
 }
+
+.advancedToggle {
+    appearance: none;
+    border: 1px solid rgba(147, 161, 161, 0.35);
+    background: transparent;
+    color: #93a1a1;
+    border-radius: 6px;
+    padding: 7px 10px;
+    width: 100%;
+    text-align: left;
+}
+
+.advancedToggle:hover,
+.advancedToggle:focus-visible {
+    border-color: rgba(147, 161, 161, 0.75);
+    outline: none;
+}
+
+.advancedSection {
+    margin-top: 16px;
+}

@@ -201,9 +201,11 @@ public sealed class SparseSegmentCacheManager : IDisposable
         private readonly CancellationTokenSource _disposeCts = new();
         private readonly object _stateLock = new();
         private readonly HashSet<long> _completedChunks = [];
+        private readonly ConcurrentDictionary<long, byte> _scheduledReadAheadChunks = new();
         private readonly ConcurrentDictionary<long, Lazy<Task>> _inFlightFetches = new();
         private long _cachedBytes;
         private int _activeReaders;
+        private int _activeReadAheadTasks;
         private bool _disposed;
 
         public CacheFile(
@@ -357,22 +359,26 @@ public sealed class SparseSegmentCacheManager : IDisposable
 
         private Task EnsureChunkAsync(long chunkIndex, IFileRangeReader inner, CancellationToken ct)
         {
-            lock (_stateLock)
+            while (true)
             {
-                if (_completedChunks.Contains(chunkIndex))
+                lock (_stateLock)
                 {
-                    _manager.RecordHit();
-                    return Task.CompletedTask;
+                    if (_completedChunks.Contains(chunkIndex))
+                    {
+                        _manager.RecordHit();
+                        return Task.CompletedTask;
+                    }
                 }
 
+                if (_inFlightFetches.TryGetValue(chunkIndex, out var existing))
+                    return existing.Value.WaitAsync(ct);
+
+                var lazy = CreateFetch(chunkIndex, inner);
+                if (!_inFlightFetches.TryAdd(chunkIndex, lazy)) continue;
+
                 _manager.RecordMiss();
+                return lazy.Value.WaitAsync(ct);
             }
-
-            var lazy = _inFlightFetches.GetOrAdd(
-                chunkIndex,
-                _ => CreateFetch(chunkIndex, inner));
-
-            return lazy.Value.WaitAsync(ct);
         }
 
         private void StartReadAhead(
@@ -383,16 +389,39 @@ public sealed class SparseSegmentCacheManager : IDisposable
         {
             var readAheadBytes = _options.ReadAheadBytes;
             if (readAheadBytes <= 0 || readAheadToken.IsCancellationRequested) return;
+            if (Volatile.Read(ref _activeReadAheadTasks) >= 1) return;
 
             var chunkCount = (readAheadBytes + _options.ChunkBytes - 1) / _options.ChunkBytes;
             var maxChunkIndex = (readLimitExclusive + _options.ChunkBytes - 1) / _options.ChunkBytes;
+            var chunks = new List<long>();
+            for (var chunkIndex = firstChunkIndex;
+                 chunkIndex < maxChunkIndex && chunkIndex < firstChunkIndex + chunkCount;
+                 chunkIndex++)
+            {
+                lock (_stateLock)
+                {
+                    if (_completedChunks.Contains(chunkIndex)) continue;
+                }
+
+                if (_inFlightFetches.ContainsKey(chunkIndex)) continue;
+                if (!_scheduledReadAheadChunks.TryAdd(chunkIndex, 0)) continue;
+                chunks.Add(chunkIndex);
+            }
+
+            if (chunks.Count == 0) return;
+            if (Interlocked.Increment(ref _activeReadAheadTasks) > 1)
+            {
+                Interlocked.Decrement(ref _activeReadAheadTasks);
+                foreach (var chunkIndex in chunks)
+                    _scheduledReadAheadChunks.TryRemove(chunkIndex, out _);
+                return;
+            }
+
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    for (var chunkIndex = firstChunkIndex;
-                         chunkIndex < maxChunkIndex && chunkIndex < firstChunkIndex + chunkCount;
-                         chunkIndex++)
+                    foreach (var chunkIndex in chunks)
                     {
                         readAheadToken.ThrowIfCancellationRequested();
                         await EnsureChunkAsync(chunkIndex, inner, readAheadToken).ConfigureAwait(false);
@@ -401,6 +430,12 @@ public sealed class SparseSegmentCacheManager : IDisposable
                 catch
                 {
                     // Read-ahead is opportunistic; foreground reads will retry and surface errors.
+                }
+                finally
+                {
+                    foreach (var chunkIndex in chunks)
+                        _scheduledReadAheadChunks.TryRemove(chunkIndex, out _);
+                    Interlocked.Decrement(ref _activeReadAheadTasks);
                 }
             });
         }
@@ -416,7 +451,6 @@ public sealed class SparseSegmentCacheManager : IDisposable
 
         private async Task FetchAndRemoveAsync(long chunkIndex, IFileRangeReader inner, Lazy<Task> lazy)
         {
-            _manager.RecordMiss();
             try
             {
                 await FetchChunkAsync(chunkIndex, inner).ConfigureAwait(false);

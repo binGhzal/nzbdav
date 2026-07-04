@@ -16,6 +16,9 @@ public class ConfigManager
     public static readonly string AppVersion = EnvironmentUtil.GetVariable("NZBDAV_VERSION") ?? "unknown";
     private const int MaxQueueFileProcessingConcurrency = 256;
     private const int MaxAutoQueueDownloads = 16;
+    private const int MaxManualQueueDownloads = 128;
+    private const int MaxStreamingConnectionsPerStream = 256;
+    private const int MaxTotalStreamingConnections = 512;
     private const int MaxHealthCheckConcurrency = 64;
     private const string CgroupCpuStatPath = "/sys/fs/cgroup/cpu.stat";
     private static readonly TimeSpan CpuSampleInterval = TimeSpan.FromSeconds(5);
@@ -221,7 +224,7 @@ public class ConfigManager
     public int GetMaxStreamingConnections()
     {
         var configValue = int.Parse(GetConfigValue("usenet.max-streaming-connections") ?? "0");
-        if (configValue > 0) return Math.Clamp(configValue, 1, 64);
+        if (configValue > 0) return Math.Clamp(configValue, 1, MaxStreamingConnectionsPerStream);
 
         var articleBufferSize = Math.Max(1, GetArticleBufferSize());
         return Math.Min(articleBufferSize, GetAutomaticDownloadConnectionBudget());
@@ -230,7 +233,7 @@ public class ConfigManager
     public int GetMaxTotalStreamingConnections()
     {
         var configValue = int.Parse(GetConfigValue("usenet.max-total-streaming-connections") ?? "0");
-        if (configValue > 0) return Math.Clamp(configValue, 1, 128);
+        if (configValue > 0) return Math.Clamp(configValue, 1, MaxTotalStreamingConnections);
 
         var perStreamConnections = Math.Max(1, GetMaxStreamingConnections());
         var cpuBasedLimit = GetStreamingCpuConcurrencyLimit();
@@ -239,7 +242,7 @@ public class ConfigManager
         return Math.Clamp(
             Math.Min(Math.Min(activeStreamFanoutLimit, cpuBasedLimit), downloadConnections),
             1,
-            128
+            MaxTotalStreamingConnections
         );
     }
 
@@ -254,7 +257,7 @@ public class ConfigManager
     public int GetMaxConcurrentQueueDownloads()
     {
         var configValue = int.Parse(GetConfigValue("queue.max-concurrent-downloads") ?? "0");
-        if (configValue > 0) return Math.Clamp(configValue, 1, 16);
+        if (configValue > 0) return Math.Clamp(configValue, 1, MaxManualQueueDownloads);
 
         return GetAutomaticMaxConcurrentQueueDownloads(GetMaxDownloadConnections());
     }
@@ -290,6 +293,13 @@ public class ConfigManager
         return Math.Max(1, megabytes) * 1024 * 1024;
     }
 
+    public long GetArticleCacheMaxBytesPerQueueWorker()
+    {
+        var totalBudget = GetArticleCacheMaxBytes();
+        var workers = Math.Max(1, GetAdaptiveMaxConcurrentQueueDownloads());
+        return Math.Max(1, totalBudget / workers);
+    }
+
     public int GetArticleBufferSize()
     {
         return int.Parse(
@@ -310,7 +320,7 @@ public class ConfigManager
                 64L * 1024,
                 64L * 1024 * 1024),
             ReadAheadBytes = (int)Math.Clamp(
-                GetLongConfig(16L * 1024 * 1024, "Cache:ReadAheadBytes", "cache.read-ahead-bytes"),
+                GetLongConfig(8L * 1024 * 1024, "Cache:ReadAheadBytes", "cache.read-ahead-bytes"),
                 0,
                 512L * 1024 * 1024),
             IdleTtl = GetTimeSpanConfig(TimeSpan.FromMinutes(10), "Cache:IdleTtl", "cache.idle-ttl"),

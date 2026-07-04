@@ -90,6 +90,31 @@ public class ConfigManagerConcurrencyTests
     }
 
     [Fact]
+    public void ExplicitQueueWorkersCanExceedOldWebUiLimit()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "200"),
+            ("usenet.adaptive-connections-enabled", "false"),
+            ("queue.max-concurrent-downloads", "40")
+        );
+
+        Assert.Equal(40, configManager.GetMaxConcurrentQueueDownloads());
+    }
+
+    [Fact]
+    public void QueueWorkerArticleCacheUsesGlobalBudgetShare()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "200"),
+            ("usenet.adaptive-connections-enabled", "false"),
+            ("queue.max-concurrent-downloads", "16"),
+            ("usenet.article-cache-max-megabytes", "256")
+        );
+
+        Assert.Equal(16L * 1024 * 1024, configManager.GetArticleCacheMaxBytesPerQueueWorker());
+    }
+
+    [Fact]
     public void HealthCheckConcurrencyIsCpuBoundInsteadOfDownloadConnectionBound()
     {
         var configManager = CreateConfigManager(
@@ -188,10 +213,24 @@ public class ConfigManagerConcurrencyTests
         var configManager = CreateConfigManager(
             ("usenet.max-download-connections", "200"),
             ("usenet.adaptive-connections-enabled", "false"),
+            ("usenet.max-total-streaming-connections", "1024")
+        );
+
+        Assert.Equal(512, configManager.GetMaxTotalStreamingConnections());
+    }
+
+    [Fact]
+    public void ExplicitStreamingConnectionsCanUseHighOperatorOverrides()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "200"),
+            ("usenet.adaptive-connections-enabled", "false"),
+            ("usenet.max-streaming-connections", "200"),
             ("usenet.max-total-streaming-connections", "200")
         );
 
-        Assert.Equal(128, configManager.GetMaxTotalStreamingConnections());
+        Assert.Equal(200, configManager.GetMaxStreamingConnections());
+        Assert.Equal(200, configManager.GetMaxTotalStreamingConnections());
     }
 
     [Fact]
@@ -305,6 +344,6 @@ public class ConfigManagerConcurrencyTests
     private static int GetExpectedAutomaticStreamingConnectionBudget(int downloadConnections)
     {
         var cpuBased = Math.Clamp(Environment.ProcessorCount * 4, 4, 64);
-        return Math.Clamp(Math.Min(cpuBased, Math.Max(1, downloadConnections)), 1, 128);
+        return Math.Clamp(Math.Min(cpuBased, Math.Max(1, downloadConnections)), 1, 512);
     }
 }
