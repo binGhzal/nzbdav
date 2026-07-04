@@ -242,6 +242,48 @@ public sealed class SparseSegmentCacheTests
     }
 
     [Fact]
+    public async Task ReadAheadUsesGlobalSpeculativeFetchLimit()
+    {
+        using var tempDir = new TempDirectory();
+        using var manager = new SparseSegmentCacheManager(maxReadAheadTasks: 1);
+        var options = CreateOptions(tempDir.Path, chunkBytes: 2, maxBytes: 1024) with
+        {
+            ReadAheadBytes = 2
+        };
+        var firstInner = new BlockingReadAheadRangeReader([0, 1, 2, 3, 4, 5]);
+        var secondInner = new BlockingReadAheadRangeReader([6, 7, 8, 9, 10, 11]);
+        var first = manager.Open("file-a", firstInner, options);
+        var second = manager.Open("file-b", secondInner, options);
+
+        try
+        {
+            var firstBuffer = new byte[1];
+            var secondBuffer = new byte[1];
+
+            Assert.Equal(1, await first.ReadAtAsync(0, firstBuffer, CancellationToken.None));
+            await WaitUntilAsync(() => manager.GetSnapshot().ReadAheadActive == 1);
+
+            Assert.Equal(1, await second.ReadAtAsync(0, secondBuffer, CancellationToken.None));
+            await Task.Delay(100);
+
+            var snapshot = manager.GetSnapshot();
+            Assert.Equal(1, snapshot.ReadAheadActive);
+            Assert.Equal(1, snapshot.PendingFetches);
+            Assert.Equal(0, secondInner.BlockedReadAheadCalls);
+
+            firstInner.ReleaseReadAhead();
+            await WaitUntilAsync(() => manager.GetSnapshot().ReadAheadActive == 0);
+        }
+        finally
+        {
+            firstInner.ReleaseReadAhead();
+            secondInner.ReleaseReadAhead();
+            await DisposeReaderAsync(second);
+            await DisposeReaderAsync(first);
+        }
+    }
+
+    [Fact]
     public async Task CancelledOnlyWaiterDoesNotLeaveCompletedFetchPending()
     {
         using var tempDir = new TempDirectory();
@@ -386,6 +428,36 @@ public sealed class SparseSegmentCacheTests
             var count = Math.Min(buffer.Length, bytes.Length - (int)offset);
             bytes.AsMemory((int)offset, count).CopyTo(buffer);
             return count;
+        }
+    }
+
+    private sealed class BlockingReadAheadRangeReader(byte[] bytes) : IFileRangeReader
+    {
+        private readonly TaskCompletionSource _readAheadGate =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _blockedReadAheadCalls;
+
+        public long Length => bytes.LongLength;
+        public int BlockedReadAheadCalls => Volatile.Read(ref _blockedReadAheadCalls);
+
+        public async ValueTask<int> ReadAtAsync(long offset, Memory<byte> buffer, CancellationToken ct)
+        {
+            if (offset >= 2)
+            {
+                Interlocked.Increment(ref _blockedReadAheadCalls);
+                await _readAheadGate.Task.WaitAsync(ct);
+            }
+
+            if (offset >= bytes.Length) return 0;
+
+            var count = Math.Min(buffer.Length, bytes.Length - (int)offset);
+            bytes.AsMemory((int)offset, count).CopyTo(buffer);
+            return count;
+        }
+
+        public void ReleaseReadAhead()
+        {
+            _readAheadGate.TrySetResult();
         }
     }
 

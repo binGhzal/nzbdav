@@ -96,6 +96,7 @@ export function OperationsStatus({
                         <Metric label="Bytes" value={fullStatus ? formatBytes(fullStatus.cache.bytes) : "unknown"} />
                         <Metric label="Hit Rate" value={fullStatus ? `${getCacheHitRate(fullStatus)}%` : "unknown"} />
                         <Metric label="Readers" value={fullStatus?.cache.active_readers ?? 0} />
+                        <Metric label="Read Ahead" value={fullStatus?.cache.read_ahead_active ?? 0} />
                         <Metric label="Fetches" value={fullStatus?.cache.pending_fetches ?? 0} />
                     </div>
                 </section>

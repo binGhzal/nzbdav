@@ -113,6 +113,9 @@ public sealed class CacheStatus
     [JsonPropertyName("active_readers")]
     public int ActiveReaders { get; init; }
 
+    [JsonPropertyName("read_ahead_active")]
+    public int ReadAheadActive { get; init; }
+
     [JsonPropertyName("pending_fetches")]
     public int PendingFetches { get; init; }
 
@@ -127,6 +130,7 @@ public sealed class CacheStatus
             Evictions = snapshot.Evictions,
             Files = snapshot.Files,
             ActiveReaders = snapshot.ActiveReaders,
+            ReadAheadActive = snapshot.ReadAheadActive,
             PendingFetches = snapshot.PendingFetches
         };
     }

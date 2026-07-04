@@ -8,5 +8,6 @@ public sealed record SparseSegmentCacheSnapshot(
     long Evictions,
     int Files,
     int ActiveReaders,
+    int ReadAheadActive,
     int PendingFetches
 );

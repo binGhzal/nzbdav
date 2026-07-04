@@ -566,6 +566,7 @@ export type CacheStatus = {
     evictions: number,
     files: number,
     active_readers: number,
+    read_ahead_active: number,
     pending_fetches: number,
 }
 

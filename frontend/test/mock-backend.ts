@@ -501,6 +501,7 @@ function getFullStatusResponse() {
         evictions: 2,
         files: 5,
         active_readers: 2,
+        read_ahead_active: 1,
         pending_fetches: 1,
       },
       mount: {

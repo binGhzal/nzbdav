@@ -10,21 +10,25 @@ public sealed class SparseSegmentCacheManager : IDisposable
 {
     private const string CacheFileSuffix = ".nzbdav-cache.tmp";
     private static readonly TimeSpan MaintenanceInterval = TimeSpan.FromMinutes(1);
+    private static readonly int DefaultMaxReadAheadTasks = Math.Clamp(Environment.ProcessorCount / 2, 2, 8);
 
     public static SparseSegmentCacheManager Shared { get; } = new();
 
     private readonly ConcurrentDictionary<string, CacheFile> _files = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _cleanedDirectories = new(StringComparer.Ordinal);
     private readonly Timer _maintenanceTimer;
+    private readonly int _maxReadAheadTasks;
     private long _bytes;
     private long _hits;
     private long _misses;
     private long _evictions;
+    private int _activeReadAheadTasks;
     private SparseSegmentCacheOptions _lastOptions = new();
     private bool _disposed;
 
-    public SparseSegmentCacheManager()
+    public SparseSegmentCacheManager(int? maxReadAheadTasks = null)
     {
+        _maxReadAheadTasks = Math.Max(1, maxReadAheadTasks ?? DefaultMaxReadAheadTasks);
         _maintenanceTimer = new Timer(
             _ => EvictIfNeeded(),
             null,
@@ -79,6 +83,7 @@ public sealed class SparseSegmentCacheManager : IDisposable
             Evictions: Interlocked.Read(ref _evictions),
             Files: _files.Count,
             ActiveReaders: _files.Values.Sum(x => x.ActiveReaders),
+            ReadAheadActive: Volatile.Read(ref _activeReadAheadTasks),
             PendingFetches: _files.Values.Sum(x => x.PendingFetches)
         );
     }
@@ -156,6 +161,22 @@ public sealed class SparseSegmentCacheManager : IDisposable
     {
         Interlocked.Add(ref _bytes, bytes);
         EvictIfNeeded();
+    }
+
+    private bool TryEnterReadAhead()
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref _activeReadAheadTasks);
+            if (current >= _maxReadAheadTasks) return false;
+            if (Interlocked.CompareExchange(ref _activeReadAheadTasks, current + 1, current) == current)
+                return true;
+        }
+    }
+
+    private void ExitReadAhead()
+    {
+        Interlocked.Decrement(ref _activeReadAheadTasks);
     }
 
     private void EvictIfNeeded()
@@ -417,6 +438,14 @@ public sealed class SparseSegmentCacheManager : IDisposable
                 return;
             }
 
+            if (!_manager.TryEnterReadAhead())
+            {
+                Interlocked.Decrement(ref _activeReadAheadTasks);
+                foreach (var chunkIndex in chunks)
+                    _scheduledReadAheadChunks.TryRemove(chunkIndex, out _);
+                return;
+            }
+
             _ = Task.Run(async () =>
             {
                 try
@@ -436,6 +465,7 @@ public sealed class SparseSegmentCacheManager : IDisposable
                     foreach (var chunkIndex in chunks)
                         _scheduledReadAheadChunks.TryRemove(chunkIndex, out _);
                     Interlocked.Decrement(ref _activeReadAheadTasks);
+                    _manager.ExitReadAhead();
                 }
             });
         }
