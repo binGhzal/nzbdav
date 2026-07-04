@@ -51,7 +51,7 @@ const defaultConfig = {
     "rclone.pass": "",
     "rclone.mount-dir": "",
     "media.library-dir": "",
-    "arr.instances": "{\"RadarrInstances\":[],\"SonarrInstances\":[],\"LidarrInstances\":[],\"QueueRules\":[]}",
+    "arr.instances": "{\"RadarrInstances\":[],\"SonarrInstances\":[],\"LidarrInstances\":[],\"QueueRules\":[],\"Prioritization\":{\"Enabled\":false,\"Mode\":\"report\",\"RecomputeIntervalSeconds\":300,\"MaxAutomaticPriority\":1},\"SearchNudge\":{\"Enabled\":false,\"Mode\":\"report\",\"IntervalSeconds\":1800,\"CooldownSeconds\":21600,\"MaxCommandsPerHour\":20,\"SonarrBatchSize\":10,\"RadarrBatchSize\":5,\"ConcurrentCommandsPerInstance\":1}}",
     "repair.enable": "false",
     "repair.healthcheck-concurrency": "50",
     "db.is-startup-vacuum-enabled": "false",

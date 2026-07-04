@@ -2,6 +2,7 @@ declare const styles: {
   readonly container: string;
   readonly section: string;
   readonly sectionHeader: string;
+  readonly grid: string;
   readonly sectionDivider: string;
   readonly instanceCard: string;
   readonly closeButton: string;

@@ -316,13 +316,14 @@ export type QueueResponse = {
 export type QueueRequestOptions = {
     start: number,
     limit: number,
-    status?: "all" | "downloading" | "queued" | "paused",
+    status?: QueueStatusFilter,
     sort?: QueueSortField,
     order?: QueueSortOrder,
 }
 
 export type QueueSortField = "priority" | "name" | "category" | "status" | "size" | "created";
 export type QueueSortOrder = "asc" | "desc";
+export type QueueStatusFilter = "all" | "downloading" | "verifying" | "repairing" | "moving" | "queued" | "paused";
 
 export type QueueSlot = {
     nzo_id: string,
@@ -334,6 +335,16 @@ export type QueueSlot = {
     status: string,
     mb: string,
     mbleft: string,
+    arr_priority?: ArrPriorityInfo | null,
+}
+
+export type ArrPriorityInfo = {
+    score: number,
+    effective_priority: string,
+    apply_to_scheduling: boolean,
+    reasons: string[],
+    source: string,
+    stale_reason: string | null,
 }
 
 export type HistoryResponse = {
@@ -444,6 +455,9 @@ export type FullStatusResponse = {
     provider_diagnostics: ProviderDiagnosticStatus[],
     worker_queues: WorkerQueueStatus,
     repair_runs: RepairRunsStatus,
+    arr_prioritization: ArrPrioritizationStatus,
+    arr_search_nudge: ArrSearchNudgeStatus,
+    arr_download_report: ArrDownloadReportStatus,
     total_streams_opened: number,
     managed_memory_bytes: number,
     working_set_bytes: number,
@@ -520,6 +534,29 @@ export type RepairRunsStatus = {
     last: RepairRunSummaryStatus | null,
     broken_files: number,
     next_due_at: string | null,
+}
+
+export type ArrPrioritizationStatus = {
+    enabled: boolean,
+    mode: string,
+    correlations: number,
+    stale_correlations: number,
+    duplicates: number,
+    active_hints: number,
+    stale_hints: number,
+}
+
+export type ArrSearchNudgeStatus = {
+    enabled: boolean,
+    mode: string,
+    planned: number,
+    executed: number,
+    failed: number,
+    last_command_at: string | null,
+}
+
+export type ArrDownloadReportStatus = {
+    lifecycle_states: Array<{ state: string, count: number }>,
 }
 
 export type RepairRunSummaryStatus = {

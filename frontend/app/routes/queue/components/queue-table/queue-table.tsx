@@ -1,7 +1,7 @@
 import { ActionButton } from "../action-button/action-button"
 import { memo, useCallback, useMemo, useState } from "react"
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal"
-import type { PresentationQueueSlot, QueueStatusFilter } from "../../route"
+import type { PresentationQueueSlot } from "../../route"
 import type { TriCheckboxState } from "../tri-checkbox/tri-checkbox"
 import { PageRow, PageTable } from "../page-table/page-table"
 import { PageSection } from "../page-section/page-section"
@@ -12,7 +12,7 @@ import { withUrlBase } from "~/utils/url-base"
 import { WideViewport } from "../wide-viewport/wide-viewport"
 import { ThinViewport } from "../thin-viewport/thin-viewport"
 import { Pagination } from "../pagination/pagination"
-import type { QueueSortField, QueueSortOrder } from "~/clients/backend-client.server"
+import type { QueueSortField, QueueSortOrder, QueueStatusFilter } from "~/clients/backend-client.server"
 
 export type QueueTableProps = {
     queueSlots: PresentationQueueSlot[],
@@ -269,6 +269,9 @@ function QueueFilters({
     const filters: Array<{ value: QueueStatusFilter, label: string }> = [
         { value: "all", label: "All" },
         { value: "downloading", label: "Downloading" },
+        { value: "verifying", label: "Verifying" },
+        { value: "repairing", label: "Repairing" },
+        { value: "moving", label: "Moving" },
         { value: "queued", label: "Queued" },
         { value: "paused", label: "Paused" },
     ];
@@ -375,6 +378,14 @@ export const QueueRow = memo(({
 
     // view
     const priority = priorityOptions.includes(slot.priority) ? slot.priority : "Normal";
+    const arrPriority = slot.arr_priority;
+    const arrMeta = arrPriority
+        ? [
+            `ARR ${arrPriority.apply_to_scheduling ? "apply" : "report"} score ${arrPriority.score}`,
+            arrPriority.effective_priority ? `effective ${arrPriority.effective_priority}` : null,
+            arrPriority.reasons?.length ? arrPriority.reasons.slice(0, 3).join(", ") : arrPriority.stale_reason
+        ].filter(Boolean).join(" · ")
+        : null;
     const actions = (
         <>
             {!slot.isUploading &&
@@ -402,6 +413,7 @@ export const QueueRow = memo(({
                 status={slot.status}
                 percentage={slot.true_percentage}
                 fileSizeBytes={Number(slot.mb) * 1024 * 1024}
+                meta={arrMeta}
                 actions={actions}
                 onRowSelectionChanged={isSelected => onIsSelectedChanged(slot.nzo_id, isSelected)}
                 error={slot.error}

@@ -89,9 +89,46 @@ public sealed class DfsDavPathResolverTests
         Assert.Null(suppressedNode);
     }
 
-    private DfsDavPathResolver CreateResolver(DavDatabaseContext dbContext)
+    [Fact]
+    public async Task CompletedSymlinkPath_UsesRelativeTargetWhenConfigured()
     {
-        return new DfsDavPathResolver(new DavDatabaseClient(dbContext), _fixture.CreateConfigManager());
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var category = CreateDirectory("movies", DavItem.ContentFolder);
+        var movieFolder = CreateDirectory("Example", category);
+        var movie = CreateNzbFile(movieFolder, "Movie.mkv");
+        dbContext.Items.AddRange(category, movieFolder, movie);
+        dbContext.HistoryItems.Add(new HistoryItem
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = DateTime.UtcNow,
+            FileName = "Movie.nzb",
+            JobName = "Movie",
+            Category = "movies",
+            DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+            TotalSegmentBytes = 1024,
+            DownloadTimeSeconds = 1,
+            DownloadDirId = category.Id
+        });
+        await dbContext.SaveChangesAsync();
+
+        var configManager = _fixture.CreateConfigManager();
+        configManager.UpdateValues([
+            new ConfigItem { ConfigName = "api.symlink-target-mode", ConfigValue = "relative" }
+        ]);
+        var resolver = CreateResolver(dbContext, configManager);
+        var symlinkNode = await resolver.ResolveAsync("/completed-symlinks/movies/Example/Movie.mkv");
+
+        Assert.NotNull(symlinkNode);
+        Assert.Equal(
+            "../../../" + DatabaseStoreSymlinkFile.GetTargetPath(movie.Id, '/'),
+            symlinkNode.SymlinkTarget);
+    }
+
+    private DfsDavPathResolver CreateResolver(DavDatabaseContext dbContext, ConfigManager? configManager = null)
+    {
+        return new DfsDavPathResolver(
+            new DavDatabaseClient(dbContext),
+            configManager ?? _fixture.CreateConfigManager());
     }
 
     private static DavItem CreateDirectory(string name, DavItem parent)

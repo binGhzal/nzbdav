@@ -122,6 +122,7 @@ export type PageRowProps = {
     status: string,
     percentage?: string,
     error?: string,
+    meta?: ReactNode,
     fileSizeBytes: number,
     actions: ReactNode,
     onRowSelectionChanged: (isSelected: boolean) => void
@@ -137,6 +138,9 @@ export function PageRow(props: PageRowProps) {
             <td>
                 <TriCheckbox state={props.isSelected} onChange={props.onRowSelectionChanged}>
                     <Truncate>{props.name}</Truncate>
+                    {props.meta &&
+                        <div className={styles.metaLine}>{props.meta}</div>
+                    }
                     <div className={styles.mobile}>
                         <div className={styles.badges}>
                             <StatusBadge status={props.status} percentage={props.percentage} error={props.error} />

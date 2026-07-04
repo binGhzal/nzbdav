@@ -114,6 +114,34 @@ export function OperationsStatus({
                         fullStatus={fullStatus}
                     />
                 </section>
+
+                <section className={styles.panel}>
+                    <div className={styles.header}>
+                        <h3 className={styles.title}>ARR</h3>
+                        <span className={styles.badge}>{fullStatus?.arr_prioritization.mode ?? "report"}</span>
+                    </div>
+                    <div className={styles.metricGrid}>
+                        <Metric label="Correlated" value={fullStatus?.arr_prioritization.correlations ?? 0} />
+                        <Metric label="Priority Hints" value={fullStatus?.arr_prioritization.active_hints ?? 0} />
+                        <Metric label="Duplicates" value={fullStatus?.arr_prioritization.duplicates ?? 0} tone={fullStatus?.arr_prioritization.duplicates ? "warning" : undefined} />
+                        <Metric label="Nudge Failures" value={fullStatus?.arr_search_nudge.failed ?? 0} tone={fullStatus?.arr_search_nudge.failed ? "danger" : undefined} />
+                    </div>
+                    <div className={styles.workerGrid}>
+                        <WorkerRow
+                            label="Search"
+                            active={fullStatus?.arr_search_nudge.planned ?? 0}
+                            ready={fullStatus?.arr_search_nudge.executed ?? 0}
+                            retry={fullStatus?.arr_search_nudge.failed ?? 0}
+                        />
+                    </div>
+                    {fullStatus?.arr_download_report.lifecycle_states.length ? (
+                        <div className={styles.mutedLine}>
+                            {fullStatus.arr_download_report.lifecycle_states
+                                .map(x => `${x.state} ${x.count}`)
+                                .join(" · ")}
+                        </div>
+                    ) : null}
+                </section>
             </div>
         </div>
     );
@@ -235,6 +263,9 @@ function getDegradedMessages(
     if (fullStatus?.mount.fuse_errors) messages.push("Mounted filesystem reported FUSE errors.");
     if (repairStatus?.broken_files.length) messages.push("Repair has broken files requiring operator review.");
     if (repairStatus?.verify_queue.quarantined || repairStatus?.repair_queue.quarantined) messages.push("Repair or verify jobs are quarantined.");
+    if (fullStatus?.arr_prioritization.stale_correlations) messages.push("ARR queue correlations are stale.");
+    if (fullStatus?.arr_prioritization.duplicates) messages.push("ARR duplicate download requests were detected.");
+    if (fullStatus?.arr_search_nudge.failed) messages.push("ARR search nudge commands have failed.");
     return messages;
 }
 

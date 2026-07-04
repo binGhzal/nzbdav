@@ -2,7 +2,15 @@ import { Button, Form, Card, InputGroup, Spinner } from "react-bootstrap";
 import styles from "./arrs.module.css"
 import { type Dispatch, type SetStateAction, useState, useCallback, useEffect } from "react";
 import { withUrlBase } from "~/utils/url-base";
-import { parseArrConfig, serializeArrConfig, type ArrConfig, type ConnectionDetails, type QueueRule } from "./arr-config";
+import {
+    parseArrConfig,
+    serializeArrConfig,
+    type ArrConfig,
+    type ArrPrioritizationOptions,
+    type ArrSearchNudgeOptions,
+    type ConnectionDetails,
+    type QueueRule
+} from "./arr-config";
 
 type ArrsSettingsProps = {
     config: Record<string, string>
@@ -183,6 +191,26 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
         })
     }, [arrConfig, updateConfig])
 
+    const updatePrioritization = useCallback((patch: Partial<ArrPrioritizationOptions>) => {
+        updateConfig({
+            ...arrConfig,
+            Prioritization: {
+                ...arrConfig.Prioritization,
+                ...patch,
+            }
+        });
+    }, [arrConfig, updateConfig]);
+
+    const updateSearchNudge = useCallback((patch: Partial<ArrSearchNudgeOptions>) => {
+        updateConfig({
+            ...arrConfig,
+            SearchNudge: {
+                ...arrConfig.SearchNudge,
+                ...patch,
+            }
+        });
+    }, [arrConfig, updateConfig]);
+
 
     return (
         <div className={styles.container}>
@@ -253,6 +281,111 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
                         />
                     )
                 )}
+            </div>
+            <hr />
+            <div className={styles.section}>
+                <div className={styles.sectionHeader}>
+                    <div>ARR Download Priority</div>
+                </div>
+                <div className={styles.grid}>
+                    <Form.Check
+                        type="switch"
+                        label="Enable priority scoring"
+                        checked={arrConfig.Prioritization.Enabled}
+                        onChange={e => updatePrioritization({ Enabled: e.target.checked })}
+                    />
+                    <Form.Group>
+                        <Form.Label>Mode</Form.Label>
+                        <Form.Select
+                            className={styles.input}
+                            value={arrConfig.Prioritization.Mode}
+                            onChange={e => updatePrioritization({ Mode: e.target.value === "apply" ? "apply" : "report" })}
+                        >
+                            <option value="report">Report only</option>
+                            <option value="apply">Apply to queue</option>
+                        </Form.Select>
+                    </Form.Group>
+                    <Form.Group>
+                        <Form.Label>Recompute Seconds</Form.Label>
+                        <Form.Control
+                            type="number"
+                            min="30"
+                            max="3600"
+                            className={styles.input}
+                            value={arrConfig.Prioritization.RecomputeIntervalSeconds}
+                            onChange={e => updatePrioritization({ RecomputeIntervalSeconds: Number(e.target.value) })}
+                        />
+                    </Form.Group>
+                </div>
+            </div>
+            <hr />
+            <div className={styles.section}>
+                <div className={styles.sectionHeader}>
+                    <div>ARR Search Nudging</div>
+                </div>
+                <div className={styles.grid}>
+                    <Form.Check
+                        type="switch"
+                        label="Enable search nudging"
+                        checked={arrConfig.SearchNudge.Enabled}
+                        onChange={e => updateSearchNudge({ Enabled: e.target.checked })}
+                    />
+                    <Form.Group>
+                        <Form.Label>Mode</Form.Label>
+                        <Form.Select
+                            className={styles.input}
+                            value={arrConfig.SearchNudge.Mode}
+                            onChange={e => updateSearchNudge({ Mode: e.target.value === "apply" ? "apply" : "report" })}
+                        >
+                            <option value="report">Report only</option>
+                            <option value="apply">Run ARR searches</option>
+                        </Form.Select>
+                    </Form.Group>
+                    <Form.Group>
+                        <Form.Label>Cooldown Seconds</Form.Label>
+                        <Form.Control
+                            type="number"
+                            min="300"
+                            max="604800"
+                            className={styles.input}
+                            value={arrConfig.SearchNudge.CooldownSeconds}
+                            onChange={e => updateSearchNudge({ CooldownSeconds: Number(e.target.value) })}
+                        />
+                    </Form.Group>
+                    <Form.Group>
+                        <Form.Label>Commands Per Hour</Form.Label>
+                        <Form.Control
+                            type="number"
+                            min="1"
+                            max="200"
+                            className={styles.input}
+                            value={arrConfig.SearchNudge.MaxCommandsPerHour}
+                            onChange={e => updateSearchNudge({ MaxCommandsPerHour: Number(e.target.value) })}
+                        />
+                    </Form.Group>
+                    <Form.Group>
+                        <Form.Label>Sonarr Batch Size</Form.Label>
+                        <Form.Control
+                            type="number"
+                            min="1"
+                            max="100"
+                            className={styles.input}
+                            value={arrConfig.SearchNudge.SonarrBatchSize}
+                            onChange={e => updateSearchNudge({ SonarrBatchSize: Number(e.target.value) })}
+                        />
+                    </Form.Group>
+                    <Form.Group>
+                        <Form.Label>Radarr Batch Size</Form.Label>
+                        <Form.Control
+                            type="number"
+                            min="1"
+                            max="50"
+                            className={styles.input}
+                            value={arrConfig.SearchNudge.RadarrBatchSize}
+                            onChange={e => updateSearchNudge({ RadarrBatchSize: Number(e.target.value) })}
+                        />
+                    </Form.Group>
+                </div>
             </div>
             <hr />
             <div className={styles.section}>

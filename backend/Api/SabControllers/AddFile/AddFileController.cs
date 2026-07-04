@@ -7,6 +7,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 
@@ -17,7 +18,8 @@ public class AddFileController(
     DavDatabaseClient dbClient,
     QueueManager queueManager,
     ConfigManager configManager,
-    WebsocketManager websocketManager
+    WebsocketManager websocketManager,
+    ArrDownloadReportService arrDownloadReportService
 ) : SabApiController.BaseController(httpContext, configManager)
 {
     private static readonly XmlReaderSettings XmlSettings = new()
@@ -90,6 +92,9 @@ public class AddFileController(
                     now: DateTimeOffset.UtcNow,
                     ct: request.CancellationToken)
                 .ConfigureAwait(false);
+            await arrDownloadReportService
+                .RecordQueueLifecycleAsync(dbClient, queueItem, "Queued", "NZB accepted.", request.CancellationToken)
+                .ConfigureAwait(false);
         }
         catch
         {
@@ -105,6 +110,7 @@ public class AddFileController(
 
         // awaken the queue if it is sleeping
         queueManager.AwakenQueue(request.PauseUntil);
+        _ = arrDownloadReportService.RefreshMonitoredDownloadsDebouncedAsync(queueItem.Category);
 
         // return response
         return new AddFileResponse()

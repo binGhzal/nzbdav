@@ -366,12 +366,13 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
     const handleTestConnection = useCallback(async () => {
         setIsTestingConnection(true);
         setTestError(null);
+        const effectiveUseSsl = getEffectiveUseSsl(port, useSsl);
 
         try {
             const formData = new FormData();
             formData.append('host', host);
             formData.append('port', port);
-            formData.append('use-ssl', useSsl.toString());
+            formData.append('use-ssl', effectiveUseSsl.toString());
             formData.append('user', user);
             formData.append('pass', pass);
 
@@ -401,12 +402,13 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
     const handleTestPipelining = useCallback(async () => {
         setIsTestingPipelining(true);
         setPipeliningTestResult(null);
+        const effectiveUseSsl = getEffectiveUseSsl(port, useSsl);
 
         try {
             const formData = new FormData();
             formData.append('host', host);
             formData.append('port', port);
-            formData.append('use-ssl', useSsl.toString());
+            formData.append('use-ssl', effectiveUseSsl.toString());
             formData.append('user', user);
             formData.append('pass', pass);
 
@@ -438,11 +440,12 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
     }, [host, port, useSsl, user, pass]);
 
     const handleSave = useCallback(() => {
+        const effectiveUseSsl = getEffectiveUseSsl(port, useSsl);
         onSave({
             Type: type,
             Host: host,
             Port: parseInt(port, 10),
-            UseSsl: useSsl,
+            UseSsl: effectiveUseSsl,
             User: user,
             Pass: pass,
             MaxConnections: parseInt(maxConnections, 10),
@@ -699,6 +702,11 @@ export function isUsenetSettingsUpdated(config: Record<string, string>, newConfi
 export function isPositiveInteger(value: string) {
     const num = Number(value);
     return Number.isInteger(num) && num > 0 && value.trim() === num.toString();
+}
+
+function getEffectiveUseSsl(port: string, useSsl: boolean) {
+    const portNumber = Number(port);
+    return useSsl || portNumber === 563 || portNumber === 443;
 }
 
 function isNonNegativeInteger(value: string) {

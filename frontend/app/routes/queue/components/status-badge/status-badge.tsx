@@ -98,6 +98,16 @@ export function StatusBadge({ className, status, percentage, error }: StatusBadg
         );
     }
 
+    if (statusLower === "verifying" || statusLower === "repairing" || statusLower === "moving") {
+        return (
+            <div className={styles.container}>
+                <div className={styles.badge} style={{ backgroundColor: "hsl(192, 100%, 20%)" }}>
+                    <div className={styles.badgeText}>{statusLower}</div>
+                </div>
+            </div>
+        );
+    }
+
     if (statusLower === "health-checking") {
         const percentNum = Number(percentage);
         const badgeText = `${percentNum}%`;

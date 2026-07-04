@@ -71,6 +71,21 @@ public class GetStatusResponse
         [JsonPropertyName("repair_runs")]
         public RepairRunsStatus RepairRuns { get; init; } = new();
 
+        [JsonPropertyName("arr_prioritization")]
+        public ArrPrioritizationStatus ArrPrioritization { get; init; } = new()
+        {
+            Mode = "report"
+        };
+
+        [JsonPropertyName("arr_search_nudge")]
+        public ArrSearchNudgeStatus ArrSearchNudge { get; init; } = new()
+        {
+            Mode = "report"
+        };
+
+        [JsonPropertyName("arr_download_report")]
+        public ArrDownloadReportStatus ArrDownloadReport { get; init; } = new();
+
         [JsonPropertyName("total_streams_opened")]
         public long TotalStreamsOpened { get; init; }
 

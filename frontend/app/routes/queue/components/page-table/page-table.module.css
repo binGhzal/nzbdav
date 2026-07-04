@@ -108,6 +108,14 @@
     gap: 10px;
 }
 
+.metaLine {
+    color: hsl(180, 7%, 55%);
+    font-size: 12px;
+    line-height: 16px;
+    margin-top: 3px;
+    white-space: normal;
+}
+
 .actions {
     display: flex;
     flex-direction: row;

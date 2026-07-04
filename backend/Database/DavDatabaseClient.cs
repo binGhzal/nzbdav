@@ -136,15 +136,38 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     {
         // read queue item from database
         var nowTime = DateTime.Now;
+        var referenceTime = DateTimeOffset.UtcNow;
         var queueItems = Ctx.QueueItems.AsQueryable();
         if (excludeIds is { Count: > 0 })
             queueItems = queueItems.Where(q => !excludeIds.Contains(q.Id));
 
         var queueItem = await queueItems
-            .OrderByDescending(q => q.Priority)
-            .ThenBy(q => q.CreatedAt)
             .Where(q => q.PauseUntil == null || nowTime >= q.PauseUntil)
             .Where(q => q.Priority != QueueItem.PriorityOption.Paused)
+            .GroupJoin(
+                Ctx.QueuePriorityHints.AsNoTracking(),
+                q => q.Id,
+                h => h.QueueItemId,
+                (queueItem, hints) => new { queueItem, hints })
+            .SelectMany(
+                x => x.hints.DefaultIfEmpty(),
+                (x, hint) => new
+                {
+                    x.queueItem,
+                    effectivePriority = hint != null
+                                        && hint.ApplyToScheduling
+                                        && hint.ExpiresAt >= referenceTime
+                                        && (int)hint.EffectivePriority > (int)x.queueItem.Priority
+                        ? (int)hint.EffectivePriority
+                        : (int)x.queueItem.Priority,
+                    score = hint != null && hint.ApplyToScheduling && hint.ExpiresAt >= referenceTime ? hint.Score : 0
+                })
+            .OrderByDescending(x => x.effectivePriority)
+            .ThenByDescending(x => x.score)
+            .ThenByDescending(x => x.queueItem.Priority)
+            .ThenBy(q => q.queueItem.CreatedAt)
+            .ThenBy(q => q.queueItem.Id)
+            .Select(q => q.queueItem)
             .Skip(0)
             .Take(1)
             .FirstOrDefaultAsync(ct).ConfigureAwait(false);
@@ -196,7 +219,28 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                             && x.workerJob.LeaseExpiresAt <= referenceTime)
                         && x.workerJob.AvailableAt <= referenceTime
                         && (x.workerJob.LeaseExpiresAt == null || x.workerJob.LeaseExpiresAt <= referenceTime))
-            .OrderByDescending(x => x.queueItem.Priority)
+            .GroupJoin(
+                Ctx.QueuePriorityHints.AsNoTracking(),
+                x => x.queueItem.Id,
+                h => h.QueueItemId,
+                (candidate, hints) => new { candidate.queueItem, candidate.workerJob, hints })
+            .SelectMany(
+                x => x.hints.DefaultIfEmpty(),
+                (x, hint) => new
+                {
+                    x.queueItem,
+                    x.workerJob,
+                    effectivePriority = hint != null
+                                        && hint.ApplyToScheduling
+                                        && hint.ExpiresAt >= referenceTime
+                                        && (int)hint.EffectivePriority > (int)x.queueItem.Priority
+                        ? (int)hint.EffectivePriority
+                        : (int)x.queueItem.Priority,
+                    score = hint != null && hint.ApplyToScheduling && hint.ExpiresAt >= referenceTime ? hint.Score : 0
+                })
+            .OrderByDescending(x => x.effectivePriority)
+            .ThenByDescending(x => x.score)
+            .ThenByDescending(x => x.queueItem.Priority)
             .ThenBy(x => x.queueItem.CreatedAt)
             .ThenBy(x => x.queueItem.Id);
 
@@ -227,7 +271,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         }
 
         workerJob.Status = WorkerJob.JobStatus.Leased;
-        workerJob.Priority = (int)selected.queueItem.Priority;
+        workerJob.Priority = selected.effectivePriority;
         workerJob.LeaseOwner = owner;
         workerJob.LeaseExpiresAt = leaseExpiresAt;
         workerJob.Attempts += 1;
@@ -287,7 +331,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         if (excludeIds is { Count: > 0 })
             queueItems = queueItems.Where(q => !excludeIds.Contains(q.Id));
 
-        return ApplyQueueSort(queueItems, sortOptions)
+        return ApplyQueueSort(queueItems, sortOptions, DateTimeOffset.UtcNow)
             .Skip(start)
             .Take(limit)
             .ToArrayAsync(cancellationToken: ct);
@@ -369,6 +413,43 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .ToListAsync(ct);
     }
 
+    public Task<List<QueuePriorityHint>> GetQueuePriorityHintsAsync
+    (
+        IReadOnlyCollection<Guid> queueItemIds,
+        CancellationToken ct = default
+    )
+    {
+        if (queueItemIds.Count == 0) return Task.FromResult(new List<QueuePriorityHint>());
+
+        return Ctx.QueuePriorityHints
+            .AsNoTracking()
+            .Where(x => queueItemIds.Contains(x.QueueItemId))
+            .ToListAsync(ct);
+    }
+
+    public async Task<Dictionary<Guid, string>> GetLatestQueueLifecycleStatesAsync
+    (
+        IReadOnlyCollection<Guid> queueItemIds,
+        CancellationToken ct = default
+    )
+    {
+        if (queueItemIds.Count == 0) return new Dictionary<Guid, string>();
+
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-1);
+        var events = await Ctx.ArrDownloadLifecycleEvents
+            .AsNoTracking()
+            .Where(x => x.QueueItemId != null && queueItemIds.Contains(x.QueueItemId.Value))
+            .Where(x => x.CreatedAt >= cutoff)
+            .OrderByDescending(x => x.CreatedAt)
+            .Select(x => new { QueueItemId = x.QueueItemId!.Value, x.State })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return events
+            .GroupBy(x => x.QueueItemId)
+            .ToDictionary(x => x.Key, x => x.First().State);
+    }
+
     private IQueryable<QueueItem> GetQueueItemsQuery
     (
         string? category,
@@ -402,40 +483,63 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         return queueItems;
     }
 
-    private static IOrderedQueryable<QueueItem> ApplyQueueSort
+    private IQueryable<QueueItem> ApplyQueueSort
     (
         IQueryable<QueueItem> queueItems,
-        QueueSortOptions? options
+        QueueSortOptions? options,
+        DateTimeOffset referenceTime
     )
     {
         options ??= QueueSortOptions.Default;
+        var projected = queueItems
+            .GroupJoin(
+                Ctx.QueuePriorityHints.AsNoTracking(),
+                q => q.Id,
+                h => h.QueueItemId,
+                (queueItem, hints) => new { queueItem, hints })
+            .SelectMany(
+                x => x.hints.DefaultIfEmpty(),
+                (x, hint) => new
+                {
+                    x.queueItem,
+                    effectivePriority = hint != null
+                                        && hint.ApplyToScheduling
+                                        && hint.ExpiresAt >= referenceTime
+                                        && (int)hint.EffectivePriority > (int)x.queueItem.Priority
+                        ? (int)hint.EffectivePriority
+                        : (int)x.queueItem.Priority,
+                    score = hint != null && hint.ApplyToScheduling && hint.ExpiresAt >= referenceTime ? hint.Score : 0
+                });
 
-        IOrderedQueryable<QueueItem> ordered = options.Field switch
+        var ordered = options.Field switch
         {
             QueueSortField.Name => options.Descending
-                ? queueItems.OrderByDescending(q => q.JobName)
-                : queueItems.OrderBy(q => q.JobName),
+                ? projected.OrderByDescending(q => q.queueItem.JobName)
+                : projected.OrderBy(q => q.queueItem.JobName),
             QueueSortField.Category => options.Descending
-                ? queueItems.OrderByDescending(q => q.Category)
-                : queueItems.OrderBy(q => q.Category),
+                ? projected.OrderByDescending(q => q.queueItem.Category)
+                : projected.OrderBy(q => q.queueItem.Category),
             QueueSortField.Status => options.Descending
-                ? queueItems.OrderByDescending(q => q.Priority == QueueItem.PriorityOption.Paused ? 0 : 1)
-                : queueItems.OrderBy(q => q.Priority == QueueItem.PriorityOption.Paused ? 0 : 1),
+                ? projected.OrderByDescending(q => q.queueItem.Priority == QueueItem.PriorityOption.Paused ? 0 : 1)
+                : projected.OrderBy(q => q.queueItem.Priority == QueueItem.PriorityOption.Paused ? 0 : 1),
             QueueSortField.Size => options.Descending
-                ? queueItems.OrderByDescending(q => q.TotalSegmentBytes)
-                : queueItems.OrderBy(q => q.TotalSegmentBytes),
+                ? projected.OrderByDescending(q => q.queueItem.TotalSegmentBytes)
+                : projected.OrderBy(q => q.queueItem.TotalSegmentBytes),
             QueueSortField.CreatedAt => options.Descending
-                ? queueItems.OrderByDescending(q => q.CreatedAt)
-                : queueItems.OrderBy(q => q.CreatedAt),
+                ? projected.OrderByDescending(q => q.queueItem.CreatedAt)
+                : projected.OrderBy(q => q.queueItem.CreatedAt),
             _ => options.Descending
-                ? queueItems.OrderByDescending(q => q.Priority)
-                : queueItems.OrderBy(q => q.Priority)
+                ? projected.OrderByDescending(q => q.effectivePriority).ThenByDescending(q => q.score)
+                : projected.OrderBy(q => q.effectivePriority).ThenBy(q => q.score)
         };
 
         return ordered
-            .ThenByDescending(q => q.Priority)
-            .ThenBy(q => q.CreatedAt)
-            .ThenBy(q => q.Id);
+            .ThenByDescending(q => q.effectivePriority)
+            .ThenByDescending(q => q.score)
+            .ThenByDescending(q => q.queueItem.Priority)
+            .ThenBy(q => q.queueItem.CreatedAt)
+            .ThenBy(q => q.queueItem.Id)
+            .Select(q => q.queueItem);
     }
 
     public sealed record QueueSortOptions(QueueSortField Field, bool Descending)
@@ -613,6 +717,71 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         int VerifyReady,
         int RepairActionNeeded
     );
+
+    public async Task<ArrIntegrationStats> GetArrIntegrationStatsAsync
+    (
+        DateTimeOffset? now = null,
+        CancellationToken ct = default
+    )
+    {
+        var referenceTime = now ?? DateTimeOffset.UtcNow;
+        var staleThreshold = referenceTime.AddMinutes(-10);
+        var correlations = Ctx.ArrDownloadCorrelations.AsNoTracking();
+        var priorityHints = Ctx.QueuePriorityHints.AsNoTracking();
+        var nudges = Ctx.ArrSearchNudgeCommands.AsNoTracking();
+        var lifecycle = Ctx.ArrDownloadLifecycleEvents.AsNoTracking();
+
+        var totalCorrelations = await correlations.CountAsync(ct).ConfigureAwait(false);
+        var staleCorrelations = await correlations.CountAsync(x => x.LastSeenAt < staleThreshold, ct)
+            .ConfigureAwait(false);
+        var duplicateCorrelations = await correlations.CountAsync(x => x.IsDuplicate, ct).ConfigureAwait(false);
+        var activeHints = await priorityHints.CountAsync(x => x.ExpiresAt >= referenceTime, ct)
+            .ConfigureAwait(false);
+        var staleHints = await priorityHints.CountAsync(x => x.ExpiresAt < referenceTime, ct)
+            .ConfigureAwait(false);
+        var plannedNudges = await nudges.CountAsync(x => x.Status == "planned", ct).ConfigureAwait(false);
+        var executedNudges = await nudges.CountAsync(x => x.Status == "executed", ct).ConfigureAwait(false);
+        var failedNudges = await nudges.CountAsync(x => x.Status == "failed", ct).ConfigureAwait(false);
+        var lastNudgeAt = await nudges
+            .OrderByDescending(x => x.CreatedAt)
+            .Select(x => (DateTimeOffset?)x.CreatedAt)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        var lifecycleStates = await lifecycle
+            .Where(x => x.CreatedAt >= referenceTime.AddHours(-24))
+            .GroupBy(x => x.State)
+            .Select(x => new ArrLifecycleStateCount(x.Key, x.Count()))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return new ArrIntegrationStats(
+            totalCorrelations,
+            staleCorrelations,
+            duplicateCorrelations,
+            activeHints,
+            staleHints,
+            plannedNudges,
+            executedNudges,
+            failedNudges,
+            lastNudgeAt,
+            lifecycleStates);
+    }
+
+    public sealed record ArrIntegrationStats
+    (
+        int TotalCorrelations,
+        int StaleCorrelations,
+        int DuplicateCorrelations,
+        int ActivePriorityHints,
+        int StalePriorityHints,
+        int PlannedSearchNudges,
+        int ExecutedSearchNudges,
+        int FailedSearchNudges,
+        DateTimeOffset? LastSearchNudgeAt,
+        IReadOnlyList<ArrLifecycleStateCount> LifecycleStates
+    );
+
+    public sealed record ArrLifecycleStateCount(string State, int Count);
 
     public async Task<RepairRun> StartRepairRunAsync
     (

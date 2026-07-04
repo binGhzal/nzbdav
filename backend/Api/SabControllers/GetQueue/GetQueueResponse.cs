@@ -94,12 +94,16 @@ public class GetQueueResponse : SabBaseResponse
         [JsonPropertyName("mbleft")]
         public string SizeLeftInMB { get; init; } = "0.00";
 
+        [JsonPropertyName("arr_priority")]
+        public ArrPriorityObject? ArrPriority { get; init; }
+
         public static QueueSlot FromQueueItem
         (
             QueueItem queueItem,
             int index = 0,
             int progressPercentage = 0,
-            string status = "Queued"
+            string status = "Queued",
+            QueuePriorityHint? priorityHint = null
         )
         {
             return new QueueSlot
@@ -115,6 +119,7 @@ public class GetQueueResponse : SabBaseResponse
                 TimeLeft = TimeSpan.Zero,
                 SizeInMB = FormatSizeMB(queueItem.TotalSegmentBytes),
                 SizeLeftInMB = FormatSizeMB((100 - Math.Clamp(progressPercentage, 0, 100)) * queueItem.TotalSegmentBytes / 100),
+                ArrPriority = priorityHint == null ? null : ArrPriorityObject.FromHint(priorityHint),
             };
         }
 
@@ -122,6 +127,50 @@ public class GetQueueResponse : SabBaseResponse
         {
             var megabytes = bytes / (1024.0 * 1024.0);
             return megabytes.ToString("0.00");
+        }
+    }
+
+    public class ArrPriorityObject
+    {
+        [JsonPropertyName("score")]
+        public int Score { get; init; }
+
+        [JsonPropertyName("effective_priority")]
+        public string EffectivePriority { get; init; } = "";
+
+        [JsonPropertyName("apply_to_scheduling")]
+        public bool ApplyToScheduling { get; init; }
+
+        [JsonPropertyName("reasons")]
+        public string[] Reasons { get; init; } = [];
+
+        [JsonPropertyName("source")]
+        public string Source { get; init; } = "";
+
+        [JsonPropertyName("stale_reason")]
+        public string? StaleReason { get; init; }
+
+        public static ArrPriorityObject FromHint(QueuePriorityHint hint)
+        {
+            string[] reasons;
+            try
+            {
+                reasons = JsonSerializer.Deserialize<string[]>(hint.ReasonsJson) ?? [];
+            }
+            catch
+            {
+                reasons = [];
+            }
+
+            return new ArrPriorityObject
+            {
+                Score = hint.Score,
+                EffectivePriority = hint.EffectivePriority.ToString(),
+                ApplyToScheduling = hint.ApplyToScheduling,
+                Reasons = reasons,
+                Source = hint.Source,
+                StaleReason = hint.StaleReason
+            };
         }
     }
 

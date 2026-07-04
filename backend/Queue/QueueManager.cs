@@ -21,6 +21,7 @@ public class QueueManager : IDisposable
     private readonly SemaphoreSlim _queueLock = new(1, 1);
     private readonly ConfigManager _configManager;
     private readonly WebsocketManager _websocketManager;
+    private readonly ArrDownloadReportService _arrDownloadReportService;
     private readonly Lock _inProgressQueueItemsLock = new();
 
     private CancellationTokenSource _sleepingQueueToken = new();
@@ -29,12 +30,14 @@ public class QueueManager : IDisposable
     public QueueManager(
         UsenetStreamingClient usenetClient,
         ConfigManager configManager,
-        WebsocketManager websocketManager
+        WebsocketManager websocketManager,
+        ArrDownloadReportService arrDownloadReportService
     )
     {
         _usenetClient = usenetClient;
         _configManager = configManager;
         _websocketManager = websocketManager;
+        _arrDownloadReportService = arrDownloadReportService;
         _cancellationTokenSource = CancellationTokenSource
             .CreateLinkedTokenSource(SigtermUtil.GetCancellationToken());
         _ = ProcessQueueAsync(_cancellationTokenSource.Token);
@@ -276,6 +279,7 @@ public class QueueManager : IDisposable
                 inProgressQueueItem.UsenetClient,
                 _configManager,
                 _websocketManager,
+                _arrDownloadReportService,
                 progressHook,
                 inProgressQueueItem.CancellationTokenSource.Token
             ).ProcessAsync().ConfigureAwait(false);

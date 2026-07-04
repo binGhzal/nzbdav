@@ -28,5 +28,20 @@ public class UsenetProviderConfig
         // that provider configs saved before this feature existed deserialize to false (i.e.
         // linear STAT) and only opt in once the user has tested + enabled pipelining.
         public bool StatPipeliningEnabled { get; set; } = false;
+
+        public bool GetEffectiveUseSsl()
+        {
+            return UseSsl || IsImplicitTlsPort(Port);
+        }
+
+        public bool IsImplicitTlsEnabled()
+        {
+            return !UseSsl && IsImplicitTlsPort(Port);
+        }
+
+        public static bool IsImplicitTlsPort(int port)
+        {
+            return port is 563 or 443;
+        }
     }
 }

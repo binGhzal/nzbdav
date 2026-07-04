@@ -1,7 +1,7 @@
 import { useLocation, useNavigate, useRevalidator } from "react-router";
 import type { Route } from "./+types/route";
 import styles from "./route.module.css"
-import { backendClient, type HistorySlot, type QueueSlot, type QueueSortField, type QueueSortOrder } from "~/clients/backend-client.server";
+import { backendClient, type HistorySlot, type QueueSlot, type QueueSortField, type QueueSortOrder, type QueueStatusFilter } from "~/clients/backend-client.server";
 import { HistoryTable } from "./components/history-table/history-table";
 import { QueueTable } from "./components/queue-table/queue-table";
 import { useCallback, useEffect, useState, useRef } from "react";
@@ -257,7 +257,14 @@ function getPageSize(value: string | null): number {
 }
 
 function getQueueStatus(value: string | null): QueueStatusFilter {
-    if (value === "downloading" || value === "queued" || value === "paused") return value;
+    if (
+        value === "downloading"
+        || value === "verifying"
+        || value === "repairing"
+        || value === "moving"
+        || value === "queued"
+        || value === "paused"
+    ) return value;
     return "all";
 }
 
@@ -269,5 +276,3 @@ function getQueueSort(value: string | null): QueueSortField {
 function getQueueOrder(value: string | null): QueueSortOrder {
     return value === "asc" ? "asc" : "desc";
 }
-
-export type QueueStatusFilter = "all" | "downloading" | "queued" | "paused";

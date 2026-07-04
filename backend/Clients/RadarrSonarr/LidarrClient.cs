@@ -17,6 +17,9 @@ public class LidarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     public Task<LidarrArtist> GetArtist(int artistId) =>
         Get<LidarrArtist>($"/artist/{artistId}");
 
+    public Task<LidarrQueue> GetLidarrQueueAsync() =>
+        Get<LidarrQueue>($"/queue?protocol=usenet&pageSize=5000");
+
     public Task<List<LidarrTrackFile>> GetAllTrackFiles(int artistId) =>
         Get<List<LidarrTrackFile>>($"/trackfile?artistId={artistId}");
 

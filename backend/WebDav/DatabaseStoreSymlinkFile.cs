@@ -22,13 +22,53 @@ public class DatabaseStoreSymlinkFile(DavItem davFile, ConfigManager configManag
 
     private string GetTargetPath()
     {
-        return GetTargetPath(davFile.Id, configManager.GetMountDir());
+        return GetTargetPath(
+            davFile.Id,
+            configManager.GetMountDir(),
+            configManager.GetSymlinkTargetMode(),
+            davFile.Path);
     }
 
     public static string GetTargetPath(Guid davItemId, string mountDir, char? pathSeparator = null)
     {
+        return GetTargetPath(davItemId, mountDir, "absolute", contentPath: null, pathSeparator: pathSeparator);
+    }
+
+    public static string GetTargetPath
+    (
+        Guid davItemId,
+        string mountDir,
+        string targetMode,
+        string? contentPath,
+        char? pathSeparator = null
+    )
+    {
+        if (targetMode.Equals("relative", StringComparison.OrdinalIgnoreCase))
+            return GetRelativeTargetPath(davItemId, contentPath, pathSeparator);
+
         var pathParts = new List<string> { mountDir, GetTargetPath(davItemId, pathSeparator) };
         return string.Join(pathSeparator ?? Path.DirectorySeparatorChar, pathParts);
+    }
+
+    private static string GetRelativeTargetPath(Guid davItemId, string? contentPath, char? pathSeparator = null)
+    {
+        var separator = pathSeparator ?? Path.DirectorySeparatorChar;
+        var targetPath = GetTargetPath(davItemId, pathSeparator);
+        if (string.IsNullOrWhiteSpace(contentPath)) return targetPath;
+
+        var symlinkPath = contentPath.Replace('\\', '/');
+        if (symlinkPath.StartsWith("/content/", StringComparison.Ordinal))
+            symlinkPath = "/" + DavItem.SymlinkFolder.Name + symlinkPath["/content".Length..];
+        else if (symlinkPath.Equals("/content", StringComparison.Ordinal))
+            symlinkPath = "/" + DavItem.SymlinkFolder.Name;
+
+        var parentDepth = Math.Max(0, symlinkPath
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Length - 1);
+        if (parentDepth == 0) return targetPath;
+
+        var upSegments = Enumerable.Repeat("..", parentDepth);
+        return string.Join(separator, upSegments.Append(targetPath));
     }
 
     public static string GetTargetPath(Guid davItemId, char? pathSeparator = null)

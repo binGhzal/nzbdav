@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
-import type { HistorySlot, QueueSlot } from "~/clients/backend-client.server";
-import type { PresentationHistorySlot, PresentationQueueSlot, QueueStatusFilter, UploadingFile } from "../route";
+import type { HistorySlot, QueueSlot, QueueStatusFilter } from "~/clients/backend-client.server";
+import type { PresentationHistorySlot, PresentationQueueSlot, UploadingFile } from "../route";
 
 export type QueueEvents = {
     onAddQueueSlot: (queueSlot: QueueSlot) => void,
@@ -168,9 +168,22 @@ const priorityWeights: Record<string, number> = {
 };
 
 function sortQueueSlots(slots: PresentationQueueSlot[]): PresentationQueueSlot[] {
-    return [...slots].sort((a, b) =>
-        (priorityWeights[b.priority] ?? 0) - (priorityWeights[a.priority] ?? 0)
-    );
+    return [...slots].sort((a, b) => {
+        const priorityDelta = getEffectivePriorityWeight(b) - getEffectivePriorityWeight(a);
+        if (priorityDelta !== 0) return priorityDelta;
+        return getArrPriorityScore(b) - getArrPriorityScore(a);
+    });
+}
+
+function getEffectivePriorityWeight(slot: PresentationQueueSlot): number {
+    const manual = priorityWeights[slot.priority] ?? 0;
+    const hint = slot.arr_priority;
+    if (!hint?.apply_to_scheduling) return manual;
+    return Math.max(manual, priorityWeights[hint.effective_priority] ?? manual);
+}
+
+function getArrPriorityScore(slot: PresentationQueueSlot): number {
+    return slot.arr_priority?.apply_to_scheduling ? slot.arr_priority.score : 0;
 }
 
 function matchesQueueStatus(slot: Pick<QueueSlot, "status" | "priority">, filter: QueueStatusFilter): boolean {
@@ -180,6 +193,9 @@ function matchesQueueStatus(slot: Pick<QueueSlot, "status" | "priority">, filter
     const priority = slot.priority?.toLowerCase();
     if (filter === "paused") return status === "paused" || priority === "paused";
     if (filter === "downloading") return status === "downloading";
+    if (filter === "verifying") return status === "verifying";
+    if (filter === "repairing") return status === "repairing";
+    if (filter === "moving") return status === "moving";
     if (filter === "queued") return status === "queued" && priority !== "paused";
     return true;
 }

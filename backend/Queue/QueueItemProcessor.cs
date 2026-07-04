@@ -1,7 +1,6 @@
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Api.SabControllers.GetHistory;
-using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -28,6 +27,7 @@ public class QueueItemProcessor(
     INntpClient usenetClient,
     ConfigManager configManager,
     WebsocketManager websocketManager,
+    ArrDownloadReportService arrDownloadReportService,
     IProgress<int> progress,
     CancellationToken ct
 )
@@ -37,6 +37,9 @@ public class QueueItemProcessor(
         // initialize
         var startTime = DateTime.Now;
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Downloading");
+        await arrDownloadReportService
+            .RecordQueueLifecycleAsync(dbClient, queueItem, "Downloading", ct: ct)
+            .ConfigureAwait(false);
 
         // process the job
         try
@@ -69,6 +72,12 @@ public class QueueItemProcessor(
                 dbClient.Ctx.Entry(queueItem).Property(x => x.PauseUntil).IsModified = true;
                 await dbClient.Ctx.SaveChangesAsync().ConfigureAwait(false);
                 _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Queued");
+                await arrDownloadReportService
+                    .RecordQueueLifecycleAsync(dbClient, queueItem, "Queued", "Download retry scheduled.", ct)
+                    .ConfigureAwait(false);
+                await arrDownloadReportService
+                    .RefreshMonitoredDownloadsDebouncedAsync(queueItem.Category, ct)
+                    .ConfigureAwait(false);
                 return ProcessingOutcome.RetryScheduled;
             }
             catch (Exception ex)
@@ -171,6 +180,10 @@ public class QueueItemProcessor(
         var healthCheckCategories = configManager.GetEnsureArticleExistenceCategories();
         if (healthCheckCategories.Contains(queueItem.Category.ToLower()))
         {
+            _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Verifying");
+            await arrDownloadReportService
+                .RecordQueueLifecycleAsync(dbClient, queueItem, "Verifying", ct: ct)
+                .ConfigureAwait(false);
             var articlesToCheck = fileInfos
                 .Where(x => x.IsRar || FilenameUtil.IsImportantFileType(x.FileName))
                 .SelectMany(x => x.NzbFile.GetSegmentIds())
@@ -187,6 +200,10 @@ public class QueueItemProcessor(
         }
 
         // update the database
+        _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Moving");
+        await arrDownloadReportService
+            .RecordQueueLifecycleAsync(dbClient, queueItem, "Moving", ct: ct)
+            .ConfigureAwait(false);
         await MarkQueueItemCompleted(startTime, error: null, async () =>
         {
             var categoryFolder = await GetOrCreateCategoryFolder().ConfigureAwait(false);
@@ -376,32 +393,16 @@ public class QueueItemProcessor(
         dbClient.Ctx.HistoryItems.Add(historyItem);
         dbClient.Ctx.EnqueueRcloneVfsForgetPaths(["/nzbs"]);
         await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        await arrDownloadReportService
+            .RecordHistoryLifecycleAsync(
+                dbClient,
+                historyItem,
+                error == null ? "Completed" : "Failed",
+                error,
+                ct)
+            .ConfigureAwait(false);
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, queueItem.Id.ToString());
         _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemAdded, historySlot.ToJson());
-        _ = RefreshMonitoredDownloads();
-    }
-
-    private async Task RefreshMonitoredDownloads()
-    {
-        var tasks = configManager
-            .GetArrConfig()
-            .GetArrClients()
-            .Select(RefreshMonitoredDownloads);
-        await Task.WhenAll(tasks).ConfigureAwait(false);
-    }
-
-    private async Task RefreshMonitoredDownloads(ArrClient arrClient)
-    {
-        try
-        {
-            var downloadClients = await arrClient.GetDownloadClientsAsync().ConfigureAwait(false);
-            if (downloadClients.All(x => x.Category != queueItem.Category)) return;
-            var queueCount = await arrClient.GetQueueCountAsync().ConfigureAwait(false);
-            if (queueCount < 300) await arrClient.RefreshMonitoredDownloads().ConfigureAwait(false);
-        }
-        catch (Exception e)
-        {
-            Log.Debug($"Could not refresh monitored downloads for Arr instance: `{arrClient.Host}`. {e.Message}");
-        }
+        _ = arrDownloadReportService.RefreshMonitoredDownloadsDebouncedAsync(queueItem.Category);
     }
 }

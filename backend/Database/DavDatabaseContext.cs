@@ -82,6 +82,10 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
     public DbSet<RepairRun> RepairRuns => Set<RepairRun>();
     public DbSet<RepairEntryHealth> RepairEntryHealth => Set<RepairEntryHealth>();
     public DbSet<RepairBrokenFile> RepairBrokenFiles => Set<RepairBrokenFile>();
+    public DbSet<ArrDownloadCorrelation> ArrDownloadCorrelations => Set<ArrDownloadCorrelation>();
+    public DbSet<QueuePriorityHint> QueuePriorityHints => Set<QueuePriorityHint>();
+    public DbSet<ArrSearchNudgeCommand> ArrSearchNudgeCommands => Set<ArrSearchNudgeCommand>();
+    public DbSet<ArrDownloadLifecycleEvent> ArrDownloadLifecycleEvents => Set<ArrDownloadLifecycleEvent>();
 
     // blob items
     public List<DavNzbFile> BlobNzbFiles = [];
@@ -119,6 +123,7 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
             e.HasKey(i => i.Id);
 
             e.Property(i => i.Id)
+                .HasColumnType("TEXT")
                 .ValueGeneratedNever();
 
             e.Property(i => i.CreatedAt)
@@ -558,6 +563,288 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
                 .IsUnique();
 
             e.HasIndex(i => new { i.Kind, i.Status, i.AvailableAt, i.LeaseExpiresAt, i.Priority, i.CreatedAt })
+                .IsUnique(false);
+        });
+
+        // ArrDownloadCorrelation
+        b.Entity<ArrDownloadCorrelation>(e =>
+        {
+            e.ToTable("ArrDownloadCorrelations");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .HasColumnType("TEXT")
+                .ValueGeneratedNever();
+
+            e.Property(i => i.QueueItemId)
+                .HasColumnType("TEXT");
+
+            e.Property(i => i.HistoryItemId)
+                .HasColumnType("TEXT");
+
+            e.Property(i => i.ArrApp)
+                .HasMaxLength(32)
+                .IsRequired();
+
+            e.Property(i => i.InstanceKey)
+                .HasMaxLength(512)
+                .IsRequired();
+
+            e.Property(i => i.InstanceHost)
+                .HasMaxLength(1024)
+                .IsRequired();
+
+            e.Property(i => i.DownloadId)
+                .HasMaxLength(255);
+
+            e.Property(i => i.MediaKey)
+                .HasMaxLength(255);
+
+            e.Property(i => i.ReleaseTitle)
+                .HasMaxLength(1024);
+
+            e.Property(i => i.Category)
+                .HasMaxLength(255);
+
+            e.Property(i => i.Indexer)
+                .HasMaxLength(255);
+
+            e.Property(i => i.DownloadClient)
+                .HasMaxLength(255);
+
+            e.Property(i => i.Quality)
+                .HasMaxLength(255);
+
+            e.Property(i => i.Status)
+                .HasMaxLength(64);
+
+            e.Property(i => i.TrackedDownloadStatus)
+                .HasMaxLength(64);
+
+            e.Property(i => i.TrackedDownloadState)
+                .HasMaxLength(64);
+
+            e.Property(i => i.CreatedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.Property(i => i.UpdatedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.Property(i => i.LastSeenAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.HasIndex(i => i.QueueItemId)
+                .IsUnique(false);
+
+            e.HasIndex(i => i.HistoryItemId)
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.ArrApp, i.InstanceKey, i.DownloadId })
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.ArrApp, i.InstanceKey, i.MediaKey })
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.ArrApp, i.InstanceKey, i.QueueRecordId })
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.IsDuplicate, i.LastSeenAt })
+                .IsUnique(false);
+        });
+
+        // QueuePriorityHint
+        b.Entity<QueuePriorityHint>(e =>
+        {
+            e.ToTable("QueuePriorityHints");
+            e.HasKey(i => i.QueueItemId);
+
+            e.Property(i => i.QueueItemId)
+                .HasColumnType("TEXT")
+                .ValueGeneratedNever();
+
+            e.Property(i => i.EffectivePriority)
+                .HasConversion<int>()
+                .IsRequired();
+
+            e.Property(i => i.ApplyToScheduling)
+                .IsRequired();
+
+            e.Property(i => i.ReasonsJson)
+                .IsRequired();
+
+            e.Property(i => i.Source)
+                .HasMaxLength(64)
+                .IsRequired();
+
+            e.Property(i => i.ComputedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.Property(i => i.ExpiresAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.Property(i => i.StaleReason)
+                .HasMaxLength(1024);
+
+            e.HasOne<QueueItem>()
+                .WithOne()
+                .HasForeignKey<QueuePriorityHint>(i => i.QueueItemId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasIndex(i => new { i.EffectivePriority, i.Score, i.ExpiresAt })
+                .IsUnique(false);
+        });
+
+        // ArrSearchNudgeCommand
+        b.Entity<ArrSearchNudgeCommand>(e =>
+        {
+            e.ToTable("ArrSearchNudgeCommands");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .HasColumnType("TEXT")
+                .ValueGeneratedNever();
+
+            e.Property(i => i.ArrApp)
+                .HasMaxLength(32)
+                .IsRequired();
+
+            e.Property(i => i.InstanceKey)
+                .HasMaxLength(512)
+                .IsRequired();
+
+            e.Property(i => i.InstanceHost)
+                .HasMaxLength(1024)
+                .IsRequired();
+
+            e.Property(i => i.CommandName)
+                .HasMaxLength(128)
+                .IsRequired();
+
+            e.Property(i => i.TargetsJson)
+                .IsRequired();
+
+            e.Property(i => i.Mode)
+                .HasMaxLength(32)
+                .IsRequired();
+
+            e.Property(i => i.Status)
+                .HasMaxLength(32)
+                .IsRequired();
+
+            e.Property(i => i.CooldownKey)
+                .HasMaxLength(512)
+                .IsRequired();
+
+            e.Property(i => i.Error)
+                .HasMaxLength(1024);
+
+            e.Property(i => i.CreatedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.Property(i => i.CompletedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                    x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null
+                );
+
+            e.Property(i => i.NextAllowedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.HasIndex(i => new { i.ArrApp, i.InstanceKey, i.Status, i.CreatedAt })
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.CooldownKey, i.NextAllowedAt })
+                .IsUnique(false);
+        });
+
+        // ArrDownloadLifecycleEvent
+        b.Entity<ArrDownloadLifecycleEvent>(e =>
+        {
+            e.ToTable("ArrDownloadLifecycleEvents");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .HasColumnType("TEXT")
+                .ValueGeneratedNever();
+
+            e.Property(i => i.QueueItemId)
+                .HasColumnType("TEXT");
+
+            e.Property(i => i.HistoryItemId)
+                .HasColumnType("TEXT");
+
+            e.Property(i => i.ArrApp)
+                .HasMaxLength(32)
+                .IsRequired();
+
+            e.Property(i => i.InstanceKey)
+                .HasMaxLength(512)
+                .IsRequired();
+
+            e.Property(i => i.DownloadId)
+                .HasMaxLength(255);
+
+            e.Property(i => i.MediaKey)
+                .HasMaxLength(255);
+
+            e.Property(i => i.State)
+                .HasMaxLength(64)
+                .IsRequired();
+
+            e.Property(i => i.StateReason)
+                .HasMaxLength(1024);
+
+            e.Property(i => i.CreatedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.UtcTicks,
+                    x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))
+                )
+                .IsRequired();
+
+            e.HasIndex(i => new { i.QueueItemId, i.CreatedAt })
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.HistoryItemId, i.CreatedAt })
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.ArrApp, i.InstanceKey, i.State, i.CreatedAt })
                 .IsUnique(false);
         });
 

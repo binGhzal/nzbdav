@@ -17,6 +17,13 @@
     margin: 0;
 }
 
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    align-items: end;
+}
+
 .sectionDivider {
     margin: 40px 0;
     border-color: #586e75;
