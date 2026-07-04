@@ -60,6 +60,31 @@ class PostgresMigrationHelperTests(unittest.TestCase):
             self.assertTrue(summary["copied"])
             self.assertTrue((target / "blobs" / "blob").exists())
 
+    def test_validate_paths_allows_existing_target_blobs_for_dry_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "sqlite"
+            target = root / "postgres"
+            source.mkdir(parents=True)
+            (source / "db.sqlite").write_text("", encoding="utf-8")
+            (target / "blobs").mkdir(parents=True)
+            (target / "blobs" / "existing").write_text("blob", encoding="utf-8")
+
+            nzbdav_migrate_sqlite_to_postgres.validate_paths(source, target, replace=False, dry_run=True)
+
+    def test_validate_paths_rejects_existing_target_blobs_for_real_run_without_replace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "sqlite"
+            target = root / "postgres"
+            source.mkdir(parents=True)
+            (source / "db.sqlite").write_text("", encoding="utf-8")
+            (target / "blobs").mkdir(parents=True)
+            (target / "blobs" / "existing").write_text("blob", encoding="utf-8")
+
+            with self.assertRaises(SystemExit):
+                nzbdav_migrate_sqlite_to_postgres.validate_paths(source, target, replace=False, dry_run=False)
+
     def test_redact_command_hides_postgres_connection_string(self):
         command = [
             "docker",

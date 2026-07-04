@@ -46,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     verify_path = work_dir / "nzbdav-postgres-verify.json"
     manifest_path = work_dir / "manifest.json"
 
-    validate_paths(args.sqlite_config, args.postgres_config, replace=args.replace)
+    validate_paths(args.sqlite_config, args.postgres_config, replace=args.replace, dry_run=args.dry_run)
     docker_commands: list[list[str]] = []
     if not args.dry_run:
         export_cmd = docker_command(args.image, args.sqlite_config, work_dir, ["--db-export-json", "/transfer/nzbdav-transfer.json"])
@@ -98,14 +98,14 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def validate_paths(sqlite_config: Path, postgres_config: Path, *, replace: bool) -> None:
+def validate_paths(sqlite_config: Path, postgres_config: Path, *, replace: bool, dry_run: bool) -> None:
     if not sqlite_config.exists() or not sqlite_config.is_dir():
         raise SystemExit(f"SQLite config directory does not exist: {sqlite_config}")
     if not (sqlite_config / "db.sqlite").exists():
         raise SystemExit(f"SQLite database was not found: {sqlite_config / 'db.sqlite'}")
     postgres_config.mkdir(parents=True, exist_ok=True)
     target_blobs = postgres_config / "blobs"
-    if target_blobs.exists() and any(target_blobs.iterdir()) and not replace:
+    if not dry_run and target_blobs.exists() and any(target_blobs.iterdir()) and not replace:
         raise SystemExit("Target blobs directory is not empty. Re-run with --replace to overwrite copied blobs.")
 
 
@@ -141,7 +141,9 @@ def docker_command(
 
 
 def run(command: list[str]) -> None:
-    subprocess.run(command, check=True)
+    if not command or command[0] != "docker":
+        raise SystemExit("Refusing to run a non-docker migration command.")
+    subprocess.run(command, check=True, shell=False)
 
 
 def validate_row_counts(source_snapshot: Path, postgres_snapshot: Path) -> None:
