@@ -362,6 +362,31 @@ public sealed class SparseSegmentCacheTests
     }
 
     [Fact]
+    public async Task NoProgressTimeoutIsReportedAsRetryableDownloadFailure()
+    {
+        using var tempDir = new TempDirectory();
+        using var manager = new SparseSegmentCacheManager();
+        var inner = new NeverCompletingRangeReader(length: 4);
+        var options = CreateOptions(tempDir.Path, chunkBytes: 4, maxBytes: 1024) with
+        {
+            NoProgressTimeout = TimeSpan.FromMilliseconds(20)
+        };
+        var cached = manager.Open("file-a", inner, options);
+        var buffer = new byte[2];
+
+        try
+        {
+            var exception = await Assert.ThrowsAsync<RetryableDownloadException>(() =>
+                cached.ReadAtAsync(0, buffer, CancellationToken.None).AsTask());
+            Assert.Contains("No progress reading cache chunk", exception.Message);
+        }
+        finally
+        {
+            await DisposeReaderAsync(cached);
+        }
+    }
+
+    [Fact]
     public async Task SameContentKeyUsesDifferentEntriesForDifferentCacheDirectories()
     {
         using var firstTempDir = new TempDirectory();
@@ -453,6 +478,17 @@ public sealed class SparseSegmentCacheTests
             var count = Math.Min(buffer.Length, bytes.Length - (int)offset);
             bytes.AsMemory((int)offset, count).CopyTo(buffer);
             return count;
+        }
+    }
+
+    private sealed class NeverCompletingRangeReader(long length) : IFileRangeReader
+    {
+        public long Length { get; } = length;
+
+        public async ValueTask<int> ReadAtAsync(long offset, Memory<byte> buffer, CancellationToken ct)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return 0;
         }
     }
 

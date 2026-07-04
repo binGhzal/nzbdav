@@ -20,7 +20,7 @@ public class GetWebdavItemController(DatabaseStore store, ConfigManager configMa
         if (item is null) throw new BadHttpRequestException("The file does not exist.");
         if (item is IStoreCollection) throw new BadHttpRequestException("The file does not exist.");
 
-        // disable compression to keep Content-Length intact for clients that need seeking
+        // disable compression so ranged streaming responses are not transformed
         Response.Headers["Content-Encoding"] = "identity";
 
         // handle par2 preview
@@ -38,9 +38,10 @@ public class GetWebdavItemController(DatabaseStore store, ConfigManager configMa
         Response.Headers["Content-Type"] = GetContentType(item.Name);
         Response.Headers["Content-Disposition"] = GetContentDisposition(item.Name, request.ShouldDownload);
 
-        // disable compression to keep Content-Length intact for clients that need seeking
+        // disable compression so ranged streaming responses are not transformed
         Response.Headers["Content-Encoding"] = "identity";
         Response.Headers["Accept-Ranges"] = "bytes";
+        var isHeadRequest = HttpContext.Request.Method == HttpMethods.Head;
 
         if (request.RangeStart is not null)
         {
@@ -54,12 +55,12 @@ public class GetWebdavItemController(DatabaseStore store, ConfigManager configMa
 
             // set response headers
             Response.Headers["Content-Range"] = $"bytes {request.RangeStart}-{end}/{fileSize}";
-            Response.Headers["Content-Length"] = chunkSize.ToString();
+            if (isHeadRequest) Response.Headers["Content-Length"] = chunkSize.ToString();
             Response.StatusCode = 206;
         }
         else
         {
-            Response.Headers["Content-Length"] = fileSize.ToString();
+            if (isHeadRequest) Response.Headers["Content-Length"] = fileSize.ToString();
         }
 
         return stream;

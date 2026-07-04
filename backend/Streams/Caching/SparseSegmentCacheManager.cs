@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
+using NzbWebDAV.Exceptions;
 
 namespace NzbWebDAV.Streams.Caching;
 
@@ -505,9 +506,25 @@ public sealed class SparseSegmentCacheManager : IDisposable
                 {
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(_disposeCts.Token);
                     timeoutCts.CancelAfter(_options.NoProgressTimeout);
-                    var read = await inner
-                        .ReadAtAsync(chunkStart + totalRead, buffer.AsMemory(totalRead, bytesToRead - totalRead), timeoutCts.Token)
-                        .ConfigureAwait(false);
+                    int read;
+                    try
+                    {
+                        read = await inner
+                            .ReadAtAsync(
+                                chunkStart + totalRead,
+                                buffer.AsMemory(totalRead, bytesToRead - totalRead),
+                                timeoutCts.Token)
+                            .ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException e)
+                        when (timeoutCts.IsCancellationRequested && !_disposeCts.IsCancellationRequested)
+                    {
+                        throw new RetryableDownloadException(
+                            $"No progress reading cache chunk {chunkIndex} at offset {chunkStart + totalRead} " +
+                            $"within {_options.NoProgressTimeout}.",
+                            e);
+                    }
+
                     if (read <= 0)
                     {
                         throw new IOException($"No progress reading cache chunk {chunkIndex} at offset {chunkStart + totalRead}.");

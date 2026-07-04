@@ -137,8 +137,11 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                                 response.SetStatus(DavStatusCode.PartialContent);
                         }
 
-                        // Set the header, so the client knows how much data is required
-                        response.ContentLength = length;
+                        // Avoid fixed-length streaming GET bodies. Usenet/rclone reads can fail
+                        // after headers are sent; chunked GET responses let the connection fail
+                        // cleanly instead of producing noisy Content-Length mismatch errors.
+                        if (isHeadRequest)
+                            response.ContentLength = length;
                     }
                 }
                 catch (NotSupportedException)

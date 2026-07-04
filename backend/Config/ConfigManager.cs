@@ -362,7 +362,7 @@ public class ConfigManager
                 0,
                 512L * 1024 * 1024),
             IdleTtl = GetTimeSpanConfig(TimeSpan.FromMinutes(10), "Cache:IdleTtl", "cache.idle-ttl"),
-            NoProgressTimeout = GetTimeSpanConfig(TimeSpan.FromSeconds(30), "Cache:NoProgressTimeout", "cache.no-progress-timeout"),
+            NoProgressTimeout = GetTimeSpanConfig(TimeSpan.FromMinutes(2), "Cache:NoProgressTimeout", "cache.no-progress-timeout"),
         };
     }
 
