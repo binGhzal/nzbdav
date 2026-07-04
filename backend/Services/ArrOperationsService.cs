@@ -82,6 +82,9 @@ public sealed class ArrOperationsService(ConfigManager configManager)
         int limit,
         string? status,
         string? arrApp,
+        string? mode,
+        string? commandName,
+        string? search,
         CancellationToken ct = default
     )
     {
@@ -91,6 +94,21 @@ public sealed class ArrOperationsService(ConfigManager configManager)
             query = query.Where(x => x.Status == status);
         if (!string.IsNullOrWhiteSpace(arrApp))
             query = query.Where(x => x.ArrApp == arrApp.ToLowerInvariant());
+        if (!string.IsNullOrWhiteSpace(mode))
+            query = query.Where(x => x.Mode == NormalizeMode(mode));
+        if (!string.IsNullOrWhiteSpace(commandName))
+            query = query.Where(x => x.CommandName == commandName.Trim());
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim();
+            query = query.Where(x =>
+                x.InstanceKey.Contains(term)
+                || x.InstanceHost.Contains(term)
+                || x.CommandName.Contains(term)
+                || x.TargetsJson.Contains(term)
+                || x.ReasonsJson.Contains(term)
+                || (x.Error != null && x.Error.Contains(term)));
+        }
 
         var commands = await query
             .OrderByDescending(x => x.CreatedAt)
@@ -112,7 +130,7 @@ public sealed class ArrOperationsService(ConfigManager configManager)
             .FirstOrDefaultAsync(x => x.Id == id, ct)
             .ConfigureAwait(false)
             ?? throw new BadHttpRequestException("ARR search nudge command was not found.");
-        command.Status = "planned";
+        command.Status = command.Mode == "apply" ? "pending_apply" : "planned";
         command.Error = null;
         command.CommandId = null;
         command.CompletedAt = null;
@@ -229,6 +247,15 @@ public sealed class ArrOperationsService(ConfigManager configManager)
                               : $"{app}:custom-script");
         var eventType = Get(payload, "event_type", "eventtype", "event", $"{app}_eventtype")
                         ?? "custom-script";
+        if (eventType.Equals("test", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ArrEventResponse
+            {
+                EventType = eventType,
+                Correlation = null
+            };
+        }
+
         var downloadId = Get(payload, "download_id", "downloadid", "nzo_id", "nzoid", $"{app}_download_id");
         var nzoId = Get(payload, "nzo_id", "nzoid", "download_id", "downloadid");
         var queueItemId = ParseOptionalGuid(Get(payload, "queue_item_id", "queueitemid"), "queue_item_id");
@@ -261,19 +288,22 @@ public sealed class ArrOperationsService(ConfigManager configManager)
         correlation.ArrApp = app;
         correlation.InstanceKey = instanceKey;
         correlation.InstanceHost = instanceHost;
-        correlation.DownloadId = downloadId;
         correlation.QueueItemId = queueItemId;
         correlation.HistoryItemId = historyItemId;
-        correlation.MediaKey = mediaKey;
-        correlation.MovieId = media.MovieId;
-        correlation.SeriesId = media.SeriesId;
-        correlation.EpisodeId = media.EpisodeId;
-        correlation.SeasonNumber = media.SeasonNumber;
-        correlation.ArtistId = media.ArtistId;
-        correlation.AlbumId = media.AlbumId;
-        correlation.ReleaseTitle = Get(payload, "release_title", "releasetitle", "source_title", "sourcetitle", $"{app}_release_title");
-        correlation.Category = Get(payload, "category", "cat");
-        correlation.Quality = Get(payload, "quality", "quality_name", $"{app}_quality");
+        ApplyCorrelationIdentity(
+            correlation,
+            source: "custom-script",
+            downloadId,
+            mediaKey,
+            media.MovieId,
+            media.SeriesId,
+            media.EpisodeId,
+            media.SeasonNumber,
+            media.ArtistId,
+            media.AlbumId);
+        correlation.ReleaseTitle = Get(payload, "release_title", "releasetitle", "source_title", "sourcetitle", $"{app}_release_title", $"{app}_source_title");
+        correlation.Category = Get(payload, "category", "cat", $"{app}_category");
+        correlation.Quality = Get(payload, "quality", "quality_name", $"{app}_quality", $"{app}_qualityversion");
         correlation.Status = eventType;
         correlation.IsUpgrade = ParseBool(Get(payload, "is_upgrade", "isupgrade", "upgrade"));
         correlation.UpdatedAt = now;
@@ -383,9 +413,17 @@ public sealed class ArrOperationsService(ConfigManager configManager)
         correlation.Quality = request.Quality ?? correlation.Quality;
         correlation.IsUpgrade = request.IsUpgrade ?? correlation.IsUpgrade;
         correlation.IsDuplicate = request.IsDuplicate ?? correlation.IsDuplicate;
+        correlation.Source = "manual";
+        correlation.ManualLock = request.ManualLock ?? true;
         correlation.Status = "manual";
         correlation.UpdatedAt = now;
         correlation.LastSeenAt = now;
+    }
+
+    public static string NormalizeMode(string? mode)
+    {
+        mode = mode?.Trim().ToLowerInvariant();
+        return mode is "apply" ? "apply" : "report";
     }
 
     private static ArrSearchNudgeCommandDto ToCommandDto(ArrSearchNudgeCommand command)
@@ -521,6 +559,33 @@ public sealed class ArrOperationsService(ConfigManager configManager)
             "lidarr" when artistId is > 0 => $"{app}:artist:{artistId}",
             _ => null
         };
+    }
+
+    private static void ApplyCorrelationIdentity
+    (
+        ArrDownloadCorrelation correlation,
+        string source,
+        string? downloadId,
+        string? mediaKey,
+        int? movieId,
+        int? seriesId,
+        int? episodeId,
+        int? seasonNumber,
+        int? artistId,
+        int? albumId
+    )
+    {
+        if (correlation.ManualLock) return;
+
+        correlation.Source = source;
+        correlation.DownloadId = downloadId;
+        correlation.MediaKey = mediaKey;
+        correlation.MovieId = movieId;
+        correlation.SeriesId = seriesId;
+        correlation.EpisodeId = episodeId;
+        correlation.SeasonNumber = seasonNumber;
+        correlation.ArtistId = artistId;
+        correlation.AlbumId = albumId;
     }
 
     private static string MapEventState(string eventType)

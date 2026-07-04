@@ -27,6 +27,8 @@ public class ArrDownloadCorrelation
     public string? Status { get; set; }
     public string? TrackedDownloadStatus { get; set; }
     public string? TrackedDownloadState { get; set; }
+    public string Source { get; set; } = "auto";
+    public bool ManualLock { get; set; }
     public bool IsUpgrade { get; set; }
     public bool IsDuplicate { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

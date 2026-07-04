@@ -105,6 +105,9 @@ namespace NzbWebDAV.Database.Migrations
                     b.Property<long>("LastSeenAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("ManualLock")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("MediaKey")
                         .HasMaxLength(255)
                         .HasColumnType("TEXT");
@@ -136,6 +139,11 @@ namespace NzbWebDAV.Database.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("TrackedDownloadState")
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
@@ -154,6 +162,8 @@ namespace NzbWebDAV.Database.Migrations
                     b.HasIndex("QueueItemId");
 
                     b.HasIndex("IsDuplicate", "LastSeenAt");
+
+                    b.HasIndex("Source", "ManualLock");
 
                     b.HasIndex("ArrApp", "InstanceKey", "DownloadId");
 

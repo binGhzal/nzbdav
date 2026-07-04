@@ -44,6 +44,8 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
         if (arrConfig.GetInstanceCount() == 0) return;
 
         await using var dbContext = new DavDatabaseContext();
+        await ProcessPendingApplyCommandsAsync(dbContext, arrConfig, options, ct).ConfigureAwait(false);
+
         var activeMediaKeys = await GetActiveMediaKeysAsync(dbContext, ct).ConfigureAwait(false);
 
         foreach (var instance in ArrIntegration.GetInstances(arrConfig))
@@ -106,7 +108,7 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
                 CommandName = candidate.CommandName,
                 TargetsJson = JsonSerializer.Serialize(candidate.TargetIds),
                 Mode = options.Mode,
-                Status = "planned",
+                Status = options.Mode == "apply" ? "pending_apply" : "planned",
                 CooldownKey = candidate.CooldownKey,
                 Score = candidate.Score,
                 ReasonsJson = JsonSerializer.Serialize(candidate.Reasons),
@@ -117,30 +119,42 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
             await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
 
             if (options.Mode != "apply") continue;
+            await TryExecuteApplyCommandAsync(dbContext, commandRow, instance, options, ct).ConfigureAwait(false);
+        }
+    }
 
-            try
+    private static async Task ProcessPendingApplyCommandsAsync
+    (
+        DavDatabaseContext dbContext,
+        ArrConfig arrConfig,
+        ArrConfig.SearchNudgeOptions options,
+        CancellationToken ct
+    )
+    {
+        var now = DateTimeOffset.UtcNow;
+        var instances = ArrIntegration.GetInstances(arrConfig)
+            .ToDictionary(x => (x.App, x.InstanceKey));
+        var pending = await dbContext.ArrSearchNudgeCommands
+            .Where(x => x.Mode == "apply")
+            .Where(x => x.Status == "pending_apply")
+            .Where(x => x.NextAllowedAt <= now)
+            .OrderBy(x => x.CreatedAt)
+            .Take(50)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        foreach (var command in pending)
+        {
+            if (!instances.TryGetValue((command.ArrApp, command.InstanceKey), out var instance))
             {
-                var command = instance.Client switch
-                {
-                    SonarrClient sonarr => await sonarr.SearchEpisodesAsync(candidate.TargetIds).WaitAsync(ct)
-                        .ConfigureAwait(false),
-                    RadarrClient radarr => await radarr.SearchMoviesAsync(candidate.TargetIds).WaitAsync(ct)
-                        .ConfigureAwait(false),
-                    _ => null
-                };
-
-                commandRow.CommandId = command?.Id;
-                commandRow.Status = "executed";
-                commandRow.CompletedAt = DateTimeOffset.UtcNow;
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-            {
-                commandRow.Status = "failed";
-                commandRow.Error = ex.Message;
-                commandRow.CompletedAt = DateTimeOffset.UtcNow;
+                command.Status = "failed";
+                command.Error = "ARR instance is no longer configured.";
+                command.CompletedAt = DateTimeOffset.UtcNow;
+                await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+                continue;
             }
 
-            await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+            await TryExecuteApplyCommandAsync(dbContext, command, instance, options, ct).ConfigureAwait(false);
         }
     }
 
@@ -173,7 +187,8 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
         DavDatabaseContext dbContext,
         ArrInstance instance,
         ArrConfig.SearchNudgeOptions options,
-        CancellationToken ct
+        CancellationToken ct,
+        Guid? excludeCommandId = null
     )
     {
         var now = DateTimeOffset.UtcNow;
@@ -181,6 +196,7 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
         var recentCommands = await dbContext.ArrSearchNudgeCommands
             .AsNoTracking()
             .Where(x => x.ArrApp == instance.App && x.InstanceKey == instance.InstanceKey)
+            .Where(x => excludeCommandId == null || x.Id != excludeCommandId.Value)
             .Where(x => x.CreatedAt >= hourAgo)
             .CountAsync(ct)
             .ConfigureAwait(false);
@@ -189,12 +205,81 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
         var running = await dbContext.ArrSearchNudgeCommands
             .AsNoTracking()
             .Where(x => x.ArrApp == instance.App && x.InstanceKey == instance.InstanceKey)
-            .Where(x => x.Status == "planned" && x.Mode == "apply" && x.CompletedAt == null)
+            .Where(x => excludeCommandId == null || x.Id != excludeCommandId.Value)
+            .Where(x => x.Status == "executing" && x.Mode == "apply" && x.CompletedAt == null)
             .CountAsync(ct)
             .ConfigureAwait(false);
         if (running >= options.ConcurrentCommandsPerInstance) return 0;
 
         return Math.Min(options.MaxCommandsPerHour - recentCommands, options.ConcurrentCommandsPerInstance - running);
+    }
+
+    private static async Task<bool> TryExecuteApplyCommandAsync
+    (
+        DavDatabaseContext dbContext,
+        ArrSearchNudgeCommand commandRow,
+        ArrInstance instance,
+        ArrConfig.SearchNudgeOptions options,
+        CancellationToken ct
+    )
+    {
+        var availableSlots = await GetAvailableCommandSlotsAsync(dbContext, instance, options, ct, commandRow.Id)
+            .ConfigureAwait(false);
+        if (availableSlots <= 0) return false;
+
+        var targetIds = DeserializeTargets(commandRow.TargetsJson);
+        if (targetIds.Count == 0)
+        {
+            commandRow.Status = "failed";
+            commandRow.Error = "ARR search command has no target ids.";
+            commandRow.CompletedAt = DateTimeOffset.UtcNow;
+            await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+            return false;
+        }
+
+        commandRow.Status = "executing";
+        commandRow.Error = null;
+        commandRow.CompletedAt = null;
+        await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            var command = instance.Client switch
+            {
+                SonarrClient sonarr when commandRow.CommandName == "EpisodeSearch" =>
+                    await sonarr.SearchEpisodesAsync(targetIds).WaitAsync(ct).ConfigureAwait(false),
+                RadarrClient radarr when commandRow.CommandName == "MoviesSearch" =>
+                    await radarr.SearchMoviesAsync(targetIds).WaitAsync(ct).ConfigureAwait(false),
+                _ => throw new InvalidOperationException(
+                    $"ARR command {commandRow.CommandName} is not supported for {instance.App}.")
+            };
+
+            commandRow.CommandId = command.Id;
+            commandRow.Status = "executed";
+            commandRow.CompletedAt = DateTimeOffset.UtcNow;
+            await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        {
+            commandRow.Status = "failed";
+            commandRow.Error = ex.Message;
+            commandRow.CompletedAt = DateTimeOffset.UtcNow;
+            await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+            return false;
+        }
+    }
+
+    private static List<int> DeserializeTargets(string targetsJson)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<int>>(targetsJson) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 
     private static async Task<HashSet<int>> GetCooldownTargetIdsAsync

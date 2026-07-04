@@ -32,10 +32,13 @@ public sealed class ArrOperationsController(
         var limit = ParseLimit();
         var status = Request.Query["status"].FirstOrDefault();
         var app = Request.Query["app"].FirstOrDefault();
+        var mode = Request.Query["mode"].FirstOrDefault();
+        var command = Request.Query["command"].FirstOrDefault();
+        var search = Request.Query["search"].FirstOrDefault();
         return Ok(new ArrSearchNudgeCommandsResponse
         {
             Commands = await arrOperationsService
-                .GetSearchNudgeCommandsAsync(dbClient.Ctx, limit, status, app, HttpContext.RequestAborted)
+                .GetSearchNudgeCommandsAsync(dbClient.Ctx, limit, status, app, mode, command, search, HttpContext.RequestAborted)
                 .ConfigureAwait(false)
         });
     }

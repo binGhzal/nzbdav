@@ -55,6 +55,21 @@
     white-space: nowrap;
 }
 
+.smallBadge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    margin-right: 6px;
+    margin-bottom: 4px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: hsl(196.8, 25%, 14.51%);
+    color: hsl(180, 7%, 70%);
+    padding: 2px 8px;
+    font-size: 0.78rem;
+    white-space: nowrap;
+}
+
 .metricGrid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -106,6 +121,13 @@
     margin-top: 16px;
 }
 
+.filterBar {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
 .button {
     min-height: 34px;
     border-radius: 6px;
@@ -122,6 +144,21 @@
 
 .tableWrap {
     overflow-x: auto;
+}
+
+.details {
+    min-width: 180px;
+}
+
+.details summary {
+    cursor: pointer;
+    color: hsl(180, 7%, 82%);
+}
+
+.details div {
+    margin-top: 4px;
+    color: hsl(180, 7%, 58%);
+    font-size: 0.82rem;
 }
 
 .table {
@@ -220,6 +257,10 @@
     .correlationForm {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+
+    .filterBar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 @media (max-width: 560px) {
@@ -238,6 +279,10 @@
     }
 
     .correlationForm {
+        grid-template-columns: 1fr;
+    }
+
+    .filterBar {
         grid-template-columns: 1fr;
     }
 }

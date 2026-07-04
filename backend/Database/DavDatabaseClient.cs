@@ -739,7 +739,9 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .ConfigureAwait(false);
         var staleHints = await priorityHints.CountAsync(x => x.ExpiresAt < referenceTime, ct)
             .ConfigureAwait(false);
-        var plannedNudges = await nudges.CountAsync(x => x.Status == "planned", ct).ConfigureAwait(false);
+        var plannedNudges = await nudges
+            .CountAsync(x => x.Status == "planned" || x.Status == "pending_apply" || x.Status == "executing", ct)
+            .ConfigureAwait(false);
         var executedNudges = await nudges.CountAsync(x => x.Status == "executed", ct).ConfigureAwait(false);
         var failedNudges = await nudges.CountAsync(x => x.Status == "failed", ct).ConfigureAwait(false);
         var lastNudgeAt = await nudges

@@ -632,6 +632,13 @@ public sealed class DavDatabaseContext : DbContext
             e.Property(i => i.TrackedDownloadState)
                 .HasMaxLength(64);
 
+            e.Property(i => i.Source)
+                .HasMaxLength(32)
+                .IsRequired();
+
+            e.Property(i => i.ManualLock)
+                .IsRequired();
+
             e.Property(i => i.CreatedAt)
                 .ValueGeneratedNever()
                 .HasConversion(
@@ -672,6 +679,9 @@ public sealed class DavDatabaseContext : DbContext
                 .IsUnique(false);
 
             e.HasIndex(i => new { i.IsDuplicate, i.LastSeenAt })
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.Source, i.ManualLock })
                 .IsUnique(false);
         });
 

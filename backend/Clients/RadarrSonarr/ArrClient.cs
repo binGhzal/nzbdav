@@ -56,6 +56,7 @@ public class ArrClient(string host, string apiKey)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, $"{Host}{rootPath}");
         using var response = await SendAsync(request);
+        response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync();
         return await JsonSerializer.DeserializeAsync<T>(stream) ?? throw new NullReferenceException();
     }
@@ -66,6 +67,7 @@ public class ArrClient(string host, string apiKey)
         var jsonBody = JsonSerializer.Serialize(body);
         request.Content = new StringContent(jsonBody, new MediaTypeHeaderValue("application/json"));
         using var response = await SendAsync(request);
+        response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync();
         return await JsonSerializer.DeserializeAsync<T>(stream) ?? throw new NullReferenceException();
     }

@@ -216,9 +216,7 @@ public sealed class ArrCorrelationService(ConfigManager configManager) : Backgro
         correlation.QueueItemId = match.QueueItemId;
         correlation.HistoryItemId = match.HistoryItemId;
         correlation.InstanceHost = instance.Host;
-        correlation.DownloadId = record.DownloadId;
         correlation.QueueRecordId = record.Id;
-        correlation.MediaKey = mediaKey;
         correlation.ReleaseTitle = record.Title;
         correlation.Indexer = record.Indexer;
         correlation.DownloadClient = record.DownloadClient;
@@ -231,6 +229,12 @@ public sealed class ArrCorrelationService(ConfigManager configManager) : Backgro
         correlation.IsUpgrade = IsUpgradeRecord(record);
         correlation.UpdatedAt = now;
         correlation.LastSeenAt = now;
+
+        if (correlation.ManualLock) return;
+
+        correlation.Source = "auto";
+        correlation.DownloadId = record.DownloadId;
+        correlation.MediaKey = mediaKey;
 
         switch (record)
         {

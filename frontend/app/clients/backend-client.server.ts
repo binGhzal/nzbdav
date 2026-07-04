@@ -288,8 +288,14 @@ class BackendClient {
         return await this.getJson<ArrValidationResponse>("/api/arr/validation", "get ARR validation");
     }
 
-    public async getArrSearchNudges(limit = 50): Promise<ArrSearchNudgeCommandsResponse> {
-        return await this.getJson<ArrSearchNudgeCommandsResponse>(`/api/arr/search-nudges?limit=${limit}`, "get ARR search nudge history");
+    public async getArrSearchNudges(options: ArrSearchNudgeRequestOptions = {}): Promise<ArrSearchNudgeCommandsResponse> {
+        const params = new URLSearchParams({ limit: String(options.limit ?? 50) });
+        if (options.app) params.set("app", options.app);
+        if (options.status) params.set("status", options.status);
+        if (options.mode) params.set("mode", options.mode);
+        if (options.command) params.set("command", options.command);
+        if (options.search) params.set("search", options.search);
+        return await this.getJson<ArrSearchNudgeCommandsResponse>(`/api/arr/search-nudges?${params.toString()}`, "get ARR search nudge history");
     }
 
     public async retryArrSearchNudge(id: string): Promise<ArrSearchNudgeCommand> {
@@ -301,8 +307,11 @@ class BackendClient {
         return await this.postJson<{ status: boolean, deleted: number }>(`/api/arr/search-nudges/clear${query}`, undefined, "clear ARR search nudges");
     }
 
-    public async getArrCorrelations(limit = 50): Promise<ArrCorrelationsResponse> {
-        return await this.getJson<ArrCorrelationsResponse>(`/api/arr/correlations?limit=${limit}`, "get ARR correlations");
+    public async getArrCorrelations(options: ArrCorrelationRequestOptions = {}): Promise<ArrCorrelationsResponse> {
+        const params = new URLSearchParams({ limit: String(options.limit ?? 50) });
+        if (options.app) params.set("app", options.app);
+        if (options.search) params.set("search", options.search);
+        return await this.getJson<ArrCorrelationsResponse>(`/api/arr/correlations?${params.toString()}`, "get ARR correlations");
     }
 
     public async saveArrCorrelation(request: ArrManualCorrelationRequest): Promise<ArrCorrelationEnvelope> {
@@ -728,6 +737,15 @@ export type ArrSearchNudgeCommandsResponse = {
     commands: ArrSearchNudgeCommand[],
 }
 
+export type ArrSearchNudgeRequestOptions = {
+    limit?: number,
+    app?: string,
+    status?: string,
+    mode?: string,
+    command?: string,
+    search?: string,
+}
+
 export type ArrSearchNudgeCommand = {
     id: string,
     arr_app: string,
@@ -750,6 +768,12 @@ export type ArrCorrelationsResponse = {
     correlations: ArrDownloadCorrelation[],
 }
 
+export type ArrCorrelationRequestOptions = {
+    limit?: number,
+    app?: string,
+    search?: string,
+}
+
 export type ArrDownloadCorrelation = {
     id: string,
     queue_item_id: string | null,
@@ -769,6 +793,8 @@ export type ArrDownloadCorrelation = {
     category: string | null,
     quality: string | null,
     status: string | null,
+    source: string,
+    manual_lock: boolean,
     is_upgrade: boolean,
     is_duplicate: boolean,
     last_seen_at: string,
@@ -792,6 +818,7 @@ export type ArrManualCorrelationRequest = {
     release_title?: string,
     category?: string,
     quality?: string,
+    manual_lock?: boolean,
     is_upgrade?: boolean,
     is_duplicate?: boolean,
 }

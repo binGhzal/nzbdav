@@ -59,6 +59,22 @@ public sealed class DatabaseTransferServiceTests
                 CreatedAt = DateTimeOffset.UtcNow,
                 NextAllowedAt = DateTimeOffset.UtcNow.AddHours(1)
             });
+            source.ArrDownloadCorrelations.Add(new ArrDownloadCorrelation
+            {
+                Id = Guid.NewGuid(),
+                QueueItemId = queueItem.Id,
+                ArrApp = "sonarr",
+                InstanceKey = "sonarr:test",
+                InstanceHost = "http://sonarr:8989",
+                DownloadId = "download-1",
+                MediaKey = "sonarr:episode:123",
+                EpisodeId = 123,
+                Source = "manual",
+                ManualLock = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                LastSeenAt = DateTimeOffset.UtcNow
+            });
             await source.SaveChangesAsync();
         }
 
@@ -79,5 +95,8 @@ public sealed class DatabaseTransferServiceTests
         Assert.Equal("Example.nzb", (await imported.QueueItems.SingleAsync()).FileName);
         Assert.Equal(500, (await imported.QueuePriorityHints.SingleAsync()).Score);
         Assert.Equal("EpisodeSearch", (await imported.ArrSearchNudgeCommands.SingleAsync()).CommandName);
+        var correlation = await imported.ArrDownloadCorrelations.SingleAsync();
+        Assert.Equal("manual", correlation.Source);
+        Assert.True(correlation.ManualLock);
     }
 }

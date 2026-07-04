@@ -19,8 +19,16 @@ const topicSubscriptions = {
     [topicNames.healthItemProgress]: 'event',
 }
 
-export async function loader() {
+export async function loader({ request }: Route.LoaderArgs) {
     const enabledKey = 'repair.enable';
+    const url = new URL(request.url);
+    const arrFilters = {
+        app: emptyToUndefined(url.searchParams.get("arr_app") ?? undefined),
+        status: emptyToUndefined(url.searchParams.get("arr_status") ?? undefined),
+        mode: emptyToUndefined(url.searchParams.get("arr_mode") ?? undefined),
+        command: emptyToUndefined(url.searchParams.get("arr_command") ?? undefined),
+        search: emptyToUndefined(url.searchParams.get("arr_search") ?? undefined),
+    };
     const [queueData, historyData, config, repairStatus, fullStatus, arrValidation, arrNudges, arrCorrelations] = await Promise.all([
         backendClient.getHealthCheckQueue(30),
         backendClient.getHealthCheckHistory(),
@@ -28,8 +36,8 @@ export async function loader() {
         loadOptional(() => backendClient.getRepairStatus()),
         loadOptional(() => backendClient.getFullStatus()),
         loadOptional(() => backendClient.getArrValidation()),
-        loadOptional(() => backendClient.getArrSearchNudges(25)),
-        loadOptional(() => backendClient.getArrCorrelations(25))
+        loadOptional(() => backendClient.getArrSearchNudges({ limit: 25, ...arrFilters })),
+        loadOptional(() => backendClient.getArrCorrelations({ limit: 25 }))
     ]);
 
     return {
@@ -47,6 +55,7 @@ export async function loader() {
         arrNudgesError: arrNudges.error,
         arrCorrelations: arrCorrelations.data,
         arrCorrelationsError: arrCorrelations.error,
+        arrFilters,
         isEnabled: config
             .filter(x => x.configName === enabledKey)
             .filter(x => x.configValue.toLowerCase() === "true")
@@ -99,9 +108,13 @@ export async function action({ request }: Route.ActionArgs) {
             series_id: numberOrUndefined(formData.get("series_id")?.toString()),
             episode_id: numberOrUndefined(formData.get("episode_id")?.toString()),
             season_number: numberOrUndefined(formData.get("season_number")?.toString()),
+            artist_id: numberOrUndefined(formData.get("artist_id")?.toString()),
+            album_id: numberOrUndefined(formData.get("album_id")?.toString()),
             release_title: emptyToUndefined(formData.get("release_title")?.toString()),
             category: emptyToUndefined(formData.get("category")?.toString()),
             quality: emptyToUndefined(formData.get("quality")?.toString()),
+            manual_lock: formData.get("manual_lock") === "on",
+            is_upgrade: formData.get("is_upgrade") === "on",
             is_duplicate: formData.get("is_duplicate") === "on"
         });
         return { ok: true };
@@ -241,6 +254,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
                     arrNudgesError={loaderData.arrNudgesError}
                     arrCorrelations={loaderData.arrCorrelations}
                     arrCorrelationsError={loaderData.arrCorrelationsError}
+                    arrFilters={loaderData.arrFilters}
                     websocketState={websocketState}
                     isActionSubmitting={isActionSubmitting}
                 />

@@ -40,6 +40,35 @@ test("health page wires ARR operation commands and manual correlations", async (
   await expect(page.getByRole("heading", { name: "ARR Correlations" })).toBeVisible();
   await expect(page.getByText("ARR timeout")).toBeVisible();
   await expect(page.getByText("Downloading Release")).toBeVisible();
+  await expect(page.getByText("manual")).toBeVisible();
+  await expect(page.getByText("locked")).toBeVisible();
+
+  const commandSection = page.locator("section").filter({ has: page.getByRole("heading", { name: "ARR Search Commands" }) });
+  await commandSection.locator("details summary").first().click();
+  await expect(page.getByText("Score 300")).toBeVisible();
+  await expect(page.getByText("Command id 42")).toBeVisible();
+
+  await commandSection.locator('select[name="arr_app"]').selectOption("sonarr");
+  await commandSection.locator('select[name="arr_status"]').selectOption("failed");
+  await commandSection.locator('select[name="arr_mode"]').selectOption("apply");
+  await commandSection.locator('select[name="arr_command"]').selectOption("EpisodeSearch");
+  await commandSection.getByPlaceholder("Search commands").fill("timeout");
+  await commandSection.getByRole("button", { name: "Filter" }).click();
+  await expect(page.getByText("ARR timeout")).toBeVisible();
+  await expect(page.getByText("MoviesSearch")).not.toBeVisible();
+  await expect(async () => {
+    const response = await request.get(`${mockBackendURL}/__e2e/requests`);
+    const { requests } = await response.json();
+    expect(requests.some((entry: { path: string; method: string; query: Record<string, string> }) =>
+      entry.method === "GET"
+      && entry.path === "/api/arr/search-nudges"
+      && entry.query.app === "sonarr"
+      && entry.query.status === "failed"
+      && entry.query.mode === "apply"
+      && entry.query.command === "EpisodeSearch"
+      && entry.query.search === "timeout"
+    )).toBe(true);
+  }).toPass();
 
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(async () => {
@@ -50,19 +79,20 @@ test("health page wires ARR operation commands and manual correlations", async (
     )).toBe(true);
   }).toPass();
 
-  await page.getByPlaceholder("NZBDav nzo_id").fill("11111111-1111-1111-1111-111111111111");
-  await page.getByPlaceholder("ARR host").fill("http://sonarr:8989");
-  await page.getByPlaceholder("ARR download id").fill("11111111-1111-1111-1111-111111111111");
-  await page.getByPlaceholder("Series id").fill("456");
-  await page.getByPlaceholder("Episode id").fill("123");
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByPlaceholder("Release title")).toHaveValue("Downloading Release");
+  await expect(page.getByLabel("Lock")).toBeChecked();
   await page.getByPlaceholder("Release title").fill("Manual Release");
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Save Edit" }).click();
 
   await expect(async () => {
     const response = await request.get(`${mockBackendURL}/__e2e/requests`);
     const { requests } = await response.json();
-    expect(requests.some((entry: { path: string; method: string }) =>
-      entry.method === "POST" && entry.path === "/api/arr/correlations"
+    expect(requests.some((entry: { path: string; method: string; body: string }) =>
+      entry.method === "POST"
+      && entry.path === "/api/arr/correlations"
+      && entry.body.includes('"id":"corr-1"')
+      && entry.body.includes('"manual_lock":true')
     )).toBe(true);
   }).toPass();
 
