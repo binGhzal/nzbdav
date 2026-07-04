@@ -5,6 +5,7 @@ using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Websocket;
 using NzbWebDAV.Exceptions;
@@ -116,7 +117,11 @@ public class HealthCheckRepairPolicyTests
             new SegmentCheckResult("segment-1", state, Provider: "primary", Error: "timeout")
         ]);
         using var usenetClient = new FixedSegmentCheckStreamingClient(new ConfigManager(), new WebsocketManager(), batch);
-        var service = new HealthCheckService(new ConfigManager(), usenetClient, new WebsocketManager());
+        var service = new HealthCheckService(
+            new ConfigManager(),
+            usenetClient,
+            new QueueWorkLaneCoordinator(),
+            new WebsocketManager());
 
         await service.PerformHealthCheckAsync(davItem, dbClient, concurrency: 1, CancellationToken.None);
 
@@ -144,7 +149,11 @@ public class HealthCheckRepairPolicyTests
             new SegmentCheckResult("segment-1", SegmentCheckState.ProviderError, Provider: "primary", Error: "timeout")
         ]);
         using var usenetClient = new ProbeMissingSegmentCheckStreamingClient(new ConfigManager(), new WebsocketManager(), batch);
-        var service = new HealthCheckService(new ConfigManager(), usenetClient, new WebsocketManager());
+        var service = new HealthCheckService(
+            new ConfigManager(),
+            usenetClient,
+            new QueueWorkLaneCoordinator(),
+            new WebsocketManager());
 
         await service.PerformHealthCheckAsync(davItem, dbClient, concurrency: 1, CancellationToken.None);
 
@@ -173,7 +182,11 @@ public class HealthCheckRepairPolicyTests
             new SegmentCheckResult("segment-1", SegmentCheckState.Missing, Provider: "primary", Error: "missing")
         ]);
         using var usenetClient = new FixedSegmentCheckStreamingClient(new ConfigManager(), new WebsocketManager(), batch);
-        var service = new HealthCheckService(new ConfigManager(), usenetClient, new WebsocketManager());
+        var service = new HealthCheckService(
+            new ConfigManager(),
+            usenetClient,
+            new QueueWorkLaneCoordinator(),
+            new WebsocketManager());
 
         await service.PerformHealthCheckAsync(davItem, dbClient, concurrency: 1, CancellationToken.None);
 

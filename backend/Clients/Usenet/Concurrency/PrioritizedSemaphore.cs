@@ -81,6 +81,21 @@ public class PrioritizedSemaphore : IDisposable
         }
     }
 
+    public bool TryWait()
+    {
+        lock (_lock)
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(AsyncSemaphore));
+
+            if (_enteredCount >= _maxAllowed)
+                return false;
+
+            _enteredCount++;
+            return true;
+        }
+    }
+
     public void Release()
     {
         TaskCompletionSource<bool>? toRelease;

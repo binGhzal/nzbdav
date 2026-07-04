@@ -20,6 +20,15 @@ public sealed class QueueWorkLaneCoordinator : IDisposable
         return new LaneLease(this);
     }
 
+    public IDisposable? TryEnterVerify(int maxConcurrentVerify)
+    {
+        var max = Math.Clamp(maxConcurrentVerify, 1, MaxLanePermits);
+        _verifyLane.UpdateMaxAllowed(max);
+        if (!_verifyLane.TryWait()) return null;
+        Interlocked.Increment(ref _verifyActive);
+        return new LaneLease(this);
+    }
+
     public void Dispose()
     {
         _verifyLane.Dispose();

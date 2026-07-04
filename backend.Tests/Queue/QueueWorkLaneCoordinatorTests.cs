@@ -22,4 +22,17 @@ public sealed class QueueWorkLaneCoordinatorTests
 
         Assert.Equal(2, coordinator.VerifyActive);
     }
+
+    [Fact]
+    public void TryEnterVerifyReturnsNullWhenLaneIsFull()
+    {
+        using var coordinator = new QueueWorkLaneCoordinator();
+        using var first = coordinator.TryEnterVerify(1);
+
+        using var second = coordinator.TryEnterVerify(1);
+
+        Assert.NotNull(first);
+        Assert.Null(second);
+        Assert.Equal(1, coordinator.VerifyActive);
+    }
 }

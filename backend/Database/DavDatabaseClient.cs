@@ -1631,6 +1631,25 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
+    public async Task ReleaseWorkerJobLeaseAsync
+    (
+        WorkerJob job,
+        DateTimeOffset? now = null,
+        CancellationToken ct = default
+    )
+    {
+        var referenceTime = now ?? DateTimeOffset.UtcNow;
+        AttachWorkerJobIfDetached(job);
+        job.Status = WorkerJob.JobStatus.Pending;
+        job.UpdatedAt = referenceTime;
+        job.LeaseOwner = null;
+        job.LeaseExpiresAt = null;
+        if (job.Attempts > 0)
+            job.Attempts -= 1;
+
+        await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
     public async Task FailWorkerJobAsync
     (
         WorkerJob job,

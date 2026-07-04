@@ -10,6 +10,7 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
@@ -31,6 +32,7 @@ public class HealthCheckService : BackgroundService
 
     private readonly ConfigManager _configManager;
     private readonly INntpClient _usenetClient;
+    private readonly QueueWorkLaneCoordinator _queueWorkLaneCoordinator;
     private readonly WebsocketManager _websocketManager;
     private readonly object _activeHealthChecksLock = new();
     private readonly HashSet<Guid> _activeHealthChecks = [];
@@ -43,11 +45,13 @@ public class HealthCheckService : BackgroundService
     (
         ConfigManager configManager,
         UsenetStreamingClient usenetClient,
+        QueueWorkLaneCoordinator queueWorkLaneCoordinator,
         WebsocketManager websocketManager
     )
     {
         _configManager = configManager;
         _usenetClient = usenetClient;
+        _queueWorkLaneCoordinator = queueWorkLaneCoordinator;
         _websocketManager = websocketManager;
 
         _configManager.OnConfigChanged += (_, configEventArgs) =>
@@ -79,14 +83,31 @@ public class HealthCheckService : BackgroundService
                 var activeVerificationJobs = Volatile.Read(ref _activeVerificationJobs);
                 while (activeVerificationJobs < maxVerifyJobs)
                 {
-                    var verifyJob = await LeaseNextVerificationJobAsync(stoppingToken).ConfigureAwait(false);
-                    if (verifyJob == null) break;
-                    if (!TryMarkHealthCheckActive(verifyJob.TargetId)) continue;
+                    IDisposable? verifyLease = null;
+                    try
+                    {
+                        verifyLease = _queueWorkLaneCoordinator.TryEnterVerify(maxVerifyJobs);
+                        if (verifyLease is null) break;
 
-                    startedWorker = true;
-                    Interlocked.Increment(ref _activeVerificationJobs);
-                    activeVerificationJobs++;
-                    _ = RunVerificationWorkerAsync(verifyJob, workerSegmentConcurrency, stoppingToken);
+                        var verifyJob = await LeaseNextVerificationJobAsync(stoppingToken).ConfigureAwait(false);
+                        if (verifyJob == null) break;
+                        if (!TryMarkHealthCheckActive(verifyJob.TargetId))
+                        {
+                            await ReleaseLeasedWorkerJobAsync(verifyJob, stoppingToken).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        startedWorker = true;
+                        Interlocked.Increment(ref _activeVerificationJobs);
+                        activeVerificationJobs++;
+                        var workerLease = verifyLease;
+                        verifyLease = null;
+                        _ = RunVerificationWorkerAsync(verifyJob, workerSegmentConcurrency, workerLease, stoppingToken);
+                    }
+                    finally
+                    {
+                        verifyLease?.Dispose();
+                    }
                 }
 
                 var activeRepairJobs = Volatile.Read(ref _activeRepairJobs);
@@ -207,7 +228,19 @@ public class HealthCheckService : BackgroundService
             .ConfigureAwait(false);
     }
 
-    private async Task RunVerificationWorkerAsync(WorkerJob workerJob, int segmentConcurrency, CancellationToken ct)
+    private static async Task ReleaseLeasedWorkerJobAsync(WorkerJob workerJob, CancellationToken ct)
+    {
+        await using var dbContext = new DavDatabaseContext();
+        dbContext.WorkerJobs.Attach(workerJob);
+        var dbClient = new DavDatabaseClient(dbContext);
+        await dbClient.ReleaseWorkerJobLeaseAsync(workerJob, ct: ct).ConfigureAwait(false);
+    }
+
+    private async Task RunVerificationWorkerAsync(
+        WorkerJob workerJob,
+        int segmentConcurrency,
+        IDisposable verifyLease,
+        CancellationToken ct)
     {
         try
         {
@@ -278,6 +311,7 @@ public class HealthCheckService : BackgroundService
         finally
         {
             Interlocked.Decrement(ref _activeVerificationJobs);
+            verifyLease.Dispose();
             ClearHealthCheckActive(workerJob.TargetId);
         }
     }
