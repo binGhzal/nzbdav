@@ -172,6 +172,7 @@ public sealed class WorkerJobLeaseTests
         dbContext.WorkerJobs.AddRange(
             CreateWorkerJob(WorkerJob.JobKind.Download, WorkerJob.JobStatus.Pending, now.AddMinutes(-1)),
             CreateWorkerJob(WorkerJob.JobKind.Download, WorkerJob.JobStatus.Leased, now.AddMinutes(-1), now.AddMinutes(5)),
+            CreateWorkerJob(WorkerJob.JobKind.Download, WorkerJob.JobStatus.Leased, now.AddMinutes(-1), now.AddMinutes(-1)),
             CreateWorkerJob(WorkerJob.JobKind.Verify, WorkerJob.JobStatus.Retry, now.AddMinutes(10)),
             CreateWorkerJob(WorkerJob.JobKind.Repair, WorkerJob.JobStatus.Quarantined, now.AddMinutes(-1)),
             CreateWorkerJob(WorkerJob.JobKind.Repair, WorkerJob.JobStatus.Retry, now.AddMinutes(-1))
@@ -181,8 +182,9 @@ public sealed class WorkerJobLeaseTests
         var dbClient = new DavDatabaseClient(dbContext);
         var stats = await dbClient.GetWorkerJobQueueStatsAsync(now);
 
-        Assert.Equal(1, stats.Download.Ready);
+        Assert.Equal(2, stats.Download.Ready);
         Assert.Equal(1, stats.Download.Leased);
+        Assert.Equal(1, stats.Download.ExpiredLeased);
         Assert.Equal(0, stats.Download.Retry);
         Assert.Equal(0, stats.Verify.Ready);
         Assert.Equal(1, stats.Verify.Retry);

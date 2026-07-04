@@ -90,13 +90,40 @@ public sealed class WorkerQueueStatusTests
         Assert.Equal("saturated", status.VerifyState);
     }
 
+    [Fact]
+    public void FromStatsDoesNotTreatExpiredLeasesAsActiveWorkers()
+    {
+        var stats = new DavDatabaseClient.WorkerJobQueueStats(
+            Download: BuildStats(WorkerJob.JobKind.Download, pending: 0, retry: 0, leased: 0, quarantined: 0),
+            Verify: BuildStats(WorkerJob.JobKind.Verify, pending: 0, retry: 0, leased: 6, quarantined: 0, expiredLeased: 4),
+            Repair: BuildStats(WorkerJob.JobKind.Repair, pending: 0, retry: 0, leased: 0, quarantined: 0));
+
+        var status = WorkerQueueStatus.FromStats(
+            downloadActive: 0,
+            downloadWaiting: 0,
+            inlineVerifyActive: 0,
+            inlineVerifyWaiting: 0,
+            maxDownloadWorkers: 8,
+            maxVerifyWorkers: 2,
+            maxRepairWorkers: 1,
+            downloadsPaused: false,
+            healthWorkers: new HealthCheckService.WorkerSnapshot(VerifyActive: 2, RepairActive: 0),
+            healthQueue: new DavDatabaseClient.HealthWorkerQueueStats(VerifyReady: 0, RepairActionNeeded: 0),
+            durableJobs: stats);
+
+        Assert.Equal(2, status.VerifyActive);
+        Assert.Equal(4, stats.Verify.ExpiredLeased);
+        Assert.Equal("saturated", status.VerifyState);
+    }
+
     private static DavDatabaseClient.WorkerJobKindStats BuildStats
     (
         WorkerJob.JobKind kind,
         int pending,
         int retry,
         int leased,
-        int quarantined
+        int quarantined,
+        int expiredLeased = 0
     )
     {
         var rows = new List<DavDatabaseClient.WorkerJobStatusCount>
@@ -108,8 +135,12 @@ public sealed class WorkerQueueStatusTests
         };
         var readyRows = new List<DavDatabaseClient.WorkerJobReadyCount>
         {
-            new(kind, pending + retry)
+            new(kind, pending + retry + expiredLeased)
         };
-        return DavDatabaseClient.WorkerJobKindStats.FromRows(kind, rows, readyRows);
+        var leaseRows = new List<DavDatabaseClient.WorkerJobLeaseCount>
+        {
+            new(kind, Math.Max(0, leased - expiredLeased), expiredLeased)
+        };
+        return DavDatabaseClient.WorkerJobKindStats.FromRows(kind, rows, readyRows, leaseRows);
     }
 }

@@ -1418,11 +1418,21 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .Select(x => new WorkerJobReadyCount(x.Key, x.Count()))
             .ToListAsync(ct)
             .ConfigureAwait(false);
+        var leaseCounts = await Ctx.WorkerJobs
+            .AsNoTracking()
+            .Where(x => x.Status == WorkerJob.JobStatus.Leased)
+            .GroupBy(x => x.Kind)
+            .Select(x => new WorkerJobLeaseCount(
+                x.Key,
+                x.Count(y => y.LeaseExpiresAt == null || y.LeaseExpiresAt > referenceTime),
+                x.Count(y => y.LeaseExpiresAt != null && y.LeaseExpiresAt <= referenceTime)))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
 
         return new WorkerJobQueueStats(
-            Download: WorkerJobKindStats.FromRows(WorkerJob.JobKind.Download, statusCounts, readyCounts),
-            Verify: WorkerJobKindStats.FromRows(WorkerJob.JobKind.Verify, statusCounts, readyCounts),
-            Repair: WorkerJobKindStats.FromRows(WorkerJob.JobKind.Repair, statusCounts, readyCounts));
+            Download: WorkerJobKindStats.FromRows(WorkerJob.JobKind.Download, statusCounts, readyCounts, leaseCounts),
+            Verify: WorkerJobKindStats.FromRows(WorkerJob.JobKind.Verify, statusCounts, readyCounts, leaseCounts),
+            Repair: WorkerJobKindStats.FromRows(WorkerJob.JobKind.Repair, statusCounts, readyCounts, leaseCounts));
     }
 
     public async Task CancelWorkerJobsAsync
@@ -1461,6 +1471,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         int Pending,
         int Retry,
         int Leased,
+        int ExpiredLeased,
         int Ready,
         int Quarantined,
         int Completed,
@@ -1472,16 +1483,20 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         (
             WorkerJob.JobKind kind,
             IReadOnlyCollection<WorkerJobStatusCount> statusCounts,
-            IReadOnlyCollection<WorkerJobReadyCount> readyCounts
+            IReadOnlyCollection<WorkerJobReadyCount> readyCounts,
+            IReadOnlyCollection<WorkerJobLeaseCount>? leaseCounts = null
         )
         {
             var countsByStatus = statusCounts
                 .Where(x => x.Kind == kind)
                 .ToDictionary(x => x.Status, x => x.Count);
             var ready = readyCounts.FirstOrDefault(x => x.Kind == kind)?.Count ?? 0;
+            var leaseCount = leaseCounts?.FirstOrDefault(x => x.Kind == kind);
             var pending = countsByStatus.GetValueOrDefault(WorkerJob.JobStatus.Pending);
             var retry = countsByStatus.GetValueOrDefault(WorkerJob.JobStatus.Retry);
-            var leased = countsByStatus.GetValueOrDefault(WorkerJob.JobStatus.Leased);
+            var totalLeased = countsByStatus.GetValueOrDefault(WorkerJob.JobStatus.Leased);
+            var expiredLeased = leaseCount?.Expired ?? 0;
+            var leased = leaseCount?.Active ?? Math.Max(0, totalLeased - expiredLeased);
             var quarantined = countsByStatus.GetValueOrDefault(WorkerJob.JobStatus.Quarantined);
             var completed = countsByStatus.GetValueOrDefault(WorkerJob.JobStatus.Completed);
             var cancelled = countsByStatus.GetValueOrDefault(WorkerJob.JobStatus.Cancelled);
@@ -1490,11 +1505,12 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                 Pending: pending,
                 Retry: retry,
                 Leased: leased,
+                ExpiredLeased: expiredLeased,
                 Ready: ready,
                 Quarantined: quarantined,
                 Completed: completed,
                 Cancelled: cancelled,
-                Total: pending + retry + leased + quarantined + completed + cancelled);
+                Total: pending + retry + totalLeased + quarantined + completed + cancelled);
         }
     }
 
@@ -1509,6 +1525,13 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     (
         WorkerJob.JobKind Kind,
         int Count
+    );
+
+    public sealed record WorkerJobLeaseCount
+    (
+        WorkerJob.JobKind Kind,
+        int Active,
+        int Expired
     );
 
     public async Task<WorkerJob> EnqueueWorkerJobAsync
