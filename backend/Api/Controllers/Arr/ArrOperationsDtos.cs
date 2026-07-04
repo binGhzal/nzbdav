@@ -14,6 +14,12 @@ public sealed class ArrValidationResponse
     [JsonPropertyName("queue_items")]
     public int QueueItems { get; init; }
 
+    [JsonPropertyName("queue_items_total")]
+    public int QueueItemsTotal { get; init; }
+
+    [JsonPropertyName("ignored_queue_items")]
+    public int IgnoredQueueItems { get; init; }
+
     [JsonPropertyName("history_items")]
     public int HistoryItems { get; init; }
 

@@ -711,6 +711,8 @@ export type ArrValidationResponse = {
     generated_at: string,
     instance_count: number,
     queue_items: number,
+    queue_items_total: number,
+    ignored_queue_items: number,
     history_items: number,
     correlations: number,
     stale_correlations: number,

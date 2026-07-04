@@ -74,6 +74,8 @@ public class MultiConnectionNntpClient(
         var retryCount = 1;
         while (true)
         {
+            using var attemptLease = circuitBreaker.TryAcquireAttempt()
+                ?? throw CreateProviderCooldownException();
             ConnectionLock<INntpClient>? connectionLock = null;
             try
             {
@@ -87,7 +89,7 @@ public class MultiConnectionNntpClient(
             }
             catch (Exception e)
             {
-                circuitBreaker.RecordFailure();
+                RecordProviderFailure(e);
                 LogException(() => connectionLock?.Replace());
                 LogException(() => connectionLock?.Dispose());
                 if (retryCount-- > 0)
@@ -135,7 +137,7 @@ public class MultiConnectionNntpClient(
             }
             catch (Exception e)
             {
-                circuitBreaker.RecordFailure();
+                RecordProviderFailure(e);
                 // A failed pipelined batch leaves the connection's stream in an indeterminate
                 // state, so discard it (Replace) rather than returning it to the pool.
                 LogException(() => connectionLock?.Replace());
@@ -248,6 +250,8 @@ public class MultiConnectionNntpClient(
 
         while (retryCount >= 0)
         {
+            using var attemptLease = circuitBreaker.TryAcquireAttempt()
+                ?? throw CreateProviderCooldownException();
             ConnectionLock<INntpClient>? connectionLock = null;
             try
             {
@@ -261,7 +265,7 @@ public class MultiConnectionNntpClient(
             }
             catch (Exception e)
             {
-                circuitBreaker.RecordFailure();
+                RecordProviderFailure(e);
                 LogException(() => connectionLock?.Replace());
                 LogException(() => connectionLock?.Dispose());
                 if (retryCount > 0)
@@ -320,7 +324,7 @@ public class MultiConnectionNntpClient(
             }
             catch (Exception e)
             {
-                circuitBreaker.RecordFailure();
+                RecordProviderFailure(e);
                 LogException(() => connectionLock?.Replace());
                 LogException(() => connectionLock?.Dispose());
                 if (retryCount > 0)
@@ -363,6 +367,20 @@ public class MultiConnectionNntpClient(
 
         Log.Error("Unreachable code reached");
         throw new InvalidOperationException("Unreachable code ");
+    }
+
+    private IOException CreateProviderCooldownException() =>
+        new($"Provider {providerName} is temporarily unavailable due to circuit breaker cooldown.");
+
+    private void RecordProviderFailure(Exception exception)
+    {
+        if (exception.TryGetCausingException<CouldNotLoginToUsenetException>(out _))
+        {
+            circuitBreaker.RecordHardFailure();
+            return;
+        }
+
+        circuitBreaker.RecordFailure();
     }
 
     private static void LogException(Action? action)

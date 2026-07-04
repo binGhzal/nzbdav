@@ -248,6 +248,23 @@ public sealed class ArrOperationsServiceTests
     }
 
     [Fact]
+    public async Task BuildValidationAsync_IgnoresUnsupportedQueueCategoriesForCorrelationCoverage()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        dbContext.QueueItems.Add(CreateQueueItem("Unsupported.nzb", "whisparr"));
+        await dbContext.SaveChangesAsync();
+
+        var service = new ArrOperationsService(CreateArrConfigManager("http://sonarr:8989", mode: "report"));
+        var validation = await service.BuildValidationAsync(new DavDatabaseClient(dbContext));
+
+        Assert.Equal(0, validation.QueueItems);
+        Assert.Equal(1, validation.IgnoredQueueItems);
+        Assert.Equal(100, validation.CorrelationCoveragePercent);
+        Assert.DoesNotContain(validation.Issues, x => x.Code == "queue_uncorrelated");
+        Assert.DoesNotContain(validation.Issues, x => x.Code == "queue_partial_correlation");
+    }
+
+    [Fact]
     public async Task ArrSearchNudgeService_ReportMode_PlansSonarrEpisodeSearchWithoutPostingCommand()
     {
         await using var server = await FakeArrServer.StartAsync();

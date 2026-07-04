@@ -23,6 +23,7 @@ nuget
 #######################
 
 artifacts/benchmarks/
+artifacts/arr-validation/
 
 ##############
 # IDE config #

@@ -1,5 +1,6 @@
 ﻿using System.Runtime.ExceptionServices;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using Serilog;
@@ -83,7 +84,7 @@ public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) 
         // If any still-missing segment hit a provider error on the way through, we cannot prove it
         // is missing on every provider. Surface the provider error so repair can retry instead of
         // treating an unknown provider as definitive corruption.
-        if (pending.Count > 0 && lastException is not null) lastException.Throw();
+        if (pending.Count > 0 && lastException is not null) ThrowProviderException(lastException);
 
         // Any segment that never received a result only failed because providers threw -- surface
         // that as an error rather than silently reporting the article as missing.
@@ -91,7 +92,7 @@ public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) 
         {
             if (results[i] is null)
             {
-                if (lastException is not null) lastException.Throw();
+                if (lastException is not null) ThrowProviderException(lastException);
                 throw new Exception("There are no usenet providers configured.");
             }
         }
@@ -223,7 +224,7 @@ public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) 
                 if (result.ResponseType == UsenetResponseType.NoArticleWithThatMessageId)
                 {
                     if (!isLastProvider) continue;
-                    if (lastException is not null) lastException.Throw();
+                    if (lastException is not null) ThrowProviderException(lastException);
                 }
 
                 return result;
@@ -234,8 +235,28 @@ public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) 
             }
         }
 
-        lastException?.Throw();
+        if (lastException is not null) ThrowProviderException(lastException);
         throw new Exception("There are no usenet providers configured.");
+    }
+
+    private static void ThrowProviderException(ExceptionDispatchInfo exception)
+    {
+        var source = exception.SourceException;
+        if (source is RetryableDownloadException retryable)
+            throw retryable;
+
+        if (IsProviderUnavailable(source))
+            throw new RetryableDownloadException("All usenet providers are temporarily unavailable.", source);
+
+        exception.Throw();
+    }
+
+    private static bool IsProviderUnavailable(Exception exception)
+    {
+        return exception is IOException or TimeoutException or RetryableDownloadException
+               || exception.TryGetCausingException<CouldNotLoginToUsenetException>(out _)
+               || exception.TryGetCausingException<IOException>(out _)
+               || exception.TryGetCausingException<TimeoutException>(out _);
     }
 
     private List<MultiConnectionNntpClient> GetOrderedProviders()

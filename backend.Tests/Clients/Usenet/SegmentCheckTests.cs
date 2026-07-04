@@ -80,7 +80,7 @@ public sealed class SegmentCheckTests
             new FakePipelinedProvider("backup", new IOException("backup unavailable"))
         ]);
 
-        await Assert.ThrowsAsync<IOException>(() =>
+        await Assert.ThrowsAsync<RetryableDownloadException>(() =>
             client.StatPipelinedAsync(["segment-1"], CancellationToken.None));
     }
 
@@ -106,7 +106,7 @@ public sealed class SegmentCheckTests
             new FakePipelinedProvider("backup", UsenetResponseType.NoArticleWithThatMessageId)
         ]);
 
-        await Assert.ThrowsAsync<IOException>(() =>
+        await Assert.ThrowsAsync<RetryableDownloadException>(() =>
             client.StatAsync("segment-1", CancellationToken.None));
     }
 

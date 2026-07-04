@@ -21,15 +21,33 @@ public sealed class ArrOperationsService(ConfigManager configManager)
         var prioritization = configManager.GetArrPrioritizationOptions();
         var searchNudge = configManager.GetArrSearchNudgeOptions();
         var stats = await dbClient.GetArrIntegrationStatsAsync(now, ct).ConfigureAwait(false);
-        var queueItems = await dbClient.Ctx.QueueItems.CountAsync(ct).ConfigureAwait(false);
+        var activeQueueItems = await dbClient.Ctx.QueueItems
+            .AsNoTracking()
+            .Select(x => new ActiveQueueItem(x.Id, x.Category))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        var queueItemsTotal = activeQueueItems.Count;
         var historyItems = await dbClient.Ctx.HistoryItems.CountAsync(ct).ConfigureAwait(false);
-        var correlatedActiveQueueItems = await dbClient.Ctx.ArrDownloadCorrelations
+        var correlatedActiveQueueItemIds = await dbClient.Ctx.ArrDownloadCorrelations
             .AsNoTracking()
             .Where(x => x.QueueItemId != null)
             .Select(x => x.QueueItemId)
             .Distinct()
-            .CountAsync(ct)
+            .ToListAsync(ct)
             .ConfigureAwait(false);
+        var correlatedActiveQueueSet = correlatedActiveQueueItemIds
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value)
+            .ToHashSet();
+        var relevantCategories = GetRelevantQueueCategories(arrConfig);
+        var relevantActiveQueueItemIds = activeQueueItems
+            .Where(x => correlatedActiveQueueSet.Contains(x.Id)
+                        || IsRelevantQueueCategory(x.Category, relevantCategories, arrConfig))
+            .Select(x => x.Id)
+            .ToHashSet();
+        var queueItems = relevantActiveQueueItemIds.Count;
+        var ignoredQueueItems = queueItemsTotal - queueItems;
+        var correlatedActiveQueueItems = relevantActiveQueueItemIds.Count(correlatedActiveQueueSet.Contains);
 
         var issues = new List<ArrValidationIssueDto>();
         if (arrConfig.GetInstanceCount() == 0)
@@ -54,6 +72,8 @@ public sealed class ArrOperationsService(ConfigManager configManager)
             GeneratedAt = now,
             InstanceCount = arrConfig.GetInstanceCount(),
             QueueItems = queueItems,
+            QueueItemsTotal = queueItemsTotal,
+            IgnoredQueueItems = ignoredQueueItems,
             HistoryItems = historyItems,
             Correlations = stats.TotalCorrelations,
             StaleCorrelations = stats.StaleCorrelations,
@@ -510,6 +530,41 @@ public sealed class ArrOperationsService(ConfigManager configManager)
         Code = code,
         Message = message
     };
+
+    private static HashSet<string> GetRelevantQueueCategories(ArrConfig arrConfig)
+    {
+        var categories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (arrConfig.SonarrInstances.Count > 0)
+        {
+            categories.Add("sonarr");
+            categories.Add("tv");
+            categories.Add("series");
+        }
+
+        if (arrConfig.RadarrInstances.Count > 0)
+        {
+            categories.Add("radarr");
+            categories.Add("movie");
+            categories.Add("movies");
+        }
+
+        if (arrConfig.LidarrInstances.Count > 0)
+        {
+            categories.Add("lidarr");
+            categories.Add("music");
+            categories.Add("audio");
+        }
+
+        return categories;
+    }
+
+    private static bool IsRelevantQueueCategory(string category, HashSet<string> relevantCategories, ArrConfig arrConfig)
+    {
+        if (arrConfig.GetInstanceCount() == 0) return true;
+        return relevantCategories.Contains(category.Trim());
+    }
+
+    private sealed record ActiveQueueItem(Guid Id, string Category);
 
     private static string NormalizeApp(string app)
     {
