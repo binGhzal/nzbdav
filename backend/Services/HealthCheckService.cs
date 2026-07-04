@@ -84,6 +84,7 @@ public class HealthCheckService : BackgroundService
                     if (!TryMarkHealthCheckActive(verifyJob.TargetId)) continue;
 
                     startedWorker = true;
+                    Interlocked.Increment(ref _activeVerificationJobs);
                     activeVerificationJobs++;
                     _ = RunVerificationWorkerAsync(verifyJob, workerSegmentConcurrency, stoppingToken);
                 }
@@ -96,6 +97,7 @@ public class HealthCheckService : BackgroundService
                     if (!TryMarkHealthCheckActive(repairJob.TargetId)) continue;
 
                     startedWorker = true;
+                    Interlocked.Increment(ref _activeRepairJobs);
                     activeRepairJobs++;
                     _ = RunRepairWorkerAsync(repairJob, stoppingToken);
                 }
@@ -207,7 +209,6 @@ public class HealthCheckService : BackgroundService
 
     private async Task RunVerificationWorkerAsync(WorkerJob workerJob, int segmentConcurrency, CancellationToken ct)
     {
-        Interlocked.Increment(ref _activeVerificationJobs);
         try
         {
             await using var dbContext = new DavDatabaseContext();
@@ -283,7 +284,6 @@ public class HealthCheckService : BackgroundService
 
     private async Task RunRepairWorkerAsync(WorkerJob workerJob, CancellationToken ct)
     {
-        Interlocked.Increment(ref _activeRepairJobs);
         try
         {
             await using var dbContext = new DavDatabaseContext();
