@@ -1,4 +1,6 @@
 ﻿using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Exceptions;
+using NzbWebDAV.Services;
 using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
@@ -28,10 +30,19 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             if (_stream == null)
             {
                 if (_currentIndex >= _segmentIds.Length) return 0;
-                var body = await _usenetClient
-                    .DecodedBodyWithFallbackAsync(_segmentIds.Span[_currentIndex++], cancellationToken)
-                    .ConfigureAwait(false);
-                _stream = body.Stream;
+                var segmentId = _segmentIds.Span[_currentIndex++];
+                try
+                {
+                    var body = await _usenetClient
+                        .DecodedBodyWithFallbackAsync(segmentId, cancellationToken)
+                        .ConfigureAwait(false);
+                    _stream = body.Stream;
+                }
+                catch (UsenetArticleNotFoundException e)
+                {
+                    HealthCheckService.RememberMissingSegmentId(e.SegmentId);
+                    throw;
+                }
             }
 
             // read from the stream

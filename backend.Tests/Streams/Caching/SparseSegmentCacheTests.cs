@@ -1,5 +1,7 @@
 using NzbWebDAV.Streams;
 using NzbWebDAV.Streams.Caching;
+using NzbWebDAV.Exceptions;
+using NzbWebDAV.Services;
 using NzbWebDAV.Tests.TestDoubles;
 
 namespace backend.Tests.Streams.Caching;
@@ -167,6 +169,29 @@ public sealed class SparseSegmentCacheTests
         Assert.Equal(3, await stream.ReadAsync(buffer, CancellationToken.None));
         Assert.Equal(0, await stream.ReadAsync(buffer, CancellationToken.None));
         Assert.Equal([0, 1, 2], buffer[..3]);
+    }
+
+    [Fact]
+    public async Task NzbFileStreamFailsBeforeFetchingKnownMissingSegment()
+    {
+        var missingSegment = $"missing-{Guid.NewGuid():N}";
+        HealthCheckService.RememberMissingSegmentId(missingSegment);
+        using var client = new FakeNntpClient()
+            .AddSegment(missingSegment, [0, 1, 2], partOffset: 0);
+        await using var stream = new NzbFileStream(
+            [missingSegment],
+            fileSize: 3,
+            client,
+            articleBufferSize: 1,
+            requestedEndByte: null,
+            cacheOptions: null);
+
+        var buffer = new byte[1];
+
+        var exception = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => stream.ReadAsync(buffer, CancellationToken.None).AsTask());
+        Assert.Equal(missingSegment, exception.SegmentId);
+        Assert.Equal(0, client.DecodedBodyCallCount);
     }
 
     [Fact]

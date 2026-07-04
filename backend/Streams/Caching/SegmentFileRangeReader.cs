@@ -1,6 +1,7 @@
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Streams.Caching;
@@ -13,6 +14,7 @@ public sealed class SegmentFileRangeReader(
 ) : IFileRangeReader
 {
     private const int RangePrefetchOvershootSegments = 4;
+    private bool _checkedCachedMissingSegments;
 
     public long Length => fileSize;
 
@@ -20,6 +22,7 @@ public sealed class SegmentFileRangeReader(
     {
         if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
         if (offset >= fileSize || buffer.Length == 0) return 0;
+        EnsureNoKnownMissingSegments();
 
         var bytesToRead = (int)Math.Min(buffer.Length, fileSize - offset);
         await using var stream = await GetFileStream(offset, bytesToRead, ct).ConfigureAwait(false);
@@ -66,6 +69,13 @@ public sealed class SegmentFileRangeReader(
         var segmentIds = fileSegmentIds.AsMemory()[firstSegmentIndex..];
         var endSegmentCount = ComputeEndSegmentCount(firstSegmentIndex, segmentIds.Length, rangeStart, bytesToRead);
         return MultiSegmentStream.Create(segmentIds, usenetClient, articleBufferSize, ct, endSegmentCount);
+    }
+
+    private void EnsureNoKnownMissingSegments()
+    {
+        if (_checkedCachedMissingSegments) return;
+        HealthCheckService.CheckCachedMissingSegmentIds(fileSegmentIds);
+        _checkedCachedMissingSegments = true;
     }
 
     private int? ComputeEndSegmentCount(int firstSegmentIndex, int remainingSegmentCount, long rangeStart, int bytesToRead)

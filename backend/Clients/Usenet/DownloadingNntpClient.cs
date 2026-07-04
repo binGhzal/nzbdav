@@ -58,6 +58,7 @@ public class DownloadingNntpClient : WrappingNntpClient
     private void OnConfigChanged(object? sender, ConfigManager.ConfigEventArgs e)
     {
         if (e.ChangedConfig.ContainsKey("usenet.max-download-connections")
+            || e.ChangedConfig.ContainsKey("usenet.providers")
             || e.ChangedConfig.ContainsKey("usenet.adaptive-connections-enabled"))
         {
             RefreshMaxAllowedConnections();
@@ -83,6 +84,21 @@ public class DownloadingNntpClient : WrappingNntpClient
         try
         {
             return await base.StatAsync(segmentId, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lease.Release();
+        }
+    }
+
+    public override async Task<IReadOnlyList<UsenetStatResponse>> StatPipelinedAsync(
+        IReadOnlyList<string> segmentIds,
+        CancellationToken cancellationToken)
+    {
+        var lease = await AcquireConnectionLeaseAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await base.StatPipelinedAsync(segmentIds, cancellationToken).ConfigureAwait(false);
         }
         finally
         {

@@ -27,13 +27,13 @@ public class DownloadingNntpClientTests
         });
 
         var first = client.DecodedBodyAsync("segment-1", timeout.Token);
-        await innerClient.WaitForStartedCountAsync(1, timeout.Token);
+        await innerClient.WaitForStartedBodyCountAsync(1, timeout.Token);
 
         var second = client.DecodedBodyAsync("segment-2", timeout.Token);
         Assert.Equal(1, innerClient.MaxActiveBodyDownloads);
 
         await innerClient.ReleaseOneAsync(timeout.Token);
-        await innerClient.WaitForStartedCountAsync(2, timeout.Token);
+        await innerClient.WaitForStartedBodyCountAsync(2, timeout.Token);
         Assert.Equal(1, innerClient.MaxActiveBodyDownloads);
 
         await innerClient.ReleaseOneAsync(timeout.Token);
@@ -72,13 +72,13 @@ public class DownloadingNntpClientTests
         });
 
         var first = client.DecodedBodyAsync("segment-1", firstTimeout.Token);
-        await innerClient.WaitForStartedCountAsync(1, firstTimeout.Token);
+        await innerClient.WaitForStartedBodyCountAsync(1, firstTimeout.Token);
 
         var second = client.DecodedBodyAsync("segment-2", secondTimeout.Token);
         Assert.Equal(1, innerClient.MaxActiveBodyDownloads);
 
         await innerClient.ReleaseOneAsync(firstTimeout.Token);
-        await innerClient.WaitForStartedCountAsync(2, secondTimeout.Token);
+        await innerClient.WaitForStartedBodyCountAsync(2, secondTimeout.Token);
         Assert.Equal(1, innerClient.MaxActiveBodyDownloads);
 
         await innerClient.ReleaseOneAsync(secondTimeout.Token);
@@ -101,7 +101,7 @@ public class DownloadingNntpClientTests
         });
 
         var request = client.DecodedBodyAsync("segment-1", timeout.Token);
-        await innerClient.WaitForStartedCountAsync(1, timeout.Token);
+        await innerClient.WaitForStartedBodyCountAsync(1, timeout.Token);
 
         connectionLimiter.Dispose();
         await innerClient.ReleaseOneAsync(timeout.Token);
@@ -110,11 +110,36 @@ public class DownloadingNntpClientTests
         Assert.Equal("segment-1", response.SegmentId);
     }
 
-    private static ConfigManager CreateConfigManager()
+    [Fact]
+    public async Task StatPipelinedAsyncUsesSharedDownloadConnectionLimiter()
+    {
+        using var innerClient = new BlockingNntpClient();
+        using var client = new DownloadingNntpClient(innerClient, CreateConfigManager(maxDownloadConnections: 1));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var first = client.StatPipelinedAsync(["segment-1"], timeout.Token);
+        await innerClient.WaitForStartedPipelinedStatCountAsync(1, timeout.Token);
+
+        var second = client.StatPipelinedAsync(["segment-2"], timeout.Token);
+        await Task.Delay(100, timeout.Token);
+
+        Assert.Equal(1, innerClient.StartedPipelinedStats);
+        Assert.Equal(1, innerClient.MaxActivePipelinedStats);
+
+        await innerClient.ReleaseOneAsync(timeout.Token);
+        await first.WaitAsync(timeout.Token);
+        await innerClient.WaitForStartedPipelinedStatCountAsync(2, timeout.Token);
+        Assert.Equal(1, innerClient.MaxActivePipelinedStats);
+
+        await innerClient.ReleaseOneAsync(timeout.Token);
+        await second.WaitAsync(timeout.Token);
+    }
+
+    private static ConfigManager CreateConfigManager(int maxDownloadConnections = 8)
     {
         var configManager = new ConfigManager();
         configManager.UpdateValues([
-            new ConfigItem { ConfigName = "usenet.max-download-connections", ConfigValue = "8" },
+            new ConfigItem { ConfigName = "usenet.max-download-connections", ConfigValue = maxDownloadConnections.ToString() },
             new ConfigItem { ConfigName = "usenet.adaptive-connections-enabled", ConfigValue = "false" },
             new ConfigItem { ConfigName = "usenet.streaming-priority", ConfigValue = "100" }
         ]);
@@ -130,9 +155,14 @@ public class DownloadingNntpClientTests
         private int _activeBodyDownloads;
         private int _maxActiveBodyDownloads;
         private int _startedBodyDownloads;
+        private int _activePipelinedStats;
+        private int _maxActivePipelinedStats;
+        private int _startedPipelinedStats;
 
         public int MaxActiveBodyDownloads => Volatile.Read(ref _maxActiveBodyDownloads);
         public int StartedBodyDownloads => Volatile.Read(ref _startedBodyDownloads);
+        public int MaxActivePipelinedStats => Volatile.Read(ref _maxActivePipelinedStats);
+        public int StartedPipelinedStats => Volatile.Read(ref _startedPipelinedStats);
 
         public override Task ConnectAsync(string host, int port, bool useSsl, CancellationToken cancellationToken)
         {
@@ -150,6 +180,28 @@ public class DownloadingNntpClientTests
         public override Task<UsenetStatResponse> StatAsync(SegmentId segmentId, CancellationToken cancellationToken)
         {
             return Task.FromException<UsenetStatResponse>(new NotSupportedException());
+        }
+
+        public override async Task<IReadOnlyList<UsenetStatResponse>> StatPipelinedAsync(
+            IReadOnlyList<string> segmentIds,
+            CancellationToken cancellationToken)
+        {
+            var active = Interlocked.Increment(ref _activePipelinedStats);
+            UpdateMaxActive(ref _maxActivePipelinedStats, active);
+            Interlocked.Increment(ref _startedPipelinedStats);
+            NotifyStartedChanged();
+
+            var releaseSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            await _releaseSignals.Writer.WriteAsync(releaseSignal, cancellationToken).ConfigureAwait(false);
+            await releaseSignal.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+            Interlocked.Decrement(ref _activePipelinedStats);
+            return segmentIds.Select(_ => new UsenetStatResponse
+            {
+                ArticleExists = true,
+                ResponseCode = (int)UsenetResponseType.ArticleExists,
+                ResponseMessage = "223 - Article exists"
+            }).ToArray();
         }
 
         public override Task<UsenetHeadResponse> HeadAsync(SegmentId segmentId, CancellationToken cancellationToken)
@@ -170,7 +222,7 @@ public class DownloadingNntpClientTests
             CancellationToken cancellationToken)
         {
             var active = Interlocked.Increment(ref _activeBodyDownloads);
-            UpdateMaxActive(active);
+            UpdateMaxActive(ref _maxActiveBodyDownloads, active);
             Interlocked.Increment(ref _startedBodyDownloads);
             NotifyStartedChanged();
 
@@ -208,18 +260,14 @@ public class DownloadingNntpClientTests
             GC.SuppressFinalize(this);
         }
 
-        public async Task WaitForStartedCountAsync(int expectedCount, CancellationToken cancellationToken)
+        public Task WaitForStartedBodyCountAsync(int expectedCount, CancellationToken cancellationToken)
         {
-            while (Volatile.Read(ref _startedBodyDownloads) < expectedCount)
-            {
-                Task waitTask;
-                lock (_startedLock)
-                {
-                    waitTask = _startedChanged.Task;
-                }
+            return WaitForStartedCountAsync(() => Volatile.Read(ref _startedBodyDownloads), expectedCount, cancellationToken);
+        }
 
-                await waitTask.WaitAsync(cancellationToken).ConfigureAwait(false);
-            }
+        public Task WaitForStartedPipelinedStatCountAsync(int expectedCount, CancellationToken cancellationToken)
+        {
+            return WaitForStartedCountAsync(() => Volatile.Read(ref _startedPipelinedStats), expectedCount, cancellationToken);
         }
 
         public async Task ReleaseOneAsync(CancellationToken cancellationToken)
@@ -228,13 +276,30 @@ public class DownloadingNntpClientTests
             releaseSignal.SetResult();
         }
 
-        private void UpdateMaxActive(int active)
+        private static void UpdateMaxActive(ref int maxActiveField, int active)
         {
             while (true)
             {
-                var current = Volatile.Read(ref _maxActiveBodyDownloads);
+                var current = Volatile.Read(ref maxActiveField);
                 if (active <= current) return;
-                if (Interlocked.CompareExchange(ref _maxActiveBodyDownloads, active, current) == current) return;
+                if (Interlocked.CompareExchange(ref maxActiveField, active, current) == current) return;
+            }
+        }
+
+        private async Task WaitForStartedCountAsync(
+            Func<int> getStartedCount,
+            int expectedCount,
+            CancellationToken cancellationToken)
+        {
+            while (getStartedCount() < expectedCount)
+            {
+                Task waitTask;
+                lock (_startedLock)
+                {
+                    waitTask = _startedChanged.Task;
+                }
+
+                await waitTask.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
         }
 

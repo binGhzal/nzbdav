@@ -1009,6 +1009,16 @@ public class HealthCheckService : BackgroundService
         }
     }
 
+    public static void RememberMissingSegmentId(string segmentId)
+    {
+        AddCachedMissingSegmentIds(NzbSegmentIdSet.Decode(segmentId));
+    }
+
+    public static void RememberMissingSegmentIds(IEnumerable<string> segmentIds)
+    {
+        AddCachedMissingSegmentIds(segmentIds.SelectMany(NzbSegmentIdSet.Decode));
+    }
+
     private static void ClearCachedMissingSegmentIds(IEnumerable<string> segmentIds)
     {
         lock (_missingSegmentIds)

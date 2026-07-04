@@ -5,6 +5,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using Serilog;
 
@@ -35,6 +36,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         }
         catch (UsenetArticleNotFoundException e)
         {
+            HealthCheckService.RememberMissingSegmentId(e.SegmentId);
             if (!context.Response.HasStarted)
             {
                 context.Response.Clear();
@@ -46,6 +48,23 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
 
             if (context.Items["DavItem"] is DavItem davItem)
                 ScheduleRepair(davItem.Id);
+        }
+        catch (RetryableDownloadException e) when (IsDavItemRequest(context))
+        {
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 503;
+                context.Response.Headers.RetryAfter = "30";
+            }
+
+            var filePath = GetRequestFilePath(context);
+            var seekPosition = context.Request.GetRange()?.Start?.ToString() ?? "0";
+            Log.Warning(
+                "File `{FilePath}` could not be read from byte position {SeekPosition} because providers are temporarily unavailable: {Message}",
+                filePath,
+                seekPosition,
+                e.Message);
         }
         catch (SeekPositionNotFoundException)
         {

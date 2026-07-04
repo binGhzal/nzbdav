@@ -3,6 +3,8 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Exceptions;
+using NzbWebDAV.Services;
 using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
@@ -84,14 +86,22 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         CancellationToken cancellationToken
     )
     {
-        var bodyResponse = await _usenetClient
-            .DecodedBodyWithFallbackAsync(
-                segmentId,
-                cancellationToken,
-                (candidateSegmentId, ct) => _usenetClient.AcquireExclusiveConnectionAsync(candidateSegmentId, ct)
-            )
-            .ConfigureAwait(false);
-        return bodyResponse.Stream;
+        try
+        {
+            var bodyResponse = await _usenetClient
+                .DecodedBodyWithFallbackAsync(
+                    segmentId,
+                    cancellationToken,
+                    (candidateSegmentId, ct) => _usenetClient.AcquireExclusiveConnectionAsync(candidateSegmentId, ct)
+                )
+                .ConfigureAwait(false);
+            return bodyResponse.Stream;
+        }
+        catch (UsenetArticleNotFoundException e)
+        {
+            HealthCheckService.RememberMissingSegmentId(e.SegmentId);
+            throw;
+        }
     }
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)

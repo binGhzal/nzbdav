@@ -205,6 +205,20 @@ public class ConfigManagerConcurrencyTests
     }
 
     [Fact]
+    public void AdaptiveHealthCheckConcurrencyDoesNotLetLowFallbackCapProviderCapacity()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "15"),
+            ("usenet.providers", CreateProviderConfig(100, 100)),
+            ("usenet.adaptive-connections-enabled", "true"),
+            ("repair.healthcheck-concurrency", "1"),
+            ("repair.connection-budget-percent", "100")
+        );
+
+        Assert.True(configManager.GetAdaptiveHealthCheckConcurrency() > 1);
+    }
+
+    [Fact]
     public void AutoTotalStreamingConnectionsAreCpuAndConnectionBound()
     {
         var configManager = CreateConfigManager(

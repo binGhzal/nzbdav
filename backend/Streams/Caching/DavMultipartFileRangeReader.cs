@@ -4,6 +4,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Streams.Caching;
 
@@ -116,6 +117,8 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
     ) : IFileRangeReader
     {
         private readonly PartWindow[] _partWindows = CreatePartWindows(fileParts);
+        private readonly string[] _allSegmentIds = GetAllSegmentIds(fileParts);
+        private bool _checkedCachedMissingSegments;
 
         public long Length { get; } = fileParts.Select(x => x.FilePartByteRange.Count).Sum();
 
@@ -123,6 +126,7 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
         {
             if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
             if (offset >= Length || buffer.Length == 0) return 0;
+            EnsureNoKnownMissingSegments();
 
             var remaining = (int)Math.Min(buffer.Length, Length - offset);
             var totalRead = 0;
@@ -251,6 +255,23 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
             }
 
             return windows;
+        }
+
+        private static string[] GetAllSegmentIds(DavMultipartFile.FilePart[] parts)
+        {
+            return parts.SelectMany(part =>
+                    part.SegmentSlices is { Length: > 0 }
+                        ? part.SegmentSlices.Select(slice => slice.SegmentId)
+                        : part.SegmentIds ?? [])
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        private void EnsureNoKnownMissingSegments()
+        {
+            if (_checkedCachedMissingSegments) return;
+            HealthCheckService.CheckCachedMissingSegmentIds(_allSegmentIds);
+            _checkedCachedMissingSegments = true;
         }
 
         private static LongRange? GetOverlap(LongRange first, LongRange second)

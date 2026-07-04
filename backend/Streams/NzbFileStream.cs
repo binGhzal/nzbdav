@@ -1,6 +1,7 @@
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services;
 using NzbWebDAV.Streams.Caching;
 using NzbWebDAV.Utils;
 using Serilog;
@@ -22,6 +23,7 @@ public class NzbFileStream(
 
     private long _position;
     private bool _disposed;
+    private bool _checkedCachedMissingSegments;
     private Stream? _innerStream;
     private readonly IFileRangeReader? _rangeReader = CreateRangeReader(
         fileSegmentIds,
@@ -48,6 +50,7 @@ public class NzbFileStream(
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         if (_position >= fileSize) return 0;
+        EnsureNoKnownMissingSegments();
         if (_rangeReader != null)
         {
             if (_position >= _rangeReader.Length) return 0;
@@ -175,5 +178,12 @@ public class NzbFileStream(
         var key = SparseSegmentCacheManager.CreateKey(segmentIds, length);
         var readLimitExclusive = endByte.HasValue ? Math.Clamp(endByte.Value + 1, 0, length) : length;
         return SparseSegmentCacheManager.Shared.Open(key, inner, options, readLimitExclusive);
+    }
+
+    private void EnsureNoKnownMissingSegments()
+    {
+        if (_checkedCachedMissingSegments) return;
+        HealthCheckService.CheckCachedMissingSegmentIds(fileSegmentIds);
+        _checkedCachedMissingSegments = true;
     }
 }

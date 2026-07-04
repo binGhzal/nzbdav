@@ -563,12 +563,13 @@ public class ConfigManager
 
     public int GetAdaptiveHealthCheckConcurrency()
     {
-        var healthCheckConcurrency = Math.Min(
-            Math.Max(1, GetHealthCheckConcurrency()),
-            GetHealthCheckCpuConcurrencyLimit()
-        );
-        healthCheckConcurrency = Math.Min(healthCheckConcurrency, GetAutomaticDownloadConnectionBudget());
-        healthCheckConcurrency = Math.Min(healthCheckConcurrency, GetRepairConnectionBudget());
+        var automaticConcurrency = Math.Min(
+            GetHealthCheckCpuConcurrencyLimit(),
+            Math.Min(GetAutomaticDownloadConnectionBudget(), GetRepairConnectionBudget()));
+        var healthCheckConcurrency = IsAdaptiveConnectionCountEnabled()
+            ? automaticConcurrency
+            : Math.Min(Math.Max(1, GetHealthCheckConcurrency()), automaticConcurrency);
+
         return IsAdaptiveConnectionCountEnabled()
             ? ApplyRuntimePressureLimit(healthCheckConcurrency)
             : healthCheckConcurrency;
