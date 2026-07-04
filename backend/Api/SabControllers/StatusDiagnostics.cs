@@ -270,11 +270,11 @@ public sealed class WorkerQueueStatus
         DavDatabaseClient.WorkerJobQueueStats durableJobs
     )
     {
-        var effectiveDownloadActive = Math.Max(downloadActive, durableJobs.Download.Leased);
+        var effectiveDownloadActive = downloadActive;
         var effectiveDownloadReady = Math.Max(downloadWaiting, durableJobs.Download.Ready);
-        var effectiveVerifyActive = Math.Max(healthWorkers.VerifyActive + inlineVerifyActive, durableJobs.Verify.Leased);
+        var effectiveVerifyActive = healthWorkers.VerifyActive + inlineVerifyActive;
         var effectiveVerifyReady = Math.Max(healthQueue.VerifyReady + inlineVerifyWaiting, durableJobs.Verify.Ready);
-        var effectiveRepairActive = Math.Max(healthWorkers.RepairActive, durableJobs.Repair.Leased);
+        var effectiveRepairActive = healthWorkers.RepairActive;
         return new WorkerQueueStatus
         {
             DownloadMax = maxDownloadWorkers,

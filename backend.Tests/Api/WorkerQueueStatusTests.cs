@@ -116,6 +116,32 @@ public sealed class WorkerQueueStatusTests
         Assert.Equal("saturated", status.VerifyState);
     }
 
+    [Fact]
+    public void FromStatsDoesNotTreatDurableLeasesAsLiveWorkers()
+    {
+        var stats = new DavDatabaseClient.WorkerJobQueueStats(
+            Download: BuildStats(WorkerJob.JobKind.Download, pending: 0, retry: 0, leased: 4, quarantined: 0),
+            Verify: BuildStats(WorkerJob.JobKind.Verify, pending: 0, retry: 0, leased: 3, quarantined: 0),
+            Repair: BuildStats(WorkerJob.JobKind.Repair, pending: 0, retry: 0, leased: 2, quarantined: 0));
+
+        var status = WorkerQueueStatus.FromStats(
+            downloadActive: 1,
+            downloadWaiting: 0,
+            inlineVerifyActive: 1,
+            inlineVerifyWaiting: 0,
+            maxDownloadWorkers: 8,
+            maxVerifyWorkers: 2,
+            maxRepairWorkers: 2,
+            downloadsPaused: false,
+            healthWorkers: new HealthCheckService.WorkerSnapshot(VerifyActive: 0, RepairActive: 1),
+            healthQueue: new DavDatabaseClient.HealthWorkerQueueStats(VerifyReady: 0, RepairActionNeeded: 0),
+            durableJobs: stats);
+
+        Assert.Equal(1, status.DownloadActive);
+        Assert.Equal(1, status.VerifyActive);
+        Assert.Equal(1, status.RepairActive);
+    }
+
     private static DavDatabaseClient.WorkerJobKindStats BuildStats
     (
         WorkerJob.JobKind kind,
