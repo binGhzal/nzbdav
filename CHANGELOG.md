@@ -29,7 +29,9 @@
 * enable SQLite WAL, busy timeout, shared-cache connection pooling, and no-tracking reads on hot queue/history/status paths.
 * batch blob, NZB, history, and DAV cleanup workers to drain backlogs with fewer database round-trips.
 * add shared article-cache budget accounting across concurrent queue downloads.
+* split the decoded article cache budget across active queue workers so concurrent downloads do not multiply temporary cache pressure.
 * add temporary sparse segment caching for random-access range reads and seeks.
+* reduce sparse-cache read-ahead defaults and deduplicate read-ahead scheduling to lower CPU and scheduler pressure during seek-heavy playback.
 * drain replaced Usenet provider clients after config reloads instead of disposing active clients immediately.
 * add mount status observability so DFS/rclone readiness can be benchmarked with cache and operation counters.
 * add filesystem-transport rclone-vs-DFS benchmark gating with mandatory CPU/RSS process evidence and hard timeouts for mounted reads.
@@ -54,6 +56,7 @@
 * let browser navigations reach the WebUI Health route while preserving `/health` as a non-browser liveness probe.
 * fix DFS prototype mount options for modern FUSE kernels and cross-user media-app access.
 * fix DFS stat timestamps for static/root DAV nodes so FUSE `getattr` does not fail on unset creation times.
+* allow high operator overrides for queue and streaming connection settings without silently clamping them to old WebUI limits.
 
 ### Infrastructure
 
