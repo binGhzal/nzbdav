@@ -1,7 +1,9 @@
 import { Form } from "react-router";
 import type {
     ArrCorrelationsResponse,
+    ArrDownloadCorrelation,
     ArrSearchNudgeCommandsResponse,
+    ArrSearchNudgeRequestOptions,
     ArrValidationResponse,
     FullStatusResponse,
     ProviderDiagnosticStatus,
@@ -10,6 +12,7 @@ import type {
     RepairWorkerQueue,
 } from "~/clients/backend-client.server";
 import styles from "./operations-status.module.css";
+import { useState } from "react";
 
 export type OperationsStatusProps = {
     fullStatus: FullStatusResponse | null;
@@ -22,6 +25,7 @@ export type OperationsStatusProps = {
     arrNudgesError: string | null;
     arrCorrelations: ArrCorrelationsResponse | null;
     arrCorrelationsError: string | null;
+    arrFilters: ArrSearchNudgeRequestOptions;
     websocketState: "connecting" | "connected" | "disconnected";
     isActionSubmitting: boolean;
 }
@@ -37,6 +41,7 @@ export function OperationsStatus({
     arrNudgesError,
     arrCorrelations,
     arrCorrelationsError,
+    arrFilters,
     websocketState,
     isActionSubmitting,
 }: OperationsStatusProps) {
@@ -54,6 +59,8 @@ export function OperationsStatus({
         arrNudgesError,
         arrCorrelationsError,
         websocketState);
+    const [editingCorrelationId, setEditingCorrelationId] = useState<string | null>(null);
+    const editingCorrelation = (arrCorrelations?.correlations ?? []).find(x => x.id === editingCorrelationId) ?? null;
 
     return (
         <div className={styles.container}>
@@ -194,6 +201,34 @@ export function OperationsStatus({
                     <h3 className={styles.title}>ARR Search Commands</h3>
                     <span className={styles.badge}>{arrNudges?.commands.length ?? 0} recent</span>
                 </div>
+                <Form method="get" className={styles.filterBar}>
+                    <select name="arr_app" className={styles.input} defaultValue={arrFilters.app ?? ""}>
+                        <option value="">All apps</option>
+                        <option value="sonarr">Sonarr</option>
+                        <option value="radarr">Radarr</option>
+                        <option value="lidarr">Lidarr</option>
+                    </select>
+                    <select name="arr_status" className={styles.input} defaultValue={arrFilters.status ?? ""}>
+                        <option value="">All statuses</option>
+                        <option value="planned">Planned</option>
+                        <option value="pending_apply">Pending apply</option>
+                        <option value="executing">Executing</option>
+                        <option value="executed">Executed</option>
+                        <option value="failed">Failed</option>
+                    </select>
+                    <select name="arr_mode" className={styles.input} defaultValue={arrFilters.mode ?? ""}>
+                        <option value="">All modes</option>
+                        <option value="report">Report</option>
+                        <option value="apply">Apply</option>
+                    </select>
+                    <select name="arr_command" className={styles.input} defaultValue={arrFilters.command ?? ""}>
+                        <option value="">All commands</option>
+                        <option value="EpisodeSearch">EpisodeSearch</option>
+                        <option value="MoviesSearch">MoviesSearch</option>
+                    </select>
+                    <input name="arr_search" className={styles.input} placeholder="Search commands" defaultValue={arrFilters.search ?? ""} />
+                    <button className={styles.button} type="submit">Filter</button>
+                </Form>
                 <Form method="post" className={styles.actions}>
                     <button
                         className={styles.button}
@@ -215,6 +250,7 @@ export function OperationsStatus({
                                 <th>Status</th>
                                 <th>Targets</th>
                                 <th>Reason</th>
+                                <th>Details</th>
                                 <th></th>
                             </tr>
                         </thead>
@@ -227,6 +263,18 @@ export function OperationsStatus({
                                     <td className={command.status === "failed" ? styles.danger : undefined}>{command.status}</td>
                                     <td>{command.targets.join(", ")}</td>
                                     <td>{command.error ?? command.reasons.join(", ")}</td>
+                                    <td>
+                                        <details className={styles.details}>
+                                            <summary>Details</summary>
+                                            <div>Host {command.instance_host}</div>
+                                            <div>Instance {command.instance_key}</div>
+                                            <div>Mode {command.mode}</div>
+                                            <div>Score {command.score}</div>
+                                            <div>Command id {command.command_id ?? "none"}</div>
+                                            <div>Completed {formatDate(command.completed_at)}</div>
+                                            <div>Next {formatDate(command.next_allowed_at)}</div>
+                                        </details>
+                                    </td>
                                     <td>
                                         {command.status === "failed" &&
                                             <Form method="post">
@@ -246,7 +294,7 @@ export function OperationsStatus({
                                 </tr>
                             )}
                             {(!arrNudges || arrNudges.commands.length === 0) &&
-                                <tr><td colSpan={7} className={styles.muted}>No ARR search commands recorded.</td></tr>
+                                <tr><td colSpan={8} className={styles.muted}>No ARR search commands recorded.</td></tr>
                             }
                         </tbody>
                     </table>
@@ -258,7 +306,12 @@ export function OperationsStatus({
                     <h3 className={styles.title}>ARR Correlations</h3>
                     <span className={styles.badge}>{arrCorrelations?.correlations.length ?? 0} recent</span>
                 </div>
-                <CorrelationForm isActionSubmitting={isActionSubmitting} />
+                <CorrelationForm
+                    key={editingCorrelation?.id ?? "new-correlation"}
+                    correlation={editingCorrelation}
+                    isActionSubmitting={isActionSubmitting}
+                    onCancel={() => setEditingCorrelationId(null)}
+                />
                 <div className={styles.tableWrap}>
                     <table className={styles.table}>
                         <thead>
@@ -266,6 +319,7 @@ export function OperationsStatus({
                                 <th>ARR</th>
                                 <th>Media</th>
                                 <th>NZBDav</th>
+                                <th>Source</th>
                                 <th>Title</th>
                                 <th>Seen</th>
                                 <th></th>
@@ -277,9 +331,21 @@ export function OperationsStatus({
                                     <td>{correlation.arr_app}</td>
                                     <td>{correlation.media_key ?? correlation.download_id ?? "unknown"}</td>
                                     <td>{correlation.queue_item_id ?? correlation.history_item_id ?? "unlinked"}</td>
+                                    <td>
+                                        <span className={styles.smallBadge}>{correlation.source}</span>
+                                        {correlation.manual_lock && <span className={styles.smallBadge}>locked</span>}
+                                    </td>
                                     <td>{correlation.release_title ?? correlation.category ?? "unknown"}</td>
                                     <td>{formatDate(correlation.last_seen_at)}</td>
                                     <td>
+                                        <button
+                                            className={styles.button}
+                                            type="button"
+                                            onClick={() => setEditingCorrelationId(correlation.id)}
+                                            disabled={isActionSubmitting}
+                                        >
+                                            Edit
+                                        </button>
                                         <Form method="post">
                                             <input type="hidden" name="id" value={correlation.id} />
                                             <button
@@ -296,7 +362,7 @@ export function OperationsStatus({
                                 </tr>
                             )}
                             {(!arrCorrelations || arrCorrelations.correlations.length === 0) &&
-                                <tr><td colSpan={6} className={styles.muted}>No ARR correlations recorded.</td></tr>
+                                <tr><td colSpan={7} className={styles.muted}>No ARR correlations recorded.</td></tr>
                             }
                         </tbody>
                     </table>
@@ -306,28 +372,56 @@ export function OperationsStatus({
     );
 }
 
-function CorrelationForm({ isActionSubmitting }: { isActionSubmitting: boolean }) {
+function CorrelationForm({
+    correlation,
+    isActionSubmitting,
+    onCancel,
+}: {
+    correlation: ArrDownloadCorrelation | null;
+    isActionSubmitting: boolean;
+    onCancel: () => void;
+}) {
     return (
         <Form method="post" className={styles.correlationForm}>
-            <input name="nzo_id" placeholder="NZBDav nzo_id" className={styles.input} />
-            <select name="arr_app" className={styles.input} defaultValue="sonarr">
+            {correlation?.id && <input type="hidden" name="id" value={correlation.id} />}
+            <input name="nzo_id" placeholder="NZBDav nzo_id" className={styles.input} defaultValue={correlation?.queue_item_id ?? ""} />
+            <select name="arr_app" className={styles.input} defaultValue={correlation?.arr_app ?? "sonarr"}>
                 <option value="sonarr">Sonarr</option>
                 <option value="radarr">Radarr</option>
                 <option value="lidarr">Lidarr</option>
             </select>
-            <input name="instance_host" placeholder="ARR host" className={styles.input} />
-            <input name="download_id" placeholder="ARR download id" className={styles.input} />
-            <input name="movie_id" placeholder="Movie id" className={styles.input} />
-            <input name="series_id" placeholder="Series id" className={styles.input} />
-            <input name="episode_id" placeholder="Episode id" className={styles.input} />
-            <input name="release_title" placeholder="Release title" className={styles.input} />
+            <input name="instance_host" placeholder="ARR host" className={styles.input} defaultValue={correlation?.instance_host ?? ""} />
+            <input name="instance_key" placeholder="ARR instance key" className={styles.input} defaultValue={correlation?.instance_key ?? ""} />
+            <input name="download_id" placeholder="ARR download id" className={styles.input} defaultValue={correlation?.download_id ?? ""} />
+            <input name="movie_id" placeholder="Movie id" className={styles.input} defaultValue={correlation?.movie_id ?? ""} />
+            <input name="series_id" placeholder="Series id" className={styles.input} defaultValue={correlation?.series_id ?? ""} />
+            <input name="episode_id" placeholder="Episode id" className={styles.input} defaultValue={correlation?.episode_id ?? ""} />
+            <input name="season_number" placeholder="Season" className={styles.input} defaultValue={correlation?.season_number ?? ""} />
+            <input name="artist_id" placeholder="Artist id" className={styles.input} defaultValue={correlation?.artist_id ?? ""} />
+            <input name="album_id" placeholder="Album id" className={styles.input} defaultValue={correlation?.album_id ?? ""} />
+            <input name="release_title" placeholder="Release title" className={styles.input} defaultValue={correlation?.release_title ?? ""} />
+            <input name="category" placeholder="Category" className={styles.input} defaultValue={correlation?.category ?? ""} />
+            <input name="quality" placeholder="Quality" className={styles.input} defaultValue={correlation?.quality ?? ""} />
             <label className={styles.checkboxLabel}>
-                <input type="checkbox" name="is_duplicate" />
+                <input type="checkbox" name="manual_lock" defaultChecked={correlation?.manual_lock ?? true} />
+                Lock
+            </label>
+            <label className={styles.checkboxLabel}>
+                <input type="checkbox" name="is_duplicate" defaultChecked={correlation?.is_duplicate ?? false} />
                 Duplicate
             </label>
+            <label className={styles.checkboxLabel}>
+                <input type="checkbox" name="is_upgrade" defaultChecked={correlation?.is_upgrade ?? false} />
+                Upgrade
+            </label>
             <button className={styles.button} name="intent" value="save-arr-correlation" type="submit" disabled={isActionSubmitting}>
-                Save
+                {correlation ? "Save Edit" : "Save"}
             </button>
+            {correlation &&
+                <button className={styles.button} type="button" onClick={onCancel} disabled={isActionSubmitting}>
+                    Cancel Edit
+                </button>
+            }
         </Form>
     );
 }

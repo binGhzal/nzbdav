@@ -195,6 +195,8 @@ const server = http.createServer(async (req, res) => {
     queuePaused = false;
     repairRunStatus = "Running";
     repairBrokenFilesCleared = false;
+    arrFailedNudgesCleared = false;
+    arrCorrelationDeleted = false;
     writeJson(res, { status: true });
     return;
   }
@@ -287,7 +289,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === "/api/arr/search-nudges") {
-    writeJson(res, getArrSearchNudgesResponse());
+    writeJson(res, getArrSearchNudgesResponse(url));
     return;
   }
 
@@ -345,6 +347,8 @@ const server = http.createServer(async (req, res) => {
         category: "tv",
         quality: "HD",
         status: "manual",
+        source: "manual",
+        manual_lock: true,
         is_upgrade: false,
         is_duplicate: false,
         last_seen_at: "2026-07-02T08:14:00Z",
@@ -614,8 +618,8 @@ function getArrValidationResponse() {
   };
 }
 
-function getArrSearchNudgesResponse() {
-  const commands = [
+function getArrSearchNudgesResponse(url?: URL) {
+  let commands = [
     {
       id: "nudge-1",
       arr_app: "radarr",
@@ -653,6 +657,31 @@ function getArrSearchNudgesResponse() {
       next_allowed_at: "2026-07-02T14:11:00Z",
     });
   }
+  const app = url?.searchParams.get("app");
+  const status = url?.searchParams.get("status");
+  const mode = url?.searchParams.get("mode");
+  const command = url?.searchParams.get("command");
+  const search = url?.searchParams.get("search")?.toLowerCase();
+  commands = commands.filter((item) => {
+    if (app && item.arr_app !== app) return false;
+    if (status && item.status !== status) return false;
+    if (mode && item.mode !== mode) return false;
+    if (command && item.command_name !== command) return false;
+    if (search) {
+      const text = [
+        item.arr_app,
+        item.instance_key,
+        item.instance_host,
+        item.command_name,
+        item.status,
+        item.error ?? "",
+        item.reasons.join(" "),
+        item.targets.join(" "),
+      ].join(" ").toLowerCase();
+      if (!text.includes(search)) return false;
+    }
+    return true;
+  });
   return { commands };
 }
 
@@ -679,6 +708,8 @@ function getArrCorrelationsResponse() {
           category: "tv",
           quality: "HD",
           status: "downloading",
+          source: "manual",
+          manual_lock: true,
           is_upgrade: false,
           is_duplicate: false,
           last_seen_at: "2026-07-02T08:10:00Z",

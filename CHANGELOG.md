@@ -26,6 +26,9 @@
 * add ARR operations APIs and Health-page controls for report-mode validation, search command retry/clear history, and manual queue/history correlation correction.
 * add ARR custom-script event ingestion endpoints so Radarr/Sonarr/Lidarr webhook scripts can attach media metadata and lifecycle events to NZBDav downloads.
 * add a SQLite-to-PostgreSQL JSON transfer command path for existing installs.
+* add a production ARR report-mode validation runner with redacted artifacts and pre-apply safety gates.
+* add manual ARR correlation source/manual-lock fields so operator corrections are not overwritten by polling or custom-script events.
+* add a first-class offline SQLite-to-PostgreSQL migration helper with row-count verification, blob copying, and cache exclusion.
 * add independent download, verify, and repair queue lane caps plus per-lane state reporting in status/fullstatus and the WebUI.
 * add opt-in relative `.rclonelink`/DFS symlink targets for Docker host/container path mismatches.
 

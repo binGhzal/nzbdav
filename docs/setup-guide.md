@@ -144,6 +144,18 @@ docker run --rm \
 
 The transfer covers database rows only. Copy `/config/blobs` from the SQLite deployment into the new config volume before starting production traffic, because NZB blob payloads live outside the database.
 
+For an operator-safe migration with a manifest and row-count verification, use the repo helper instead of running the export/import commands by hand:
+
+```bash
+NZBDAV_DATABASE_CONNECTION_STRING='Host=postgres;Port=5432;Database=nzbdav;Username=nzbdav;Password=replace-with-db-password' \
+python3 scripts/nzbdav_migrate_sqlite_to_postgres.py \
+  --sqlite-config /path/to/old-sqlite-config \
+  --postgres-config /path/to/new-postgres-config \
+  --image ghcr.io/binghzal/nzbdav:latest
+```
+
+The helper exports SQLite, imports PostgreSQL, exports PostgreSQL again, compares snapshot row counts, copies only `/config/blobs`, writes `artifacts/postgres-migration/<run>/manifest.json`, and never copies `/config/cache`. If the target PostgreSQL database or target blob directory already contains data, re-run with `--replace` only after taking a backup.
+
 **E. ARR Operations**
 
 Configure Radarr and Sonarr in `Settings` > `Radarr/Sonarr`. NZBDav keeps ARR as the source of truth: ARR still owns wanted state, quality decisions, collections, imports, naming, and library paths. NZBDav only uses ARR metadata to order already-requested downloads, report lifecycle state through SAB-compatible queue/history/status responses, and optionally nudge ARR to search selected missing media through ARR APIs.
@@ -151,6 +163,31 @@ Configure Radarr and Sonarr in `Settings` > `Radarr/Sonarr`. NZBDav keeps ARR as
 Keep search nudging in `report` mode first. The Health page shows ARR validation, command history, correlation coverage, duplicate-loop diagnostics, and manual correlation repair. After report mode shows correct Sonarr/Radarr command plans and stable correlation coverage, switch search nudging to apply mode only if you want NZBDav to ask ARR to run bounded `EpisodeSearch` or `MoviesSearch` commands.
 
 If ARR repeats the same download request, leave duplicate handling in diagnostic mode while validating. The SAB settings page also has an explicit `Reject duplicate add requests` option for operators who want hard duplicate suppression after confirming the diagnostics are accurate.
+
+Before enabling ARR apply mode or hard duplicate rejection in production, run the read-only report-mode validation helper against the deployed instance:
+
+```bash
+NZBDAV_BASE_URL=https://nzbdav.example.com \
+NZBDAV_API_KEY=replace-with-api-key \
+python3 scripts/nzbdav_arr_report_validation.py
+```
+
+The helper writes a redacted JSON artifact under `artifacts/arr-validation/` and fails if Sonarr/Radarr are missing, search nudging is not in `report` mode, hard duplicate rejection is already enabled, validation errors exist, failed search nudges exist, or active queue correlation is below 90% without `--low-correlation-reason`.
+
+ARR custom-script ingestion is optional, but it can improve lifecycle correlation when polling is delayed. Configure Sonarr, Radarr, or Lidarr custom scripts to POST form or JSON data to:
+
+```bash
+curl -fsS \
+  -H "X-Api-Key: $NZBDAV_API_KEY" \
+  -d "sonarr_eventtype=$sonarr_eventtype" \
+  -d "sonarr_download_id=$sonarr_download_id" \
+  -d "sonarr_series_id=$sonarr_series_id" \
+  -d "sonarr_episode_id=$sonarr_episode_id" \
+  -d "sonarr_release_title=$sonarr_release_title" \
+  "$NZBDAV_BASE_URL/api/arr/events/sonarr"
+```
+
+Use `/api/arr/events/radarr` and `/api/arr/events/lidarr` for Radarr and Lidarr variables. ARR `Test` events return success without creating correlation rows. Lidarr remains correlation/report-only; NZBDav does not execute Lidarr search commands in this pass.
 
 ### 3. Speed Tuning (Optional)
 

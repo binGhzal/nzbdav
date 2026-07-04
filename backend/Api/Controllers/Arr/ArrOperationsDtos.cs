@@ -194,6 +194,12 @@ public sealed class ArrDownloadCorrelationDto
     [JsonPropertyName("status")]
     public string? Status { get; init; }
 
+    [JsonPropertyName("source")]
+    public required string Source { get; init; }
+
+    [JsonPropertyName("manual_lock")]
+    public bool ManualLock { get; init; }
+
     [JsonPropertyName("is_upgrade")]
     public bool IsUpgrade { get; init; }
 
@@ -257,6 +263,9 @@ public sealed class ArrManualCorrelationRequest
     [JsonPropertyName("quality")]
     public string? Quality { get; init; }
 
+    [JsonPropertyName("manual_lock")]
+    public bool? ManualLock { get; init; }
+
     [JsonPropertyName("is_upgrade")]
     public bool? IsUpgrade { get; init; }
 
@@ -279,7 +288,7 @@ public sealed class ArrEventResponse
     public required string EventType { get; init; }
 
     [JsonPropertyName("correlation")]
-    public required ArrDownloadCorrelationDto Correlation { get; init; }
+    public ArrDownloadCorrelationDto? Correlation { get; init; }
 }
 
 public static class ArrDtoMapper
@@ -304,6 +313,8 @@ public static class ArrDtoMapper
         Category = correlation.Category,
         Quality = correlation.Quality,
         Status = correlation.Status,
+        Source = correlation.Source,
+        ManualLock = correlation.ManualLock,
         IsUpgrade = correlation.IsUpgrade,
         IsDuplicate = correlation.IsDuplicate,
         LastSeenAt = correlation.LastSeenAt
