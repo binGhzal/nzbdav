@@ -143,7 +143,12 @@ def docker_command(
 def run(command: list[str]) -> None:
     if not command or command[0] != "docker":
         raise SystemExit("Refusing to run a non-docker migration command.")
-    subprocess.run(command, check=True, shell=False)
+    # The migration helper builds argv lists for Docker only and never invokes a shell.
+    subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+        command,
+        check=True,
+        shell=False,
+    )
 
 
 def validate_row_counts(source_snapshot: Path, postgres_snapshot: Path) -> None:
