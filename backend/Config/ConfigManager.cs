@@ -722,6 +722,15 @@ public class ConfigManager
         return GetConfigValue("api.import-strategy") ?? "symlinks";
     }
 
+    public string GetSymlinkTargetMode()
+    {
+        var value = GetFirstConfigValue("api.symlink-target-mode", "rclone.symlink-target-mode")
+                    ?? EnvironmentUtil.GetVariable("NZBDAV_SYMLINK_TARGET_MODE")
+                    ?? "absolute";
+        value = value.Trim().ToLowerInvariant();
+        return value == "relative" ? "relative" : "absolute";
+    }
+
     public string GetStrmCompletedDownloadDir()
     {
         return GetConfigValue("api.completed-downloads-dir") ?? "/data/completed-downloads";

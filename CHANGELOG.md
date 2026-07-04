@@ -16,8 +16,14 @@
 * run background health checks and repair workers concurrently while retaining shared NNTP connection limits.
 * persist download, verify, and repair work as leased durable jobs with retry and quarantine status.
 * add optional PostgreSQL database provider support for new installs.
+* add a community-research backlog covering NZBDav and Decypharr issue/PR/forum findings.
+* add CineSync, Riven, and FileBot feature research for metadata-backed organization and media-server integration.
+* add ARR-safe media organization design guardrails for metadata, virtual library, webhook, media-server, and FileBot integration.
+* add ARR-driven download prioritization design that keeps ARR as the media owner while NZBDav only reorders already-queued downloads from ARR metadata.
+* extend ARR-driven design with ARR search nudging and stable SAB queue/history lifecycle reporting to prevent repeated ARR request loops.
 * implement ARR queue correlation, lifecycle reporting, report/apply queue priority hints, Sonarr/Radarr search nudge command history, and additive SAB/status diagnostics.
 * expose ARR priority metadata in queue rows plus ARR prioritization/search/download-report panels in the WebUI Health and Settings surfaces.
+* add opt-in relative `.rclonelink`/DFS symlink targets for Docker host/container path mismatches.
 
 ### Performance
 
@@ -59,6 +65,7 @@
 * fix DFS prototype mount options for modern FUSE kernels and cross-user media-app access.
 * fix DFS stat timestamps for static/root DAV nodes so FUSE `getattr` does not fail on unset creation times.
 * allow high operator overrides for queue and streaming connection settings without silently clamping them to old WebUI limits.
+* treat NNTP ports `563` and `443` as TLS ports even when imported provider JSON forgot `UseSsl=true`.
 
 ### Infrastructure
 

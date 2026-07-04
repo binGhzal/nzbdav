@@ -219,7 +219,7 @@ public class UsenetStreamingClient : WrappingNntpClient
         var connection = new BaseNntpClient();
         var host = connectionDetails.Host;
         var port = connectionDetails.Port;
-        var useSsl = connectionDetails.UseSsl;
+        var useSsl = connectionDetails.GetEffectiveUseSsl();
         var user = connectionDetails.User;
         var pass = connectionDetails.Pass;
         await connection.ConnectAsync(host, port, useSsl, ct).ConfigureAwait(false);

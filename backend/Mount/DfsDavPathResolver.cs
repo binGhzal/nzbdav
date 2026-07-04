@@ -241,7 +241,11 @@ public sealed class DfsDavPathResolver(DavDatabaseClient dbClient, ConfigManager
             Item = item,
             CreatedAt = item.CreatedAt,
             Size = item.FileSize ?? 0,
-            SymlinkTarget = DatabaseStoreSymlinkFile.GetTargetPath(item.Id, configManager.GetMountDir())
+            SymlinkTarget = DatabaseStoreSymlinkFile.GetTargetPath(
+                item.Id,
+                configManager.GetMountDir(),
+                configManager.GetSymlinkTargetMode(),
+                item.Path)
         };
     }
 

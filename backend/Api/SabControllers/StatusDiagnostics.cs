@@ -61,6 +61,12 @@ public sealed class ProviderDiagnosticStatus
     [JsonPropertyName("ssl")]
     public bool UseSsl { get; init; }
 
+    [JsonPropertyName("configured_ssl")]
+    public bool ConfiguredUseSsl { get; init; }
+
+    [JsonPropertyName("implicit_tls")]
+    public bool ImplicitTls { get; init; }
+
     [JsonPropertyName("stat_pipelining_enabled")]
     public bool StatPipeliningEnabled { get; init; }
 
@@ -75,7 +81,9 @@ public sealed class ProviderDiagnosticStatus
                 Type = provider.Type.ToString(),
                 Priority = provider.Priority,
                 MaxConnections = provider.MaxConnections,
-                UseSsl = provider.UseSsl,
+                UseSsl = provider.GetEffectiveUseSsl(),
+                ConfiguredUseSsl = provider.UseSsl,
+                ImplicitTls = provider.IsImplicitTlsEnabled(),
                 StatPipeliningEnabled = provider.StatPipeliningEnabled
             })
             .ToList();
