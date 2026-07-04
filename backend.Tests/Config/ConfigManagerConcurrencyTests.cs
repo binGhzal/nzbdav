@@ -300,6 +300,24 @@ public class ConfigManagerConcurrencyTests
     }
 
     [Fact]
+    public void DefaultCpuPressureTargetBacksOffAboveSustainedMulticoreBurn()
+    {
+        if (Environment.ProcessorCount < 2) return;
+
+        var original = Environment.GetEnvironmentVariable("NZBDAV_ADAPTIVE_CPU_TARGET_CORES");
+        try
+        {
+            Environment.SetEnvironmentVariable("NZBDAV_ADAPTIVE_CPU_TARGET_CORES", null);
+
+            Assert.True(ConfigManager.GetCpuPressureMultiplier(2.20) < 1.00);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NZBDAV_ADAPTIVE_CPU_TARGET_CORES", original);
+        }
+    }
+
+    [Fact]
     public void CpuPressureMultiplierBacksOffSustainedBackendCpuBurn()
     {
         var original = Environment.GetEnvironmentVariable("NZBDAV_ADAPTIVE_CPU_TARGET_CORES");

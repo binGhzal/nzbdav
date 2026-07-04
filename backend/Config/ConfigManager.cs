@@ -488,7 +488,7 @@ public class ConfigManager
         var processorCount = Math.Max(1, Environment.ProcessorCount);
         if (processorCount == 1) return 0.75;
 
-        return Math.Clamp(processorCount * 0.75, 2.0, processorCount);
+        return Math.Min(1.75, processorCount);
     }
 
     private static double GetMemoryPressureMultiplier()
