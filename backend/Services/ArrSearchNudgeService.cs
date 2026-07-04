@@ -242,9 +242,11 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
         CancellationToken ct
     )
     {
+        var now = DateTimeOffset.UtcNow;
         var missing = await sonarr.GetMissingEpisodesAsync().WaitAsync(ct).ConfigureAwait(false);
         var monitored = missing.Records
             .Where(x => x.Monitored && !x.HasFile)
+            .Where(x => x.AirDateUtc is null || x.AirDateUtc <= now.AddDays(1))
             .Where(x => !activeMediaKeys.Contains($"sonarr:episode:{x.Id}"))
             .Where(x => !cooldownTargetIds.Contains(x.Id))
             .ToList();
@@ -283,9 +285,15 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
         CancellationToken ct
     )
     {
+        var now = DateTimeOffset.UtcNow;
         var missing = await radarr.GetMissingMoviesAsync().WaitAsync(ct).ConfigureAwait(false);
         var monitored = missing.Records
             .Where(x => x.Monitored && !x.HasFile)
+            .Where(x =>
+            {
+                var releaseDate = x.PhysicalRelease ?? x.DigitalRelease ?? x.InCinemas;
+                return releaseDate is null || releaseDate <= now;
+            })
             .Where(x => !activeMediaKeys.Contains($"radarr:movie:{x.Id}"))
             .Where(x => !cooldownTargetIds.Contains(x.Id))
             .ToList();
@@ -343,10 +351,19 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
             score += 220;
             reasons.Add("season-completion");
         }
-        if (episode.AirDateUtc is { } airDate && DateTimeOffset.UtcNow - airDate <= TimeSpan.FromDays(14))
+        if (episode.AirDateUtc is { } airDate)
         {
-            score += 250;
-            reasons.Add("recently-aired");
+            var age = DateTimeOffset.UtcNow - airDate;
+            if (age >= TimeSpan.Zero && age <= TimeSpan.FromDays(14))
+            {
+                score += 250;
+                reasons.Add("recently-aired");
+            }
+            else if (age < TimeSpan.Zero && age >= -TimeSpan.FromDays(1))
+            {
+                score += 200;
+                reasons.Add("airing-soon");
+            }
         }
 
         return Math.Clamp(score, 0, 1000);
@@ -382,10 +399,14 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
         }
 
         var releaseDate = movie.PhysicalRelease ?? movie.DigitalRelease ?? movie.InCinemas;
-        if (releaseDate is { } date && DateTimeOffset.UtcNow - date <= TimeSpan.FromDays(30))
+        if (releaseDate is { } date)
         {
-            score += 180;
-            reasons.Add("recent-movie-release");
+            var age = DateTimeOffset.UtcNow - date;
+            if (age >= TimeSpan.Zero && age <= TimeSpan.FromDays(30))
+            {
+                score += 180;
+                reasons.Add("recent-movie-release");
+            }
         }
 
         return Math.Clamp(score, 0, 1000);
