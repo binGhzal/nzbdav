@@ -17,9 +17,9 @@ namespace NzbWebDAV.Database.Migrations
                 name: "ArrDownloadCorrelations",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(nullable: false),
-                    QueueItemId = table.Column<Guid>(nullable: true),
-                    HistoryItemId = table.Column<Guid>(nullable: true),
+                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
+                    QueueItemId = table.Column<Guid>(type: "TEXT", nullable: true),
+                    HistoryItemId = table.Column<Guid>(type: "TEXT", nullable: true),
                     ArrApp = table.Column<string>(maxLength: 32, nullable: false),
                     InstanceKey = table.Column<string>(maxLength: 512, nullable: false),
                     InstanceHost = table.Column<string>(maxLength: 1024, nullable: false),
@@ -57,9 +57,9 @@ namespace NzbWebDAV.Database.Migrations
                 name: "ArrDownloadLifecycleEvents",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(nullable: false),
-                    QueueItemId = table.Column<Guid>(nullable: true),
-                    HistoryItemId = table.Column<Guid>(nullable: true),
+                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
+                    QueueItemId = table.Column<Guid>(type: "TEXT", nullable: true),
+                    HistoryItemId = table.Column<Guid>(type: "TEXT", nullable: true),
                     ArrApp = table.Column<string>(maxLength: 32, nullable: false),
                     InstanceKey = table.Column<string>(maxLength: 512, nullable: false),
                     DownloadId = table.Column<string>(maxLength: 255, nullable: true),
@@ -77,7 +77,7 @@ namespace NzbWebDAV.Database.Migrations
                 name: "ArrSearchNudgeCommands",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(nullable: false),
+                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
                     ArrApp = table.Column<string>(maxLength: 32, nullable: false),
                     InstanceKey = table.Column<string>(maxLength: 512, nullable: false),
                     InstanceHost = table.Column<string>(maxLength: 1024, nullable: false),
@@ -103,7 +103,7 @@ namespace NzbWebDAV.Database.Migrations
                 name: "QueuePriorityHints",
                 columns: table => new
                 {
-                    QueueItemId = table.Column<Guid>(nullable: false),
+                    QueueItemId = table.Column<Guid>(type: "TEXT", nullable: false),
                     Score = table.Column<int>(nullable: false),
                     EffectivePriority = table.Column<int>(nullable: false),
                     ApplyToScheduling = table.Column<bool>(nullable: false),

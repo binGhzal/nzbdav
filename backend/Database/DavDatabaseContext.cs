@@ -123,6 +123,7 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
             e.HasKey(i => i.Id);
 
             e.Property(i => i.Id)
+                .HasColumnType("TEXT")
                 .ValueGeneratedNever();
 
             e.Property(i => i.CreatedAt)
@@ -572,7 +573,14 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
             e.HasKey(i => i.Id);
 
             e.Property(i => i.Id)
+                .HasColumnType("TEXT")
                 .ValueGeneratedNever();
+
+            e.Property(i => i.QueueItemId)
+                .HasColumnType("TEXT");
+
+            e.Property(i => i.HistoryItemId)
+                .HasColumnType("TEXT");
 
             e.Property(i => i.ArrApp)
                 .HasMaxLength(32)
@@ -666,6 +674,7 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
             e.HasKey(i => i.QueueItemId);
 
             e.Property(i => i.QueueItemId)
+                .HasColumnType("TEXT")
                 .ValueGeneratedNever();
 
             e.Property(i => i.EffectivePriority)
@@ -717,6 +726,7 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
             e.HasKey(i => i.Id);
 
             e.Property(i => i.Id)
+                .HasColumnType("TEXT")
                 .ValueGeneratedNever();
 
             e.Property(i => i.ArrApp)
@@ -790,7 +800,14 @@ public sealed class DavDatabaseContext() : DbContext(CreateOptions())
             e.HasKey(i => i.Id);
 
             e.Property(i => i.Id)
+                .HasColumnType("TEXT")
                 .ValueGeneratedNever();
+
+            e.Property(i => i.QueueItemId)
+                .HasColumnType("TEXT");
+
+            e.Property(i => i.HistoryItemId)
+                .HasColumnType("TEXT");
 
             e.Property(i => i.ArrApp)
                 .HasMaxLength(32)
