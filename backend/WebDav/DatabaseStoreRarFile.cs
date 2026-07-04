@@ -27,7 +27,7 @@ public class DatabaseStoreRarFile(
     protected override async Task<Stream> GetStreamAsync(CancellationToken ct)
     {
         // store the DavItem being accessed in the http context
-        httpContext.Items["DavItem"] = davRarFile;
+        RequestContext.Items["DavItem"] = davRarFile;
 
         var id = davRarFile.Id;
         var rarFile = await dbClient.GetDavRarFileAsync(davRarFile, ct).ConfigureAwait(false);
@@ -38,14 +38,14 @@ public class DatabaseStoreRarFile(
     private DavMultipartFileStream GetStream(DavRarFile rarFile)
     {
         // Closed-range end byte from GetAndHeadHandlerPatch, used to cap prefetch.
-        var requestedEndByte = httpContext.Items["RequestedRangeEnd"] as long?;
+        var requestedEndByte = RequestContext.Items["RequestedRangeEnd"] as long?;
         return new DavMultipartFileStream
         (
             rarFile.ToDavMultipartFileMeta().FileParts,
             usenetClient,
-            configManager.GetArticleBufferSize(),
+            ConfigManager.GetArticleBufferSize(),
             requestedEndByte,
-            configManager.GetSparseSegmentCacheOptions()
+            ConfigManager.GetSparseSegmentCacheOptions()
         );
     }
 }

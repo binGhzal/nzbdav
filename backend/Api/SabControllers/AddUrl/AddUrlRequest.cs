@@ -11,7 +11,7 @@ public class AddUrlRequest() : AddFileRequest
     private static readonly HttpClient HttpClientInstance = InitializeHttpClient();
     private const int MaxAutomaticRedirections = 10;
 
-    public static async Task<AddUrlRequest> New(HttpContext context, ConfigManager configManager)
+    public static new async Task<AddUrlRequest> New(HttpContext context, ConfigManager configManager)
     {
         var nzbUrl = context.GetRequestParam("name");
         var nzbName = context.GetRequestParam("nzbname");

@@ -153,13 +153,16 @@ public class SabApiController(
 
     public abstract class BaseController(HttpContext httpContext, ConfigManager configManager) : ControllerBase
     {
+        protected HttpContext RequestContext { get; } = httpContext;
+        protected ConfigManager ConfigManager { get; } = configManager;
+
         public Task<IActionResult> HandleRequest()
         {
             if (RequiresAuthentication)
             {
-                var apiKey = httpContext.GetRequestApiKey();
+                var apiKey = RequestContext.GetRequestApiKey();
                 var isValidKey = apiKey?.IsAny(
-                    configManager.GetApiKey(),
+                    ConfigManager.GetApiKey(),
                     EnvironmentUtil.GetRequiredVariable("FRONTEND_BACKEND_API_KEY")
                 );
                 if (!isValidKey.HasValue)

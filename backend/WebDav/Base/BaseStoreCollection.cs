@@ -1,4 +1,5 @@
-﻿using NWebDav.Server;
+﻿using System.Runtime.CompilerServices;
+using NWebDav.Server;
 using NWebDav.Server.Props;
 using NWebDav.Server.Stores;
 using NzbWebDAV.Streams;
@@ -46,7 +47,10 @@ public abstract class BaseStoreCollection : IStoreCollection
         });
     }
 
-    public async IAsyncEnumerable<IStoreItem> GetItemsAsync(CancellationToken cancellationToken)
+    public async IAsyncEnumerable<IStoreItem> GetItemsAsync
+    (
+        [EnumeratorCancellation] CancellationToken cancellationToken
+    )
     {
         var allItems = await GetAllItemsAsync(cancellationToken).ConfigureAwait(false);
         foreach (var item in allItems)

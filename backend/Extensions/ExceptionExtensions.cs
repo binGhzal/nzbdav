@@ -1,4 +1,5 @@
-﻿using NzbWebDAV.Exceptions;
+﻿using System.Diagnostics.CodeAnalysis;
+using NzbWebDAV.Exceptions;
 
 namespace NzbWebDAV.Extensions;
 
@@ -20,7 +21,11 @@ public static class ExceptionExtensions
         return exception is TaskCanceledException or OperationCanceledException;
     }
 
-    public static bool TryGetCausingException<T>(this Exception exception, out T? exceptionType) where T : Exception
+    public static bool TryGetCausingException<T>
+    (
+        this Exception exception,
+        [NotNullWhen(true)] out T? exceptionType
+    ) where T : Exception
     {
         ArgumentNullException.ThrowIfNull(exception);
         var current = exception;

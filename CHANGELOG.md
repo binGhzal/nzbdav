@@ -36,6 +36,7 @@
 
 ### Bug Fixes
 
+* guard SAB NZB uploads and `/view` path parsing against null request/blob states with explicit errors.
 * fix queue tab filtering by sending the backend `status` filter from the web UI.
 * fix settings save feedback so failed updates no longer show as saved.
 * fix settings tab state leakage by cloning defaults and saved/draft config state.
@@ -56,6 +57,7 @@
 
 ### Infrastructure
 
+* make backend Release builds warning-free by tightening nullability annotations, controller base captures, and cleanup SQL parameterization.
 * include FUSE userspace libraries in runtime images for optional DFS testing; `/dev/fuse`, Linux x64, and container capabilities are still required at deployment time.
 
 ### CI

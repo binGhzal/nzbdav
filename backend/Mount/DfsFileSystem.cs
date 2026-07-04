@@ -16,16 +16,35 @@ using Serilog;
 
 namespace NzbWebDAV.Mount;
 
-public sealed class DfsFileSystem(
-    string mountPoint,
-    IServiceScopeFactory scopeFactory,
-    ConfigManager configManager,
-    UsenetStreamingClient usenetClient,
-    StreamingConnectionLimiter streamingConnectionLimiter,
-    ActiveStreamTracker activeStreamTracker,
-    MountStatusProvider mountStatus
-) : FileSystem(mountPoint)
+public sealed class DfsFileSystem : FileSystem
 {
+    private readonly string mountPoint;
+    private readonly IServiceScopeFactory scopeFactory;
+    private readonly ConfigManager configManager;
+    private readonly UsenetStreamingClient usenetClient;
+    private readonly StreamingConnectionLimiter streamingConnectionLimiter;
+    private readonly ActiveStreamTracker activeStreamTracker;
+    private readonly MountStatusProvider mountStatus;
+
+    public DfsFileSystem(
+        string mountPoint,
+        IServiceScopeFactory scopeFactory,
+        ConfigManager configManager,
+        UsenetStreamingClient usenetClient,
+        StreamingConnectionLimiter streamingConnectionLimiter,
+        ActiveStreamTracker activeStreamTracker,
+        MountStatusProvider mountStatus
+    ) : base(mountPoint)
+    {
+        this.mountPoint = mountPoint;
+        this.scopeFactory = scopeFactory;
+        this.configManager = configManager;
+        this.usenetClient = usenetClient;
+        this.streamingConnectionLimiter = streamingConnectionLimiter;
+        this.activeStreamTracker = activeStreamTracker;
+        this.mountStatus = mountStatus;
+    }
+
     public void MarkReady()
     {
         mountStatus.SetReady(mountPoint);

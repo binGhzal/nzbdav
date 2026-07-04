@@ -26,7 +26,7 @@ public class DatabaseStoreNzbFile(
     protected override async Task<Stream> GetStreamAsync(CancellationToken cancellationToken)
     {
         // store the DavItem being accessed in the http context
-        httpContext.Items["DavItem"] = davNzbFile;
+        RequestContext.Items["DavItem"] = davNzbFile;
 
         var id = davNzbFile.Id;
         var file = await dbClient.GetDavNzbFileAsync(davNzbFile, cancellationToken).ConfigureAwait(false);
@@ -37,8 +37,8 @@ public class DatabaseStoreNzbFile(
     private NzbFileStream GetStream(DavNzbFile nzbFile)
     {
         // Closed-range end byte from GetAndHeadHandlerPatch, used to cap prefetch.
-        var requestedEndByte = httpContext.Items["RequestedRangeEnd"] as long?;
+        var requestedEndByte = RequestContext.Items["RequestedRangeEnd"] as long?;
         return usenetClient.GetFileStream(
-            nzbFile.SegmentIds, FileSize, configManager.GetArticleBufferSize(), requestedEndByte);
+            nzbFile.SegmentIds, FileSize, ConfigManager.GetArticleBufferSize(), requestedEndByte);
     }
 }

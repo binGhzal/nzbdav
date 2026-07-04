@@ -28,7 +28,7 @@ public class GetConfigController(
 
         // update the categories
         var categoriesRoot = root["config"]?["categories"]?.AsArray()!;
-        var categories = configManager.GetApiCategories();
+        var categories = ConfigManager.GetApiCategories();
         foreach (var category in categories)
         {
             categoriesRoot.Add(new JsonObject
@@ -51,8 +51,8 @@ public class GetConfigController(
 
     private string GetCompletedDir()
     {
-        return configManager.GetImportStrategy() == "strm"
-            ? configManager.GetStrmCompletedDownloadDir()
-            : Path.Join(configManager.GetMountDir(), DavItem.SymlinkFolder.Name);
+        return ConfigManager.GetImportStrategy() == "strm"
+            ? ConfigManager.GetStrmCompletedDownloadDir()
+            : Path.Join(ConfigManager.GetMountDir(), DavItem.SymlinkFolder.Name);
     }
 }

@@ -12,7 +12,7 @@ public class GetWarningsController(
 {
     protected override Task<IActionResult> Handle()
     {
-        if (httpContext.GetRequestParam("name") == "clear")
+        if (RequestContext.GetRequestParam("name") == "clear")
             return Task.FromResult<IActionResult>(Ok(new SabBaseResponse { Status = true }));
 
         return Task.FromResult<IActionResult>(Ok(new GetWarningsResponse()));

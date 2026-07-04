@@ -10,12 +10,15 @@ namespace NzbWebDAV.WebDav.Base;
 
 public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager configManager) : BaseStoreReadonlyItem
 {
+    protected HttpContext RequestContext { get; } = context;
+    protected ConfigManager ConfigManager { get; } = configManager;
+
     protected abstract Task<Stream> GetStreamAsync(CancellationToken cancellationToken);
 
     public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
     {
-        var connectionLimiter = new SemaphoreSlim(configManager.GetAdaptiveMaxStreamingConnections());
-        var globalConnectionLimiter = context.RequestServices.GetRequiredService<StreamingConnectionLimiter>();
+        var connectionLimiter = new SemaphoreSlim(ConfigManager.GetAdaptiveMaxStreamingConnections());
+        var globalConnectionLimiter = RequestContext.RequestServices.GetRequiredService<StreamingConnectionLimiter>();
         var downloadPriorityContext = new DownloadPriorityContext()
         {
             Priority = SemaphorePriority.High,
@@ -29,16 +32,16 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
 
         var streamingTimeoutContext = new StreamingTimeoutContext
         {
-            PerAttemptTimeout = configManager.GetStreamingSegmentTimeout(),
-            MaxRetries = configManager.GetStreamingSegmentRetries()
+            PerAttemptTimeout = ConfigManager.GetStreamingSegmentTimeout(),
+            MaxRetries = ConfigManager.GetStreamingSegmentRetries()
         };
         var scopedStreamingTimeoutContext = cancellationToken.SetContext(streamingTimeoutContext);
-        var activeStreamTracker = context.RequestServices.GetRequiredService<ActiveStreamTracker>();
+        var activeStreamTracker = RequestContext.RequestServices.GetRequiredService<ActiveStreamTracker>();
         var activeStreamLease = activeStreamTracker.Open(
-            context.Request.Path.Value,
-            context.Request.Headers.UserAgent.ToString());
+            RequestContext.Request.Path.Value,
+            RequestContext.Request.Headers.UserAgent.ToString());
 
-        context.Response.OnCompleted(() =>
+        RequestContext.Response.OnCompleted(() =>
         {
             scopedDownloadPriorityContext.Dispose();
             scopedStreamingTimeoutContext.Dispose();

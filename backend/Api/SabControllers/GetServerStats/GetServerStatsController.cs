@@ -25,21 +25,21 @@ public class GetServerStatsController(
         var response = new GetServerStatsResponse
         {
             TotalBytes = await completedHistory
-                .SumAsync(x => (long?)x.TotalSegmentBytes, httpContext.RequestAborted)
+                .SumAsync(x => (long?)x.TotalSegmentBytes, RequestContext.RequestAborted)
                 .ConfigureAwait(false) ?? 0,
             DayBytes = await completedHistory
                 .Where(x => x.CreatedAt >= dayStart)
-                .SumAsync(x => (long?)x.TotalSegmentBytes, httpContext.RequestAborted)
+                .SumAsync(x => (long?)x.TotalSegmentBytes, RequestContext.RequestAborted)
                 .ConfigureAwait(false) ?? 0,
             WeekBytes = await completedHistory
                 .Where(x => x.CreatedAt >= weekStart)
-                .SumAsync(x => (long?)x.TotalSegmentBytes, httpContext.RequestAborted)
+                .SumAsync(x => (long?)x.TotalSegmentBytes, RequestContext.RequestAborted)
                 .ConfigureAwait(false) ?? 0,
             MonthBytes = await completedHistory
                 .Where(x => x.CreatedAt >= monthStart)
-                .SumAsync(x => (long?)x.TotalSegmentBytes, httpContext.RequestAborted)
+                .SumAsync(x => (long?)x.TotalSegmentBytes, RequestContext.RequestAborted)
                 .ConfigureAwait(false) ?? 0,
-            Servers = GetServerStatsResponse.GetServers(configManager.GetUsenetProviderConfig())
+            Servers = GetServerStatsResponse.GetServers(ConfigManager.GetUsenetProviderConfig())
         };
 
         return Ok(response);

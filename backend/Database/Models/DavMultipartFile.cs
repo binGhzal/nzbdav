@@ -35,12 +35,12 @@ public partial class DavMultipartFile
 
         // what byte range is contained within the segmentIds? (relative to the full NzbFile)
         [MemoryPackOrder(1)]
-        public LongRange SegmentIdByteRange { get; set; }
+        public LongRange SegmentIdByteRange { get; set; } = null!;
 
         // what byte range contains the file part contents? (relative to the full NzbFile)
         // note: this range should always be fully contained within the SegmentIdByteRange above.
         [MemoryPackOrder(2)]
-        public LongRange FilePartByteRange { get; set; }
+        public LongRange FilePartByteRange { get; set; } = null!;
 
         // Minimal segment-level slices for the file part. Older records may not have this field;
         // SegmentIds/SegmentIdByteRange/FilePartByteRange remain the compatibility fallback.
@@ -55,9 +55,9 @@ public partial class DavMultipartFile
         public string SegmentId { get; set; } = "";
 
         [MemoryPackOrder(1)]
-        public LongRange SegmentByteRange { get; set; }
+        public LongRange SegmentByteRange { get; set; } = null!;
 
         [MemoryPackOrder(2)]
-        public LongRange FilePartByteRange { get; set; }
+        public LongRange FilePartByteRange { get; set; } = null!;
     }
 }

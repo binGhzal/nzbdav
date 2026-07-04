@@ -68,7 +68,7 @@ public class GetHistoryController(
                 GetHistoryResponse.HistorySlot.FromHistoryItem(
                     x,
                     x.DownloadDirId != null ? davItemsDict.GetValueOrDefault(x.DownloadDirId.Value) : null,
-                    configManager
+                    ConfigManager
                 )
             )
             .ToList();
@@ -89,7 +89,7 @@ public class GetHistoryController(
 
     protected override async Task<IActionResult> Handle()
     {
-        var request = new GetHistoryRequest(httpContext, configManager);
+        var request = new GetHistoryRequest(RequestContext, ConfigManager);
         return Ok(await GetHistoryAsync(request).ConfigureAwait(false));
     }
 }

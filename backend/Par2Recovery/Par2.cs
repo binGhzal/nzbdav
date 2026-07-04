@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using NzbWebDAV.Par2Recovery.Packets;
@@ -18,7 +19,7 @@ namespace NzbWebDAV.Par2Recovery
         public static async IAsyncEnumerable<FileDesc> ReadFileDescriptions
         (
             Stream stream,
-            CancellationToken ct = default
+            [EnumeratorCancellation] CancellationToken ct = default
         )
         {
             Par2Packet? packet = null;
@@ -121,7 +122,7 @@ namespace NzbWebDAV.Par2Recovery
                 var magic = Encoding.ASCII.GetString(header.Magic);
                 return Par2PacketHeaderMagic.Equals(magic);
             }
-            catch (Exception e)
+            catch
             {
                 return false;
             }

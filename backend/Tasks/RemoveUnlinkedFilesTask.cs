@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using System.Runtime.CompilerServices;
+using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -80,9 +81,12 @@ public class RemoveUnlinkedFilesTask(
         var batches = GetLinkedIds().ToBatches(100);
         foreach (var batch in batches)
         {
-            var values = string.Join(",", batch.Select(id => $"('{id.ToString().ToUpper()}')"));
-            await dbContext.Database.ExecuteSqlRawAsync(
-                $"INSERT INTO TMP_LINKED_FILES (Id) VALUES {values}");
+            var parameters = batch.Select(id => (object)id.ToString().ToUpperInvariant()).ToArray();
+            var values = string.Join(",", parameters.Select((_, index) => $"({{{index}}})"));
+            await dbContext.Database.ExecuteSqlAsync(
+                FormattableStringFactory.Create(
+                    "INSERT INTO TMP_LINKED_FILES (Id) VALUES " + values,
+                    parameters));
             count += batch.Count;
         }
 
@@ -126,14 +130,16 @@ public class RemoveUnlinkedFilesTask(
 
         var count = await dbContext.Database
             .SqlQueryRaw<int>(
-                $"""
-                 SELECT COUNT(i.Id) AS Value FROM DavItems i
-                 LEFT JOIN TMP_LINKED_FILES t ON i.Id = t.Id
-                 WHERE i.Type = {usenetFileType}
-                   AND i.HistoryItemId IS NULL
-                   AND i.CreatedAt < '{createdBeforeStr}'
-                   AND t.Id IS NULL
-                 """)
+                """
+                SELECT COUNT(i.Id) AS Value FROM DavItems i
+                LEFT JOIN TMP_LINKED_FILES t ON i.Id = t.Id
+                WHERE i.Type = {0}
+                  AND i.HistoryItemId IS NULL
+                  AND i.CreatedAt < {1}
+                  AND t.Id IS NULL
+                """,
+                usenetFileType,
+                createdBeforeStr)
             .FirstAsync();
 
         return count;
@@ -151,14 +157,16 @@ public class RemoveUnlinkedFilesTask(
             // Select items to delete (batch of 100)
             var itemsToDelete = await dbContext.Database
                 .SqlQueryRaw<UnlinkedItemInfo>(
-                    $"""
-                     SELECT Id, Type, Path FROM DavItems
-                     WHERE Type = {(int)DavItem.ItemType.UsenetFile}
-                       AND HistoryItemId IS NULL
-                       AND CreatedAt < '{createdBefore:yyyy-MM-dd HH:mm:ss}'
-                       AND Id NOT IN (SELECT Id FROM TMP_LINKED_FILES)
-                     LIMIT 100
-                     """)
+                    """
+                    SELECT Id, Type, Path FROM DavItems
+                    WHERE Type = {0}
+                      AND HistoryItemId IS NULL
+                      AND CreatedAt < {1}
+                      AND Id NOT IN (SELECT Id FROM TMP_LINKED_FILES)
+                    LIMIT 100
+                    """,
+                    (int)DavItem.ItemType.UsenetFile,
+                    createdBefore.ToString("yyyy-MM-dd HH:mm:ss"))
                 .ToListAsync();
 
             // If there are no more items to delete, we're done.
@@ -166,8 +174,7 @@ public class RemoveUnlinkedFilesTask(
                 break;
 
             // Delete the items.
-            var idsToDelete = string.Join(",", itemsToDelete.Select(x => $"'{x.Id}'"));
-            await dbContext.Database.ExecuteSqlRawAsync($"DELETE FROM DavItems WHERE Id IN ({idsToDelete})");
+            await DeleteDavItemsAsync(dbContext, itemsToDelete.Select(x => x.Id).ToArray());
 
             // Queue rclone vfs/forget for deleted items
             dbContext.EnqueueRcloneVfsForget(itemsToDelete.Select(x => new DavItem
@@ -201,22 +208,23 @@ public class RemoveUnlinkedFilesTask(
             // Only target regular directories (SubType = Directory), not root folders.
             var emptyDirs = await dbContext.Database
                 .SqlQueryRaw<UnlinkedItemInfo>(
-                    $"""
-                     SELECT d.Id, d.Type, d.Path FROM DavItems d
-                     LEFT JOIN DavItems c ON c.ParentId = d.Id
-                     WHERE d.SubType = {(int)DavItem.ItemSubType.Directory}
-                       AND d.CreatedAt < '{createdBefore:yyyy-MM-dd HH:mm:ss}'
-                       AND c.Id IS NULL
-                     LIMIT 100
-                     """)
+                    """
+                    SELECT d.Id, d.Type, d.Path FROM DavItems d
+                    LEFT JOIN DavItems c ON c.ParentId = d.Id
+                    WHERE d.SubType = {0}
+                      AND d.CreatedAt < {1}
+                      AND c.Id IS NULL
+                    LIMIT 100
+                    """,
+                    (int)DavItem.ItemSubType.Directory,
+                    createdBefore.ToString("yyyy-MM-dd HH:mm:ss"))
                 .ToListAsync();
 
             if (emptyDirs.Count == 0)
                 break;
 
             // Delete the empty directories.
-            var idsToDelete = string.Join(",", emptyDirs.Select(x => $"'{x.Id}'"));
-            await dbContext.Database.ExecuteSqlRawAsync($"DELETE FROM DavItems WHERE Id IN ({idsToDelete})");
+            await DeleteDavItemsAsync(dbContext, emptyDirs.Select(x => x.Id).ToArray());
 
             // Queue rclone vfs/forget for deleted directories
             dbContext.EnqueueRcloneVfsForget(emptyDirs.Select(x => new DavItem
@@ -238,22 +246,32 @@ public class RemoveUnlinkedFilesTask(
         await using var dbContext = new DavDatabaseContext();
         var unlinkedFiles = await dbContext.Database
             .SqlQueryRaw<UnlinkedItemInfo>(
-                $"""
-                 SELECT Id, Type, Path FROM DavItems
-                 WHERE Type = {(int)DavItem.ItemType.UsenetFile}
-                   AND HistoryItemId IS NULL
-                   AND CreatedAt < '{createdBefore:yyyy-MM-dd HH:mm:ss}'
-                   AND Id NOT IN (SELECT Id FROM TMP_LINKED_FILES)
-                 """)
+                """
+                SELECT Id, Type, Path FROM DavItems
+                WHERE Type = {0}
+                  AND HistoryItemId IS NULL
+                  AND CreatedAt < {1}
+                  AND Id NOT IN (SELECT Id FROM TMP_LINKED_FILES)
+                """,
+                (int)DavItem.ItemType.UsenetFile,
+                createdBefore.ToString("yyyy-MM-dd HH:mm:ss"))
             .ToListAsync();
 
         _allRemovedPaths = unlinkedFiles.Select(x => x.Path).ToList();
     }
 
+    private static Task DeleteDavItemsAsync(DavDatabaseContext dbContext, IReadOnlyList<string> ids)
+    {
+        var davItemIds = ids.Select(Guid.Parse).ToArray();
+        return dbContext.Items
+            .Where(x => davItemIds.Contains(x.Id))
+            .ExecuteDeleteAsync();
+    }
+
     protected override void Report(string message)
     {
         var dryRun = isDryRun ? "Dry Run - " : string.Empty;
-        _ = websocketManager.SendMessage(WebsocketTopic.CleanupTaskProgress, $"{dryRun}{message}");
+        base.Report($"{dryRun}{message}");
     }
 
     public static string GetAuditReport()

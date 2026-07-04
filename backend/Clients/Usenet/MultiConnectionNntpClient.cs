@@ -312,7 +312,7 @@ public class MultiConnectionNntpClient(
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
-            catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException _))
+            catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _))
             {
                 LogException(() => connectionLock?.Dispose());
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));

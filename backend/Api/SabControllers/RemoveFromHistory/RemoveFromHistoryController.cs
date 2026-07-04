@@ -44,7 +44,7 @@ public class RemoveFromHistoryController(
 
     protected override async Task<IActionResult> Handle()
     {
-        var request = await RemoveFromHistoryRequest.New(httpContext).ConfigureAwait(false);
+        var request = await RemoveFromHistoryRequest.New(RequestContext).ConfigureAwait(false);
         return Ok(await RemoveFromHistory(request).ConfigureAwait(false));
     }
 }

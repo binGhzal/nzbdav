@@ -18,7 +18,7 @@ public class PauseResumeQueueItemController(
 {
     protected override async Task<IActionResult> Handle()
     {
-        var request = await PauseResumeQueueItemRequest.New(httpContext).ConfigureAwait(false);
+        var request = await PauseResumeQueueItemRequest.New(RequestContext).ConfigureAwait(false);
         var priority = isPaused
             ? QueueItem.PriorityOption.Paused
             : QueueItem.PriorityOption.Normal;

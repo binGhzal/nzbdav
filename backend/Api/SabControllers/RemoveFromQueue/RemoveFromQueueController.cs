@@ -35,7 +35,7 @@ public class RemoveFromQueueController(
 
     protected override async Task<IActionResult> Handle()
     {
-        var request = await RemoveFromQueueRequest.New(httpContext).ConfigureAwait(false);
+        var request = await RemoveFromQueueRequest.New(RequestContext).ConfigureAwait(false);
         return Ok(await RemoveFromQueue(request).ConfigureAwait(false));
     }
 }

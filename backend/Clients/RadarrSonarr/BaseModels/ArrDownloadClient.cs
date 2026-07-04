@@ -8,13 +8,13 @@ public class ArrDownloadClient
     public bool Enable { get; set; }
 
     [JsonPropertyName("protocol")]
-    public string Protocol { get; set; }
+    public string Protocol { get; set; } = "";
 
     [JsonPropertyName("name")]
-    public string Name { get; set; }
+    public string Name { get; set; } = "";
 
     [JsonPropertyName("fields")]
-    public List<ArrField> Fields { get; set; }
+    public List<ArrField> Fields { get; set; } = [];
 
     public string? Category => (string?)Fields
         .FirstOrDefault(x => x.Name is "movieCategory" or "tvCategory")

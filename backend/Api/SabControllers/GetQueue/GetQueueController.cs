@@ -90,7 +90,7 @@ public class GetQueueController(
         var sizeBytes = slots
             .Select(x => double.TryParse(x.SizeInMB, out var mb) ? mb * 1024 * 1024 : 0)
             .Sum();
-        var isPaused = configManager.IsQueuePaused();
+        var isPaused = ConfigManager.IsQueuePaused();
         var queueStatus = isPaused
             ? "Paused"
             : inProgressQueueItems.Count > 0 ? "Downloading"
@@ -202,7 +202,7 @@ public class GetQueueController(
 
     protected override async Task<IActionResult> Handle()
     {
-        var request = new GetQueueRequest(httpContext);
+        var request = new GetQueueRequest(RequestContext);
         return Ok(await GetQueueAsync(request).ConfigureAwait(false));
     }
 }

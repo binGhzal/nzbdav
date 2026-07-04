@@ -25,28 +25,28 @@ public class GetStatusController(
     protected override async Task<IActionResult> Handle()
     {
         var activeJobs = queueManager.GetInProgressQueueItems().Count;
-        var queuedJobs = await dbClient.GetQueueItemsCount(null, httpContext.RequestAborted).ConfigureAwait(false);
-        var isPaused = configManager.IsQueuePaused();
+        var queuedJobs = await dbClient.GetQueueItemsCount(null, RequestContext.RequestAborted).ConfigureAwait(false);
+        var isPaused = ConfigManager.IsQueuePaused();
         var activeStreams = activeStreamTracker.GetSnapshot();
         var process = Process.GetCurrentProcess();
         var gcInfo = GC.GetGCMemoryInfo();
-        var runtimePressure = configManager.GetRuntimePressureSnapshot();
+        var runtimePressure = ConfigManager.GetRuntimePressureSnapshot();
         var rcloneInvalidations = await dbClient.GetRcloneInvalidationStatsAsync(
-            ct: httpContext.RequestAborted).ConfigureAwait(false);
+            ct: RequestContext.RequestAborted).ConfigureAwait(false);
         var healthQueue = await dbClient.GetHealthWorkerQueueStatsAsync(
-            ct: httpContext.RequestAborted).ConfigureAwait(false);
+            ct: RequestContext.RequestAborted).ConfigureAwait(false);
         var durableWorkerJobs = await dbClient.GetWorkerJobQueueStatsAsync(
-            ct: httpContext.RequestAborted).ConfigureAwait(false);
-        var activeRepairRun = await dbClient.GetActiveRepairRunAsync(httpContext.RequestAborted).ConfigureAwait(false);
-        var lastRepairRun = (await dbClient.GetRepairRunsAsync(1, httpContext.RequestAborted).ConfigureAwait(false))
+            ct: RequestContext.RequestAborted).ConfigureAwait(false);
+        var activeRepairRun = await dbClient.GetActiveRepairRunAsync(RequestContext.RequestAborted).ConfigureAwait(false);
+        var lastRepairRun = (await dbClient.GetRepairRunsAsync(1, RequestContext.RequestAborted).ConfigureAwait(false))
             .FirstOrDefault();
         var repairBrokenFiles = await dbClient.Ctx.RepairBrokenFiles
             .AsNoTracking()
             .Where(x => !x.Cleared)
-            .CountAsync(httpContext.RequestAborted)
+            .CountAsync(RequestContext.RequestAborted)
             .ConfigureAwait(false);
         var healthWorkers = healthCheckService.GetWorkerSnapshot();
-        var cacheSnapshot = SparseSegmentCacheManager.Shared.GetSnapshot(configManager.GetSparseSegmentCacheOptions());
+        var cacheSnapshot = SparseSegmentCacheManager.Shared.GetSnapshot(ConfigManager.GetSparseSegmentCacheOptions());
         var response = new GetStatusResponse()
         {
             Status = new GetStatusResponse.StatusObject
@@ -56,18 +56,18 @@ public class GetStatusController(
                 QueueStatus = GetQueueStatus(isPaused, activeJobs, queuedJobs),
                 Jobs = queuedJobs,
                 JobsActive = activeJobs,
-                MaxQueueWorkers = configManager.GetAdaptiveMaxConcurrentQueueDownloads(),
-                MaxDownloadConnections = configManager.GetMaxDownloadConnections(),
-                AdaptiveMaxDownloadConnections = configManager.GetAdaptiveMaxDownloadConnections(),
-                QueueFileProcessingConcurrency = configManager.GetAdaptiveQueueFileProcessingConcurrency(),
-                HealthCheckConcurrency = configManager.GetAdaptiveHealthCheckConcurrency(),
-                MaxStreamingConnections = configManager.GetAdaptiveMaxStreamingConnections(),
-                MaxTotalStreamingConnections = configManager.GetAdaptiveMaxTotalStreamingConnections(),
+                MaxQueueWorkers = ConfigManager.GetAdaptiveMaxConcurrentQueueDownloads(),
+                MaxDownloadConnections = ConfigManager.GetMaxDownloadConnections(),
+                AdaptiveMaxDownloadConnections = ConfigManager.GetAdaptiveMaxDownloadConnections(),
+                QueueFileProcessingConcurrency = ConfigManager.GetAdaptiveQueueFileProcessingConcurrency(),
+                HealthCheckConcurrency = ConfigManager.GetAdaptiveHealthCheckConcurrency(),
+                MaxStreamingConnections = ConfigManager.GetAdaptiveMaxStreamingConnections(),
+                MaxTotalStreamingConnections = ConfigManager.GetAdaptiveMaxTotalStreamingConnections(),
                 ActiveStreams = activeStreams.Count,
                 RcloneInvalidations = RcloneInvalidationStatus.FromStats(rcloneInvalidations),
                 Cache = CacheStatus.FromSnapshot(cacheSnapshot),
                 Mount = MountDiagnosticStatus.FromSnapshot(mountStatusProvider.GetSnapshot(cacheSnapshot)),
-                ProviderDiagnostics = ProviderDiagnosticStatus.FromConfig(configManager.GetUsenetProviderConfig()),
+                ProviderDiagnostics = ProviderDiagnosticStatus.FromConfig(ConfigManager.GetUsenetProviderConfig()),
                 WorkerQueues = WorkerQueueStatus.FromStats(activeJobs, queuedJobs, healthWorkers, healthQueue, durableWorkerJobs),
                 RepairRuns = RepairRunsStatus.FromRuns(activeRepairRun, lastRepairRun, repairBrokenFiles),
                 TotalStreamsOpened = activeStreams.TotalOpened,
@@ -82,8 +82,8 @@ public class GetStatusController(
                 ProcessId = Environment.ProcessId,
                 Uptime = GetUptime(),
                 Version = ConfigManager.AppVersion,
-                CompleteDir = GetCompleteDir(configManager),
-                DownloadDir = Path.Join(configManager.GetMountDir(), DavItem.NzbFolder.Name),
+                CompleteDir = GetCompleteDir(ConfigManager),
+                DownloadDir = Path.Join(ConfigManager.GetMountDir(), DavItem.NzbFolder.Name),
             }
         };
 

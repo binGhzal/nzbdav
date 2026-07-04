@@ -28,6 +28,9 @@ public class AddFileController(
 
     public async Task<AddFileResponse> AddFileAsync(AddFileRequest request)
     {
+        if (request.NzbFileStream == null)
+            throw new BadHttpRequestException("Invalid nzbFile/name param");
+
         var id = Guid.NewGuid();
 
         // write the file to the blob-store
@@ -39,9 +42,9 @@ public class AddFileController(
         try
         {
             // backup the nzb file if enabled
-            if (configManager.IsNzbBackupEnabled())
+            if (ConfigManager.IsNzbBackupEnabled())
             {
-                var backupLocation = configManager.GetNzbBackupLocation();
+                var backupLocation = ConfigManager.GetNzbBackupLocation();
                 if (backupLocation != null)
                 {
                     await BackupNzbAsync(id, request.FileName, request.Category, backupLocation);
@@ -49,7 +52,8 @@ public class AddFileController(
             }
 
             // compute the total segment bytes
-            await using var nzbFileStream = BlobStore.ReadBlob(id);
+            await using var nzbFileStream = BlobStore.ReadBlob(id)
+                ?? throw new FileNotFoundException($"NZB blob `{id}` was not found.");
             var totalSegmentBytes = ComputeTotalSegmentBytes(nzbFileStream);
 
             // create the queue item record
@@ -112,7 +116,7 @@ public class AddFileController(
 
     protected override async Task<IActionResult> Handle()
     {
-        var request = await AddFileRequest.New(httpContext, configManager).ConfigureAwait(false);
+        var request = await AddFileRequest.New(RequestContext, ConfigManager).ConfigureAwait(false);
         return Ok(await AddFileAsync(request).ConfigureAwait(false));
     }
 
@@ -139,7 +143,8 @@ public class AddFileController(
                 counter++;
             }
 
-            await using var src = BlobStore.ReadBlob(id);
+            await using var src = BlobStore.ReadBlob(id)
+                ?? throw new FileNotFoundException($"NZB blob `{id}` was not found.");
             await using var dst = System.IO.File.Create(destPath);
             await src.CopyToAsync(dst);
         }

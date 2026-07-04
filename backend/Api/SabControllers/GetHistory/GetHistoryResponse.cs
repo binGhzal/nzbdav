@@ -7,12 +7,12 @@ namespace NzbWebDAV.Api.SabControllers.GetHistory;
 public class GetHistoryResponse : SabBaseResponse
 {
     [JsonPropertyName("history")]
-    public HistoryObject History { get; set; }
+    public HistoryObject History { get; set; } = new();
 
     public class HistoryObject
     {
         [JsonPropertyName("slots")]
-        public List<HistorySlot> Slots { get; set; }
+        public List<HistorySlot> Slots { get; set; } = [];
 
         [JsonPropertyName("noofslots")]
         public int TotalCount { get; set; }
@@ -30,16 +30,16 @@ public class GetHistoryResponse : SabBaseResponse
     public class HistorySlot
     {
         [JsonPropertyName("nzo_id")]
-        public string NzoId { get; set; }
+        public string NzoId { get; set; } = "";
 
         [JsonPropertyName("nzb_name")]
-        public string NzbName { get; set; }
+        public string NzbName { get; set; } = "";
 
         [JsonPropertyName("name")]
-        public string JobName { get; set; }
+        public string JobName { get; set; } = "";
 
         [JsonPropertyName("category")]
-        public string Category { get; set; }
+        public string Category { get; set; } = "";
 
         [JsonPropertyName("status")]
         [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -55,7 +55,7 @@ public class GetHistoryResponse : SabBaseResponse
         public int DownloadTimeSeconds { get; set; }
 
         [JsonPropertyName("fail_message")]
-        public string FailMessage { get; set; }
+        public string FailMessage { get; set; } = "";
 
         [JsonPropertyName("nzb_blob_id")]
         public string? NzbBlobId { get; set; }

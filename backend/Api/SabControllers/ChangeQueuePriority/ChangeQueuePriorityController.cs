@@ -25,7 +25,7 @@ public class ChangeQueuePriorityController(
 
     protected override async Task<IActionResult> Handle()
     {
-        var request = await ChangeQueuePriorityRequest.New(httpContext).ConfigureAwait(false);
+        var request = await ChangeQueuePriorityRequest.New(RequestContext).ConfigureAwait(false);
         return Ok(await ChangeQueuePriority(request).ConfigureAwait(false));
     }
 }

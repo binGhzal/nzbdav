@@ -13,7 +13,7 @@ public class ChangeQueuePostProcessingController(
 {
     protected override async Task<IActionResult> Handle()
     {
-        var request = await ChangeQueuePostProcessingRequest.New(httpContext).ConfigureAwait(false);
+        var request = await ChangeQueuePostProcessingRequest.New(RequestContext).ConfigureAwait(false);
         await dbClient
             .UpdateQueueItemsPostProcessingAsync(request.NzoIds, request.PostProcessing, request.CancellationToken)
             .ConfigureAwait(false);

@@ -16,7 +16,7 @@ public class GetCategoriesController(
 {
     protected override async Task<IActionResult> Handle()
     {
-        var categories = configManager.GetApiCategories();
+        var categories = ConfigManager.GetApiCategories();
         var response = new { categories };
         return Ok(response);
     }

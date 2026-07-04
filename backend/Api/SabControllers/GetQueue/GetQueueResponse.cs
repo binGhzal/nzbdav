@@ -64,35 +64,35 @@ public class GetQueueResponse : SabBaseResponse
         public int Index { get; init; }
 
         [JsonPropertyName("nzo_id")]
-        public string NzoId { get; init; }
+        public string NzoId { get; init; } = "";
 
         [JsonPropertyName("priority")]
-        public string Priority { get; init; }
+        public string Priority { get; init; } = "";
 
         [JsonPropertyName("filename")]
-        public string Filename { get; init; }
+        public string Filename { get; init; } = "";
 
         [JsonPropertyName("cat")]
-        public string Category { get; init; }
+        public string Category { get; init; } = "";
 
         [JsonPropertyName("percentage")]
-        public string Percentage { get; init; }
+        public string Percentage { get; init; } = "0";
 
         [JsonPropertyName("true_percentage")]
-        public string TruePercentage { get; init; }
+        public string TruePercentage { get; init; } = "0";
 
         [JsonPropertyName("status")]
-        public string Status { get; init; }
+        public string Status { get; init; } = "";
 
         [JsonPropertyName("timeleft")]
         [JsonConverter(typeof(SabnzbdQueueTimeConverter))]
         public TimeSpan TimeLeft { get; init; }
 
         [JsonPropertyName("mb")]
-        public string SizeInMB { get; init; }
+        public string SizeInMB { get; init; } = "0.00";
 
         [JsonPropertyName("mbleft")]
-        public string SizeLeftInMB { get; init; }
+        public string SizeLeftInMB { get; init; } = "0.00";
 
         public static QueueSlot FromQueueItem
         (

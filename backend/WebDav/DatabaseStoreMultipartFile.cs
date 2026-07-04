@@ -27,7 +27,7 @@ public class DatabaseStoreMultipartFile(
     protected override async Task<Stream> GetStreamAsync(CancellationToken ct)
     {
         // store the DavItem being accessed in the http context
-        httpContext.Items["DavItem"] = davMultipartFile;
+        RequestContext.Items["DavItem"] = davMultipartFile;
 
         var id = davMultipartFile.Id;
         var multipartFile = await dbClient.GetDavMultipartFileAsync(davMultipartFile, ct).ConfigureAwait(false);
@@ -41,15 +41,15 @@ public class DatabaseStoreMultipartFile(
         // Skip it for AES files: the Range is in decrypted coordinates, which don't map
         // onto the encrypted packed stream this caps.
         var requestedEndByte = multipartFile.Metadata.AesParams == null
-            ? httpContext.Items["RequestedRangeEnd"] as long?
+            ? RequestContext.Items["RequestedRangeEnd"] as long?
             : null;
 
         var packedStream = new DavMultipartFileStream(
             multipartFile.Metadata.FileParts,
             usenetClient,
-            configManager.GetArticleBufferSize(),
+            ConfigManager.GetArticleBufferSize(),
             requestedEndByte,
-            configManager.GetSparseSegmentCacheOptions()
+            ConfigManager.GetSparseSegmentCacheOptions()
         );
 
         return multipartFile.Metadata.AesParams != null

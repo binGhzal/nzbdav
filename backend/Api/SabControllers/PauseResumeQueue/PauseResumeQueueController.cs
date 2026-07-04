@@ -20,7 +20,7 @@ public class PauseResumeQueueController(
     {
         const string configName = "queue.paused";
         var configItem = await dbClient.Ctx.ConfigItems
-            .FirstOrDefaultAsync(x => x.ConfigName == configName, httpContext.RequestAborted)
+            .FirstOrDefaultAsync(x => x.ConfigName == configName, RequestContext.RequestAborted)
             .ConfigureAwait(false);
 
         if (configItem == null)
@@ -33,8 +33,8 @@ public class PauseResumeQueueController(
             configItem.ConfigValue = isPaused.ToString().ToLower();
         }
 
-        await dbClient.Ctx.SaveChangesAsync(httpContext.RequestAborted).ConfigureAwait(false);
-        configManager.UpdateValues([configItem]);
+        await dbClient.Ctx.SaveChangesAsync(RequestContext.RequestAborted).ConfigureAwait(false);
+        ConfigManager.UpdateValues([configItem]);
         queueManager.AwakenQueue();
 
         return Ok(new SabBaseResponse { Status = true });
