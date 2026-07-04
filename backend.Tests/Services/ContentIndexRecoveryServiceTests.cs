@@ -392,6 +392,10 @@ public sealed class ContentIndexDatabaseFixture : IAsyncLifetime
 
         await using var dbContext = new DavDatabaseContext();
         await dbContext.Database.MigrateAsync();
+        await dbContext.ArrDownloadLifecycleEvents.ExecuteDeleteAsync();
+        await dbContext.ArrSearchNudgeCommands.ExecuteDeleteAsync();
+        await dbContext.ArrDownloadCorrelations.ExecuteDeleteAsync();
+        await dbContext.QueuePriorityHints.ExecuteDeleteAsync();
         await dbContext.RepairBrokenFiles.ExecuteDeleteAsync();
         await dbContext.RepairEntryHealth.ExecuteDeleteAsync();
         await dbContext.RepairRuns.ExecuteDeleteAsync();

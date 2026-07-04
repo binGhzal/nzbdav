@@ -4,6 +4,7 @@ using NzbWebDAV.Api.SabControllers.AddFile;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Services;
 using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Api.SabControllers.AddUrl;
@@ -13,12 +14,19 @@ public class AddUrlController(
     DavDatabaseClient dbClient,
     QueueManager queueManager,
     ConfigManager configManager,
-    WebsocketManager websocketManager
+    WebsocketManager websocketManager,
+    ArrDownloadReportService arrDownloadReportService
 ) : SabApiController.BaseController(httpContext, configManager)
 {
     public async Task<AddUrlResponse> AddUrlAsync(AddUrlRequest request)
     {
-        var controller = new AddFileController(RequestContext, dbClient, queueManager, ConfigManager, websocketManager);
+        var controller = new AddFileController(
+            RequestContext,
+            dbClient,
+            queueManager,
+            ConfigManager,
+            websocketManager,
+            arrDownloadReportService);
         var response = await controller.AddFileAsync(request).ConfigureAwait(false);
         return new AddUrlResponse()
         {

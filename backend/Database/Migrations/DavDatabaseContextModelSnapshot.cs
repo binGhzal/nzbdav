@@ -39,6 +39,259 @@ namespace NzbWebDAV.Database.Migrations
                     b.ToTable("Accounts", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.ArrDownloadCorrelation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("AlbumId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ArrApp")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Category")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CustomFormatsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DownloadClient")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DownloadId")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("EpisodeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("EpisodeIdsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("HistoryItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Indexer")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstanceHost")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstanceKey")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("ArtistId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDuplicate")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsUpgrade")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("LastSeenAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MediaKey")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("MovieId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Quality")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("QueueItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("QueueRecordId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ReleaseTitle")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("SeasonNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("SeriesId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TrackedDownloadState")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TrackedDownloadStatus")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HistoryItemId");
+
+                    b.HasIndex("QueueItemId");
+
+                    b.HasIndex("IsDuplicate", "LastSeenAt");
+
+                    b.HasIndex("ArrApp", "InstanceKey", "DownloadId");
+
+                    b.HasIndex("ArrApp", "InstanceKey", "MediaKey");
+
+                    b.HasIndex("ArrApp", "InstanceKey", "QueueRecordId");
+
+                    b.ToTable("ArrDownloadCorrelations", (string)null);
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.ArrDownloadLifecycleEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ArrApp")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DownloadId")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("HistoryItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstanceKey")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MediaKey")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("QueueItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StateReason")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HistoryItemId", "CreatedAt");
+
+                    b.HasIndex("QueueItemId", "CreatedAt");
+
+                    b.HasIndex("ArrApp", "InstanceKey", "State", "CreatedAt");
+
+                    b.ToTable("ArrDownloadLifecycleEvents", (string)null);
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.ArrSearchNudgeCommand", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ArrApp")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("CommandId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CommandName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CooldownKey")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstanceHost")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstanceKey")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("NextAllowedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ReasonsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Score")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CooldownKey", "NextAllowedAt");
+
+                    b.HasIndex("ArrApp", "InstanceKey", "Status", "CreatedAt");
+
+                    b.ToTable("ArrSearchNudgeCommands", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.BlobCleanupItem", b =>
                 {
                     b.Property<Guid>("Id")
@@ -505,6 +758,46 @@ namespace NzbWebDAV.Database.Migrations
                     b.ToTable("RepairRuns", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.QueuePriorityHint", b =>
+                {
+                    b.Property<Guid>("QueueItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("ApplyToScheduling")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("ComputedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("EffectivePriority")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("ExpiresAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ReasonsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Score")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StaleReason")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("QueueItemId");
+
+                    b.HasIndex("EffectivePriority", "Score", "ExpiresAt");
+
+                    b.ToTable("QueuePriorityHints", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.QueueItem", b =>
                 {
                     b.Property<Guid>("Id")
@@ -675,6 +968,15 @@ namespace NzbWebDAV.Database.Migrations
                         .IsRequired();
 
                     b.Navigation("QueueItem");
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.QueuePriorityHint", b =>
+                {
+                    b.HasOne("NzbWebDAV.Database.Models.QueueItem", null)
+                        .WithOne()
+                        .HasForeignKey("NzbWebDAV.Database.Models.QueuePriorityHint", "QueueItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.RepairBrokenFile", b =>

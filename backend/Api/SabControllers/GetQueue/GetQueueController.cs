@@ -17,10 +17,22 @@ public class GetQueueController(
     private async Task<GetQueueResponse> GetQueueAsync(GetQueueRequest request)
     {
         // get in progress item
-        var inProgressQueueItems = queueManager
+        var rawInProgressQueueItems = queueManager
             .GetInProgressQueueItems()
             .Where(x => request.Category == null || x.queueItem.Category == request.Category)
-            .Where(x => MatchesRequestFilters(x.queueItem, request, status: "downloading"))
+            .ToList();
+        var latestActiveStates = await dbClient.GetLatestQueueLifecycleStatesAsync(
+                rawInProgressQueueItems.Select(x => x.queueItem.Id).ToHashSet(),
+                request.CancellationToken)
+            .ConfigureAwait(false);
+        var inProgressQueueItems = rawInProgressQueueItems
+            .Select(x => new
+            {
+                x.queueItem,
+                x.progress,
+                status = NormalizeQueueStatus(latestActiveStates.GetValueOrDefault(x.queueItem.Id) ?? "Downloading")
+            })
+            .Where(x => MatchesRequestFilters(x.queueItem, request, x.status))
             .ToList();
         var inProgressQueueItemIds = inProgressQueueItems
             .Select(x => x.queueItem.Id)
@@ -66,14 +78,26 @@ public class GetQueueController(
 
         // get slots
         var visibleQueueItems = inProgressQueueItems
-            .Select(x => new QueueListItem(x.queueItem, x.progress, "Downloading"))
+            .Select(x => new QueueListItem(x.queueItem, x.progress, x.status, null))
             .Concat(queueItems.Select(x => new QueueListItem(
                 x,
                 ProgressPercentage: null,
-                x.Priority == QueueItem.PriorityOption.Paused ? "Paused" : "Queued")));
-        var slots = QueueListItem.Order(visibleQueueItems, request)
+                x.Priority == QueueItem.PriorityOption.Paused ? "Paused" : "Queued",
+                null)))
+            .ToList();
+        var hints = await dbClient.GetQueuePriorityHintsAsync(
+                visibleQueueItems.Select(x => x.QueueItem.Id).ToHashSet(),
+                ct)
+            .ConfigureAwait(false);
+        var hintsByQueueItemId = hints.ToDictionary(x => x.QueueItemId);
+        visibleQueueItems = visibleQueueItems
+            .Select(x => x with { PriorityHint = hintsByQueueItemId.GetValueOrDefault(x.QueueItem.Id) })
+            .ToList();
+        var orderedVisibleQueueItems = QueueListItem.Order(visibleQueueItems, request)
             .Skip(request.Start)
             .Take(request.Limit)
+            .ToList();
+        var slots = orderedVisibleQueueItems
             .Select((queueItem, index) =>
             {
                 var percentage = queueItem.ProgressPercentage ?? 0;
@@ -81,7 +105,8 @@ public class GetQueueController(
                     queueItem.QueueItem,
                     request.Start + index,
                     percentage,
-                    queueItem.Status);
+                    queueItem.Status,
+                    queueItem.PriorityHint);
             })
             .ToList();
         var sizeLeftBytes = slots
@@ -156,7 +181,26 @@ public class GetQueueController(
         };
     }
 
-    private sealed record QueueListItem(QueueItem QueueItem, int? ProgressPercentage, string Status)
+    private static string NormalizeQueueStatus(string status)
+    {
+        return status.Trim().ToLowerInvariant() switch
+        {
+            "verifying" => "Verifying",
+            "repairing" => "Repairing",
+            "moving" => "Moving",
+            "completed" => "Completed",
+            "failed" => "Failed",
+            "paused" => "Paused",
+            "queued" => "Queued",
+            _ => "Downloading"
+        };
+    }
+
+    private sealed record QueueListItem(
+        QueueItem QueueItem,
+        int? ProgressPercentage,
+        string Status,
+        QueuePriorityHint? PriorityHint)
     {
         public static IEnumerable<QueueListItem> Order(IEnumerable<QueueListItem> items, GetQueueRequest request)
         {
@@ -178,20 +222,41 @@ public class GetQueueController(
                     ? items.OrderByDescending(x => x.QueueItem.CreatedAt)
                     : items.OrderBy(x => x.QueueItem.CreatedAt),
                 _ => request.SortDescending
-                    ? items.OrderByDescending(x => x.QueueItem.Priority)
-                    : items.OrderBy(x => x.QueueItem.Priority)
+                    ? items.OrderByDescending(GetEffectivePriority).ThenByDescending(GetPriorityScore)
+                    : items.OrderBy(GetEffectivePriority).ThenBy(GetPriorityScore)
             };
 
             return ordered
+                .ThenByDescending(GetEffectivePriority)
+                .ThenByDescending(GetPriorityScore)
                 .ThenByDescending(x => x.QueueItem.Priority)
                 .ThenBy(x => x.QueueItem.CreatedAt)
                 .ThenBy(x => x.QueueItem.Id);
+        }
+
+        private static int GetEffectivePriority(QueueListItem item)
+        {
+            var hint = item.PriorityHint;
+            if (hint is null || !hint.ApplyToScheduling || hint.ExpiresAt < DateTimeOffset.UtcNow)
+                return (int)item.QueueItem.Priority;
+            return Math.Max((int)item.QueueItem.Priority, (int)hint.EffectivePriority);
+        }
+
+        private static int GetPriorityScore(QueueListItem item)
+        {
+            var hint = item.PriorityHint;
+            return hint is null || !hint.ApplyToScheduling || hint.ExpiresAt < DateTimeOffset.UtcNow
+                ? 0
+                : hint.Score;
         }
 
         private static int GetStatusWeight(string status)
         {
             return status.ToLowerInvariant() switch
             {
+                "repairing" => 5,
+                "verifying" => 4,
+                "moving" => 3,
                 "downloading" => 2,
                 "queued" => 1,
                 "paused" => 0,

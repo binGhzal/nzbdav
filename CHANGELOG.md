@@ -16,6 +16,8 @@
 * run background health checks and repair workers concurrently while retaining shared NNTP connection limits.
 * persist download, verify, and repair work as leased durable jobs with retry and quarantine status.
 * add optional PostgreSQL database provider support for new installs.
+* implement ARR queue correlation, lifecycle reporting, report/apply queue priority hints, Sonarr/Radarr search nudge command history, and additive SAB/status diagnostics.
+* expose ARR priority metadata in queue rows plus ARR prioritization/search/download-report panels in the WebUI Health and Settings surfaces.
 
 ### Performance
 

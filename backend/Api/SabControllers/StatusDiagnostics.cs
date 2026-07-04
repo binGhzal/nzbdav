@@ -346,3 +346,108 @@ public sealed class RepairRunSummaryStatus
         };
     }
 }
+
+public sealed class ArrPrioritizationStatus
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; }
+
+    [JsonPropertyName("mode")]
+    public required string Mode { get; init; }
+
+    [JsonPropertyName("correlations")]
+    public int Correlations { get; init; }
+
+    [JsonPropertyName("stale_correlations")]
+    public int StaleCorrelations { get; init; }
+
+    [JsonPropertyName("duplicates")]
+    public int Duplicates { get; init; }
+
+    [JsonPropertyName("active_hints")]
+    public int ActiveHints { get; init; }
+
+    [JsonPropertyName("stale_hints")]
+    public int StaleHints { get; init; }
+
+    public static ArrPrioritizationStatus FromStats
+    (
+        ArrConfig.PrioritizationOptions options,
+        DavDatabaseClient.ArrIntegrationStats stats
+    )
+    {
+        return new ArrPrioritizationStatus
+        {
+            Enabled = options.Enabled,
+            Mode = options.Mode,
+            Correlations = stats.TotalCorrelations,
+            StaleCorrelations = stats.StaleCorrelations,
+            Duplicates = stats.DuplicateCorrelations,
+            ActiveHints = stats.ActivePriorityHints,
+            StaleHints = stats.StalePriorityHints
+        };
+    }
+}
+
+public sealed class ArrSearchNudgeStatus
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; }
+
+    [JsonPropertyName("mode")]
+    public required string Mode { get; init; }
+
+    [JsonPropertyName("planned")]
+    public int Planned { get; init; }
+
+    [JsonPropertyName("executed")]
+    public int Executed { get; init; }
+
+    [JsonPropertyName("failed")]
+    public int Failed { get; init; }
+
+    [JsonPropertyName("last_command_at")]
+    public DateTimeOffset? LastCommandAt { get; init; }
+
+    public static ArrSearchNudgeStatus FromStats
+    (
+        ArrConfig.SearchNudgeOptions options,
+        DavDatabaseClient.ArrIntegrationStats stats
+    )
+    {
+        return new ArrSearchNudgeStatus
+        {
+            Enabled = options.Enabled,
+            Mode = options.Mode,
+            Planned = stats.PlannedSearchNudges,
+            Executed = stats.ExecutedSearchNudges,
+            Failed = stats.FailedSearchNudges,
+            LastCommandAt = stats.LastSearchNudgeAt
+        };
+    }
+}
+
+public sealed class ArrDownloadReportStatus
+{
+    [JsonPropertyName("lifecycle_states")]
+    public IReadOnlyList<ArrLifecycleStateStatus> LifecycleStates { get; init; } = [];
+
+    public static ArrDownloadReportStatus FromStats(DavDatabaseClient.ArrIntegrationStats stats)
+    {
+        return new ArrDownloadReportStatus
+        {
+            LifecycleStates = stats.LifecycleStates
+                .Select(x => new ArrLifecycleStateStatus { State = x.State, Count = x.Count })
+                .ToList()
+        };
+    }
+}
+
+public sealed class ArrLifecycleStateStatus
+{
+    [JsonPropertyName("state")]
+    public required string State { get; init; }
+
+    [JsonPropertyName("count")]
+    public int Count { get; init; }
+}

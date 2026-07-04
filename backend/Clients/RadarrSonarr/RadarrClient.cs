@@ -17,12 +17,18 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     public Task<RadarrQueue> GetRadarrQueueAsync() =>
         Get<RadarrQueue>($"/queue?protocol=usenet&pageSize=5000");
 
+    public Task<ArrPagedResponse<RadarrMissingMovie>> GetMissingMoviesAsync(int pageSize = 500) =>
+        Get<ArrPagedResponse<RadarrMissingMovie>>(
+            $"/wanted/missing?page=1&pageSize={pageSize}&sortKey=physicalRelease&sortDirection=descending&monitored=true");
+
     public Task<HttpStatusCode> DeleteMovieFile(int id) =>
         Delete($"/moviefile/{id}");
 
     public Task<ArrCommand> SearchMovieAsync(int id) =>
         CommandAsync(new { name = "MoviesSearch", movieIds = new List<int> { id } });
 
+    public Task<ArrCommand> SearchMoviesAsync(List<int> ids) =>
+        CommandAsync(new { name = "MoviesSearch", movieIds = ids });
 
     public override async Task<bool> RemoveAndSearch(string symlinkOrStrmPath)
     {

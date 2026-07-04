@@ -7,6 +7,7 @@ using NzbWebDAV.Api.SabControllers.ChangeQueuePriority;
 using NzbWebDAV.Api.SabControllers.GetCategories;
 using NzbWebDAV.Api.SabControllers.GetConfig;
 using NzbWebDAV.Api.SabControllers.GetFullStatus;
+using NzbWebDAV.Api.SabControllers.GetFiles;
 using NzbWebDAV.Api.SabControllers.GetHistory;
 using NzbWebDAV.Api.SabControllers.GetQueue;
 using NzbWebDAV.Api.SabControllers.GetScripts;
@@ -38,7 +39,8 @@ public class SabApiController(
     WebsocketManager websocketManager,
     ActiveStreamTracker activeStreamTracker,
     HealthCheckService healthCheckService,
-    MountStatusProvider mountStatusProvider
+    MountStatusProvider mountStatusProvider,
+    ArrDownloadReportService arrDownloadReportService
 ) : ControllerBase
 {
     [HttpGet]
@@ -114,10 +116,10 @@ public class SabApiController(
                     HttpContext, dbClient, queueManager, configManager, isPaused: false);
             case "addfile":
                 return new AddFileController(
-                    HttpContext, dbClient, queueManager, configManager, websocketManager);
+                    HttpContext, dbClient, queueManager, configManager, websocketManager, arrDownloadReportService);
             case "addurl":
                 return new AddUrlController(
-                    HttpContext, dbClient, queueManager, configManager, websocketManager);
+                    HttpContext, dbClient, queueManager, configManager, websocketManager, arrDownloadReportService);
 
             case "queue" when HttpContext.GetRequestParam("name") == "delete":
                 return new RemoveFromQueueController(
@@ -134,6 +136,10 @@ public class SabApiController(
             case "queue" when HttpContext.GetRequestParam("name") == "change_opts":
             case "change_opts":
                 return new ChangeQueuePostProcessingController(
+                    HttpContext, dbClient, configManager);
+            case "queue" when HttpContext.GetRequestParam("name") == "get_files":
+            case "get_files":
+                return new GetFilesController(
                     HttpContext, dbClient, configManager);
             case "queue":
                 return new GetQueueController(

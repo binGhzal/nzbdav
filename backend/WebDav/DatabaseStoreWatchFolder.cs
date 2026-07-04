@@ -4,6 +4,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Services;
 using NzbWebDAV.WebDav.Base;
 using NzbWebDAV.WebDav.Requests;
 using NzbWebDAV.Websocket;
@@ -15,7 +16,8 @@ public class DatabaseStoreWatchFolder(
     DavDatabaseClient dbClient,
     ConfigManager configManager,
     QueueManager queueManager,
-    WebsocketManager websocketManager
+    WebsocketManager websocketManager,
+    ArrDownloadReportService arrDownloadReportService
 ) : BaseStoreReadonlyCollection
 {
     public override string Name => davDirectory.Name;
@@ -27,7 +29,7 @@ public class DatabaseStoreWatchFolder(
         var categories = await GetCategoriesAsync(request.CancellationToken).ConfigureAwait(false);
         if (!categories.Contains(request.Name)) return null;
         return new DatabaseStoreCategoryWatchFolder(
-            request.Name, dbClient, configManager, queueManager, websocketManager);
+            request.Name, dbClient, configManager, queueManager, websocketManager, arrDownloadReportService);
     }
 
     protected override async Task<IStoreItem[]> GetAllItemsAsync(CancellationToken cancellationToken)
@@ -35,7 +37,7 @@ public class DatabaseStoreWatchFolder(
         var categories = await GetCategoriesAsync(cancellationToken).ConfigureAwait(false);
         return categories
             .Select(c => new DatabaseStoreCategoryWatchFolder(
-                c, dbClient, configManager, queueManager, websocketManager))
+                c, dbClient, configManager, queueManager, websocketManager, arrDownloadReportService))
             .Select(IStoreItem (x) => x)
             .ToArray();
     }

@@ -60,6 +60,68 @@ public sealed class DavDatabaseClientQueueTests
     }
 
     [Fact]
+    public async Task GetTopQueueItem_UsesAppliedArrPriorityHint()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var normalItem = CreateQueueItem("Normal", QueueItem.PriorityOption.Normal, DateTime.UtcNow);
+        var hintedItem = CreateQueueItem("Hinted", QueueItem.PriorityOption.Low, DateTime.UtcNow.AddSeconds(1));
+        dbContext.QueueItems.AddRange(normalItem, hintedItem);
+        dbContext.QueueNzbContents.AddRange(
+            CreateQueueNzbContents(normalItem.Id),
+            CreateQueueNzbContents(hintedItem.Id)
+        );
+        dbContext.QueuePriorityHints.Add(new QueuePriorityHint
+        {
+            QueueItemId = hintedItem.Id,
+            Score = 500,
+            EffectivePriority = QueueItem.PriorityOption.High,
+            ApplyToScheduling = true,
+            ReasonsJson = """["series-completion"]""",
+            Source = "arr-apply",
+            ComputedAt = DateTimeOffset.UtcNow,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var dbClient = new DavDatabaseClient(dbContext);
+        var topItem = await dbClient.GetTopQueueItem();
+        await topItem.queueNzbStream!.DisposeAsync();
+
+        Assert.Equal(hintedItem.Id, topItem.queueItem?.Id);
+    }
+
+    [Fact]
+    public async Task GetTopQueueItem_IgnoresReportOnlyArrPriorityHint()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var normalItem = CreateQueueItem("Normal", QueueItem.PriorityOption.Normal, DateTime.UtcNow);
+        var hintedItem = CreateQueueItem("Hinted", QueueItem.PriorityOption.Low, DateTime.UtcNow.AddSeconds(1));
+        dbContext.QueueItems.AddRange(normalItem, hintedItem);
+        dbContext.QueueNzbContents.AddRange(
+            CreateQueueNzbContents(normalItem.Id),
+            CreateQueueNzbContents(hintedItem.Id)
+        );
+        dbContext.QueuePriorityHints.Add(new QueuePriorityHint
+        {
+            QueueItemId = hintedItem.Id,
+            Score = 500,
+            EffectivePriority = QueueItem.PriorityOption.High,
+            ApplyToScheduling = false,
+            ReasonsJson = """["series-completion"]""",
+            Source = "arr-report",
+            ComputedAt = DateTimeOffset.UtcNow,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var dbClient = new DavDatabaseClient(dbContext);
+        var topItem = await dbClient.GetTopQueueItem();
+        await topItem.queueNzbStream!.DisposeAsync();
+
+        Assert.Equal(normalItem.Id, topItem.queueItem?.Id);
+    }
+
+    [Fact]
     public async Task GetTopQueueItem_SkipsPausedQueueItems()
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();

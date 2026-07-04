@@ -19,6 +19,14 @@ type QueueSlot = {
   status: string;
   mb: string;
   mbleft: string;
+  arr_priority?: {
+    score: number;
+    effective_priority: string;
+    apply_to_scheduling: boolean;
+    reasons: string[];
+    source: string;
+    stale_reason: string | null;
+  };
 };
 
 const port = Number.parseInt(process.env.MOCK_BACKEND_PORT ?? "5174", 10);
@@ -91,6 +99,14 @@ function createQueueSlot(
     status,
     mb,
     mbleft: mb,
+    arr_priority: {
+      score: status === "Queued" ? 180 : 0,
+      effective_priority: status === "Queued" ? "High" : priority,
+      apply_to_scheduling: false,
+      reasons: status === "Queued" ? ["arr-correlated"] : [],
+      source: "arr-report",
+      stale_reason: null,
+    },
   };
 }
 
@@ -441,6 +457,29 @@ function getFullStatusResponse() {
         last: getRepairRun(),
         broken_files: repairBrokenFilesCleared ? 0 : 1,
         next_due_at: "2026-07-02T08:15:00Z",
+      },
+      arr_prioritization: {
+        enabled: true,
+        mode: "report",
+        correlations: 2,
+        stale_correlations: 0,
+        duplicates: 0,
+        active_hints: 1,
+        stale_hints: 0,
+      },
+      arr_search_nudge: {
+        enabled: true,
+        mode: "report",
+        planned: 1,
+        executed: 0,
+        failed: 0,
+        last_command_at: "2026-07-02T08:10:00Z",
+      },
+      arr_download_report: {
+        lifecycle_states: [
+          { state: "Queued", count: 1 },
+          { state: "Downloading", count: 1 },
+        ],
       },
       total_streams_opened: 12,
       managed_memory_bytes: 268_435_456,

@@ -7,6 +7,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Services;
 using NzbWebDAV.WebDav.Base;
 using NzbWebDAV.WebDav.Requests;
 using NzbWebDAV.Websocket;
@@ -18,7 +19,8 @@ public class DatabaseStoreCategoryWatchFolder(
     DavDatabaseClient dbClient,
     ConfigManager configManager,
     QueueManager queueManager,
-    WebsocketManager websocketManager
+    WebsocketManager websocketManager,
+    ArrDownloadReportService arrDownloadReportService
 ) : BaseStoreReadonlyCollection
 {
     public override string Name => category;
@@ -44,7 +46,13 @@ public class DatabaseStoreCategoryWatchFolder(
 
     protected override async Task<StoreItemResult> CreateItemAsync(CreateItemRequest request)
     {
-        var controller = new AddFileController(null!, dbClient, queueManager, configManager, websocketManager);
+        var controller = new AddFileController(
+            null!,
+            dbClient,
+            queueManager,
+            configManager,
+            websocketManager,
+            arrDownloadReportService);
         var addFileRequest = new AddFileRequest()
         {
             FileName = request.Name,

@@ -13,6 +13,10 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     public Task<SonarrQueue> GetSonarrQueueAsync() =>
         Get<SonarrQueue>($"/queue?protocol=usenet&pageSize=5000");
 
+    public Task<ArrPagedResponse<SonarrMissingEpisode>> GetMissingEpisodesAsync(int pageSize = 500) =>
+        Get<ArrPagedResponse<SonarrMissingEpisode>>(
+            $"/wanted/missing?page=1&pageSize={pageSize}&sortKey=airDateUtc&sortDirection=descending&monitored=true");
+
     public Task<List<SonarrSeries>> GetAllSeries() =>
         Get<List<SonarrSeries>>($"/series");
 

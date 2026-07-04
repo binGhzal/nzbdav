@@ -659,6 +659,37 @@ public class ConfigManager
         return GetConfigValue<ArrConfig>("arr.instances") ?? defaultValue;
     }
 
+    public ArrConfig.PrioritizationOptions GetArrPrioritizationOptions()
+    {
+        var options = GetArrConfig().Prioritization ?? new ArrConfig.PrioritizationOptions();
+        options.Mode = NormalizeArrMode(options.Mode);
+        options.RecomputeIntervalSeconds = Math.Clamp(options.RecomputeIntervalSeconds, 30, 3600);
+        options.MaxAutomaticPriority = Math.Clamp(
+            options.MaxAutomaticPriority,
+            (int)QueueItem.PriorityOption.Low,
+            (int)QueueItem.PriorityOption.High);
+        return options;
+    }
+
+    public ArrConfig.SearchNudgeOptions GetArrSearchNudgeOptions()
+    {
+        var options = GetArrConfig().SearchNudge ?? new ArrConfig.SearchNudgeOptions();
+        options.Mode = NormalizeArrMode(options.Mode);
+        options.IntervalSeconds = Math.Clamp(options.IntervalSeconds, 300, 86400);
+        options.CooldownSeconds = Math.Clamp(options.CooldownSeconds, 300, 604800);
+        options.MaxCommandsPerHour = Math.Clamp(options.MaxCommandsPerHour, 1, 200);
+        options.SonarrBatchSize = Math.Clamp(options.SonarrBatchSize, 1, 100);
+        options.RadarrBatchSize = Math.Clamp(options.RadarrBatchSize, 1, 50);
+        options.ConcurrentCommandsPerInstance = Math.Clamp(options.ConcurrentCommandsPerInstance, 1, 4);
+        return options;
+    }
+
+    private static string NormalizeArrMode(string? mode)
+    {
+        mode = mode?.Trim().ToLowerInvariant();
+        return mode is "apply" ? "apply" : "report";
+    }
+
     public UsenetProviderConfig GetUsenetProviderConfig()
     {
         var defaultValue = new UsenetProviderConfig();

@@ -37,6 +37,10 @@ public class GetStatusController(
             ct: RequestContext.RequestAborted).ConfigureAwait(false);
         var durableWorkerJobs = await dbClient.GetWorkerJobQueueStatsAsync(
             ct: RequestContext.RequestAborted).ConfigureAwait(false);
+        var arrIntegrationStats = await dbClient.GetArrIntegrationStatsAsync(
+            ct: RequestContext.RequestAborted).ConfigureAwait(false);
+        var arrPriorityOptions = ConfigManager.GetArrPrioritizationOptions();
+        var arrSearchNudgeOptions = ConfigManager.GetArrSearchNudgeOptions();
         var activeRepairRun = await dbClient.GetActiveRepairRunAsync(RequestContext.RequestAborted).ConfigureAwait(false);
         var lastRepairRun = (await dbClient.GetRepairRunsAsync(1, RequestContext.RequestAborted).ConfigureAwait(false))
             .FirstOrDefault();
@@ -70,6 +74,9 @@ public class GetStatusController(
                 ProviderDiagnostics = ProviderDiagnosticStatus.FromConfig(ConfigManager.GetUsenetProviderConfig()),
                 WorkerQueues = WorkerQueueStatus.FromStats(activeJobs, queuedJobs, healthWorkers, healthQueue, durableWorkerJobs),
                 RepairRuns = RepairRunsStatus.FromRuns(activeRepairRun, lastRepairRun, repairBrokenFiles),
+                ArrPrioritization = ArrPrioritizationStatus.FromStats(arrPriorityOptions, arrIntegrationStats),
+                ArrSearchNudge = ArrSearchNudgeStatus.FromStats(arrSearchNudgeOptions, arrIntegrationStats),
+                ArrDownloadReport = ArrDownloadReportStatus.FromStats(arrIntegrationStats),
                 TotalStreamsOpened = activeStreams.TotalOpened,
                 ManagedMemoryBytes = GC.GetTotalMemory(false),
                 WorkingSetBytes = process.WorkingSet64,
