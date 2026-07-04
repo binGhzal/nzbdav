@@ -27,6 +27,12 @@ public class GetStatusResponse
         [JsonPropertyName("max_queue_workers")]
         public int MaxQueueWorkers { get; init; }
 
+        [JsonPropertyName("max_verify_workers")]
+        public int MaxVerifyWorkers { get; init; }
+
+        [JsonPropertyName("max_repair_workers")]
+        public int MaxRepairWorkers { get; init; }
+
         [JsonPropertyName("max_download_connections")]
         public int MaxDownloadConnections { get; init; }
 

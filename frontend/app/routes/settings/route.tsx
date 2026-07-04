@@ -39,6 +39,8 @@ const defaultConfig = {
     "usenet.nntp-pipelining.enabled": "true",
     "usenet.nntp-pipelining.depth": "50",
     "queue.max-concurrent-downloads": "0",
+    "queue.max-concurrent-verify": "0",
+    "queue.max-concurrent-repair": "0",
     "queue.file-processing-concurrency": "0",
     "webdav.user": "admin",
     "webdav.pass": "",

@@ -46,7 +46,7 @@ public class ConfigManagerConcurrencyTests
     }
 
     [Fact]
-    public void AdaptiveQueueSizingIgnoresLowManualFallbacks()
+    public void AdaptiveQueueSizingHonorsExplicitDownloadWorkerCap()
     {
         var configManager = CreateConfigManager(
             ("usenet.max-download-connections", "200"),
@@ -57,12 +57,12 @@ public class ConfigManagerConcurrencyTests
         );
 
         Assert.Equal(200, configManager.GetAdaptiveMaxDownloadConnections());
-        Assert.Equal(GetExpectedAutomaticQueueWorkers(200), configManager.GetAdaptiveMaxConcurrentQueueDownloads());
+        Assert.Equal(1, configManager.GetAdaptiveMaxConcurrentQueueDownloads());
         Assert.Equal(200, configManager.GetAdaptiveQueueFileProcessingConcurrency());
     }
 
     [Fact]
-    public void AdaptiveDownloadConnectionsUseProviderCapacityWhenManualFallbackIsLow()
+    public void AdaptiveDownloadConnectionsUseProviderCapacityWithSeparateDownloadWorkerCap()
     {
         var configManager = CreateConfigManager(
             ("usenet.max-download-connections", "15"),
@@ -73,7 +73,7 @@ public class ConfigManagerConcurrencyTests
         );
 
         Assert.Equal(200, configManager.GetAdaptiveMaxDownloadConnections());
-        Assert.Equal(GetExpectedAutomaticQueueWorkers(200), configManager.GetAdaptiveMaxConcurrentQueueDownloads());
+        Assert.Equal(1, configManager.GetAdaptiveMaxConcurrentQueueDownloads());
         Assert.Equal(200, configManager.GetAdaptiveQueueFileProcessingConcurrency());
     }
 
@@ -99,6 +99,40 @@ public class ConfigManagerConcurrencyTests
         );
 
         Assert.Equal(40, configManager.GetMaxConcurrentQueueDownloads());
+    }
+
+    [Fact]
+    public void ExplicitWorkerCapsSeparateDownloadVerifyAndRepairLanes()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "8"),
+            ("usenet.adaptive-connections-enabled", "false"),
+            ("repair.healthcheck-concurrency", "200"),
+            ("repair.connection-budget-percent", "50"),
+            ("queue.max-concurrent-downloads", "3"),
+            ("queue.max-concurrent-verify", "10"),
+            ("queue.max-concurrent-repair", "7")
+        );
+
+        Assert.Equal(3, configManager.GetAdaptiveMaxConcurrentQueueDownloads());
+        Assert.Equal(4, configManager.GetAdaptiveMaxConcurrentVerifyJobs());
+        Assert.Equal(7, configManager.GetAdaptiveMaxConcurrentRepairJobs());
+    }
+
+    [Fact]
+    public void AutomaticVerifyAndRepairWorkersUseIndependentLaneDefaults()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "8"),
+            ("usenet.adaptive-connections-enabled", "false"),
+            ("repair.healthcheck-concurrency", "200"),
+            ("repair.connection-budget-percent", "50"),
+            ("queue.max-concurrent-verify", "0"),
+            ("queue.max-concurrent-repair", "0")
+        );
+
+        Assert.Equal(2, configManager.GetAdaptiveMaxConcurrentVerifyJobs());
+        Assert.Equal(2, configManager.GetAdaptiveMaxConcurrentRepairJobs());
     }
 
     [Fact]

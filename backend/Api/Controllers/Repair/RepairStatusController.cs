@@ -1,12 +1,13 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 
 namespace NzbWebDAV.Api.Controllers.Repair;
 
 [ApiController]
 [Route("api/repair/status")]
-public sealed class RepairStatusController(DavDatabaseClient dbClient) : BaseApiController
+public sealed class RepairStatusController(DavDatabaseClient dbClient, ConfigManager configManager) : BaseApiController
 {
     protected override async Task<IActionResult> HandleRequest()
     {
@@ -27,8 +28,8 @@ public sealed class RepairStatusController(DavDatabaseClient dbClient) : BaseApi
             ActiveRun = activeRun == null ? null : RepairRunDto.FromModel(activeRun),
             LastRun = runs.FirstOrDefault() is { } lastRun ? RepairRunDto.FromModel(lastRun) : null,
             BrokenFiles = brokenFiles.Select(RepairBrokenFileDto.FromModel).ToList(),
-            VerifyQueue = RepairWorkerQueueDto.FromStats(workerQueues.Verify),
-            RepairQueue = RepairWorkerQueueDto.FromStats(workerQueues.Repair)
+            VerifyQueue = RepairWorkerQueueDto.FromStats(workerQueues.Verify, configManager.GetAdaptiveMaxConcurrentVerifyJobs()),
+            RepairQueue = RepairWorkerQueueDto.FromStats(workerQueues.Repair, configManager.GetAdaptiveMaxConcurrentRepairJobs())
         });
     }
 }

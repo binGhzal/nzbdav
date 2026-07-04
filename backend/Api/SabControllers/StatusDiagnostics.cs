@@ -192,6 +192,12 @@ public sealed class MountDiagnosticStatus
 
 public sealed class WorkerQueueStatus
 {
+    [JsonPropertyName("download_max")]
+    public int DownloadMax { get; init; }
+
+    [JsonPropertyName("download_state")]
+    public string DownloadState { get; init; } = "idle";
+
     [JsonPropertyName("download_active")]
     public int DownloadActive { get; init; }
 
@@ -207,6 +213,12 @@ public sealed class WorkerQueueStatus
     [JsonPropertyName("download_quarantined")]
     public int DownloadQuarantined { get; init; }
 
+    [JsonPropertyName("verify_max")]
+    public int VerifyMax { get; init; }
+
+    [JsonPropertyName("verify_state")]
+    public string VerifyState { get; init; } = "idle";
+
     [JsonPropertyName("verify_active")]
     public int VerifyActive { get; init; }
 
@@ -218,6 +230,12 @@ public sealed class WorkerQueueStatus
 
     [JsonPropertyName("verify_quarantined")]
     public int VerifyQuarantined { get; init; }
+
+    [JsonPropertyName("repair_max")]
+    public int RepairMax { get; init; }
+
+    [JsonPropertyName("repair_state")]
+    public string RepairState { get; init; } = "idle";
 
     [JsonPropertyName("repair_active")]
     public int RepairActive { get; init; }
@@ -238,28 +256,56 @@ public sealed class WorkerQueueStatus
     (
         int downloadActive,
         int downloadWaiting,
+        int maxDownloadWorkers,
+        int maxVerifyWorkers,
+        int maxRepairWorkers,
+        bool downloadsPaused,
         HealthCheckService.WorkerSnapshot healthWorkers,
         DavDatabaseClient.HealthWorkerQueueStats healthQueue,
         DavDatabaseClient.WorkerJobQueueStats durableJobs
     )
     {
+        var effectiveDownloadActive = Math.Max(downloadActive, durableJobs.Download.Leased);
+        var effectiveDownloadReady = Math.Max(downloadWaiting, durableJobs.Download.Ready);
+        var effectiveVerifyActive = Math.Max(healthWorkers.VerifyActive, durableJobs.Verify.Leased);
+        var effectiveVerifyReady = Math.Max(healthQueue.VerifyReady, durableJobs.Verify.Ready);
+        var effectiveRepairActive = Math.Max(healthWorkers.RepairActive, durableJobs.Repair.Leased);
         return new WorkerQueueStatus
         {
-            DownloadActive = Math.Max(downloadActive, durableJobs.Download.Leased),
+            DownloadMax = maxDownloadWorkers,
+            DownloadState = downloadsPaused
+                ? "paused"
+                : GetLaneState(effectiveDownloadActive, effectiveDownloadReady, durableJobs.Download.Retry, durableJobs.Download.Quarantined, maxDownloadWorkers),
+            DownloadActive = effectiveDownloadActive,
             DownloadWaiting = downloadWaiting,
             DownloadReady = durableJobs.Download.Ready,
             DownloadRetry = durableJobs.Download.Retry,
             DownloadQuarantined = durableJobs.Download.Quarantined,
-            VerifyActive = Math.Max(healthWorkers.VerifyActive, durableJobs.Verify.Leased),
-            VerifyReady = Math.Max(healthQueue.VerifyReady, durableJobs.Verify.Ready),
+            VerifyMax = maxVerifyWorkers,
+            VerifyState = GetLaneState(effectiveVerifyActive, effectiveVerifyReady, durableJobs.Verify.Retry, durableJobs.Verify.Quarantined, maxVerifyWorkers),
+            VerifyActive = effectiveVerifyActive,
+            VerifyReady = effectiveVerifyReady,
             VerifyRetry = durableJobs.Verify.Retry,
             VerifyQuarantined = durableJobs.Verify.Quarantined,
-            RepairActive = Math.Max(healthWorkers.RepairActive, durableJobs.Repair.Leased),
+            RepairMax = maxRepairWorkers,
+            RepairState = GetLaneState(effectiveRepairActive, durableJobs.Repair.Ready, durableJobs.Repair.Retry, durableJobs.Repair.Quarantined, maxRepairWorkers),
+            RepairActive = effectiveRepairActive,
             RepairActionNeeded = healthQueue.RepairActionNeeded,
             RepairReady = durableJobs.Repair.Ready,
             RepairRetry = durableJobs.Repair.Retry,
             RepairQuarantined = durableJobs.Repair.Quarantined
         };
+    }
+
+    private static string GetLaneState(int active, int ready, int retry, int quarantined, int max)
+    {
+        if (max <= 0) return "disabled";
+        if (active >= max && ready > 0) return "saturated";
+        if (active > 0) return "active";
+        if (retry > 0) return "retrying";
+        if (ready > 0) return "ready";
+        if (quarantined > 0) return "quarantined";
+        return "idle";
     }
 }
 

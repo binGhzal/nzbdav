@@ -17,7 +17,8 @@ public class DatabaseStore(
     UsenetStreamingClient usenetClient,
     QueueManager queueManager,
     WebsocketManager websocketManager,
-    ArrDownloadReportService arrDownloadReportService
+    ArrDownloadReportService arrDownloadReportService,
+    ArrOperationsService arrOperationsService
 ) : IStore
 {
     private readonly DatabaseStoreCollection _root = new(
@@ -28,7 +29,8 @@ public class DatabaseStore(
         usenetClient,
         queueManager,
         websocketManager,
-        arrDownloadReportService
+        arrDownloadReportService,
+        arrOperationsService
     );
 
     public async Task<IStoreItem?> GetItemAsync(string path, CancellationToken cancellationToken)

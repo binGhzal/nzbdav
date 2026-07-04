@@ -72,11 +72,12 @@ public class HealthCheckService : BackgroundService
 
                 var startedWorker = false;
                 var segmentConcurrency = _configManager.GetAdaptiveHealthCheckConcurrency();
-                var itemConcurrency = GetHealthCheckItemConcurrency(segmentConcurrency);
-                var workerSegmentConcurrency = Math.Max(1, segmentConcurrency / itemConcurrency);
+                var maxVerifyJobs = _configManager.GetAdaptiveMaxConcurrentVerifyJobs();
+                var maxRepairJobs = _configManager.GetAdaptiveMaxConcurrentRepairJobs();
+                var workerSegmentConcurrency = Math.Max(1, segmentConcurrency / Math.Max(1, maxVerifyJobs));
 
                 var activeVerificationJobs = Volatile.Read(ref _activeVerificationJobs);
-                while (activeVerificationJobs < itemConcurrency)
+                while (activeVerificationJobs < maxVerifyJobs)
                 {
                     var verifyJob = await LeaseNextVerificationJobAsync(stoppingToken).ConfigureAwait(false);
                     if (verifyJob == null) break;
@@ -88,7 +89,7 @@ public class HealthCheckService : BackgroundService
                 }
 
                 var activeRepairJobs = Volatile.Read(ref _activeRepairJobs);
-                while (activeRepairJobs < itemConcurrency)
+                while (activeRepairJobs < maxRepairJobs)
                 {
                     var repairJob = await LeaseNextRepairJobAsync(stoppingToken).ConfigureAwait(false);
                     if (repairJob == null) break;
@@ -115,11 +116,6 @@ public class HealthCheckService : BackgroundService
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
             }
         }
-    }
-
-    private static int GetHealthCheckItemConcurrency(int segmentConcurrency)
-    {
-        return Math.Clamp(segmentConcurrency / 2, 1, 4);
     }
 
     private int GetActiveHealthCheckCount()

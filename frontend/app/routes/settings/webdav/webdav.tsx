@@ -98,7 +98,40 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                             value={config["queue.max-concurrent-downloads"]}
                             onChange={e => setNewConfig({ ...config, "queue.max-concurrent-downloads": e.target.value })} />
                         <Form.Text id="max-concurrent-queue-downloads-help" muted>
-                            Number of NZBs to process at the same time. Use 0 for automatic sizing. When adaptive sizing is on, NZBDav sizes this from available download connections.
+                            Maximum number of NZBs to process at the same time. Use 0 for automatic sizing.
+                            Positive values are hard caps, including when adaptive sizing is enabled.
+                        </Form.Text>
+                    </Form.Group>
+                    <hr />
+                    <Form.Group>
+                        <Form.Label htmlFor="max-concurrent-verify-input">Concurrent Verify Jobs</Form.Label>
+                        <Form.Control
+                            {...className([styles.input, !isValidMaxConcurrentQueueDownloads(config["queue.max-concurrent-verify"]) && styles.error])}
+                            type="text"
+                            id="max-concurrent-verify-input"
+                            aria-describedby="max-concurrent-verify-help"
+                            placeholder="0"
+                            value={config["queue.max-concurrent-verify"]}
+                            onChange={e => setNewConfig({ ...config, "queue.max-concurrent-verify": e.target.value })} />
+                        <Form.Text id="max-concurrent-verify-help" muted>
+                            Maximum number of background verify jobs to run at once. Use 0 for automatic sizing.
+                            Verify jobs also stay inside the repair/check connection budget.
+                        </Form.Text>
+                    </Form.Group>
+                    <hr />
+                    <Form.Group>
+                        <Form.Label htmlFor="max-concurrent-repair-input">Concurrent Repair Jobs</Form.Label>
+                        <Form.Control
+                            {...className([styles.input, !isValidMaxConcurrentQueueDownloads(config["queue.max-concurrent-repair"]) && styles.error])}
+                            type="text"
+                            id="max-concurrent-repair-input"
+                            aria-describedby="max-concurrent-repair-help"
+                            placeholder="0"
+                            value={config["queue.max-concurrent-repair"]}
+                            onChange={e => setNewConfig({ ...config, "queue.max-concurrent-repair": e.target.value })} />
+                        <Form.Text id="max-concurrent-repair-help" muted>
+                            Maximum number of background repair jobs to run at once. Use 0 for automatic sizing.
+                            This is independent from download and verify worker limits.
                         </Form.Text>
                     </Form.Group>
                     <hr />
@@ -251,6 +284,8 @@ export function isWebdavSettingsUpdated(config: Record<string, string>, newConfi
         || config["usenet.max-download-connections"] !== newConfig["usenet.max-download-connections"]
         || config["usenet.adaptive-connections-enabled"] !== newConfig["usenet.adaptive-connections-enabled"]
         || config["queue.max-concurrent-downloads"] !== newConfig["queue.max-concurrent-downloads"]
+        || config["queue.max-concurrent-verify"] !== newConfig["queue.max-concurrent-verify"]
+        || config["queue.max-concurrent-repair"] !== newConfig["queue.max-concurrent-repair"]
         || config["queue.file-processing-concurrency"] !== newConfig["queue.file-processing-concurrency"]
         || config["usenet.article-cache-max-megabytes"] !== newConfig["usenet.article-cache-max-megabytes"]
         || config["usenet.max-streaming-connections"] !== newConfig["usenet.max-streaming-connections"]
@@ -266,6 +301,8 @@ export function isWebdavSettingsValid(newConfig: Record<string, string>) {
     return isValidUser(newConfig["webdav.user"])
         && isValidMaxDownloadConnections(newConfig["usenet.max-download-connections"])
         && isValidMaxConcurrentQueueDownloads(newConfig["queue.max-concurrent-downloads"])
+        && isValidMaxConcurrentQueueDownloads(newConfig["queue.max-concurrent-verify"])
+        && isValidMaxConcurrentQueueDownloads(newConfig["queue.max-concurrent-repair"])
         && isValidFileProcessingConcurrency(newConfig["queue.file-processing-concurrency"])
         && isValidArticleCacheMaxMegabytes(newConfig["usenet.article-cache-max-megabytes"])
         && isValidMaxStreamingConnections(newConfig["usenet.max-streaming-connections"])

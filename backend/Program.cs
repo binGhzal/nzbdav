@@ -66,6 +66,24 @@ class Program
             return;
         }
 
+        if (TryGetArgumentValue(args, "--db-export-json", out var exportPath))
+        {
+            await DatabaseTransferService
+                .ExportJsonAsync(databaseContext, exportPath, SigtermUtil.GetCancellationToken())
+                .ConfigureAwait(false);
+            return;
+        }
+
+        if (TryGetArgumentValue(args, "--db-import-json", out var importPath))
+        {
+            var replace = args.Contains("--replace");
+            var result = await DatabaseTransferService
+                .ImportJsonAsync(databaseContext, importPath, replace, SigtermUtil.GetCancellationToken())
+                .ConfigureAwait(false);
+            Log.Information("Imported {ImportedRows} database rows.", result.ImportedRows);
+            return;
+        }
+
         // initialize the config-manager
         var configManager = new ConfigManager();
         await configManager.LoadConfig().ConfigureAwait(false);
@@ -91,6 +109,7 @@ class Program
             .AddSingleton<MountStatusProvider>()
             .AddSingleton<StreamingConnectionLimiter>()
             .AddSingleton<ArrDownloadReportService>()
+            .AddSingleton<ArrOperationsService>()
             .AddSingleton<UsenetStreamingClient>()
             .AddSingleton<QueueManager>()
             .AddSingleton<HealthCheckService>()
@@ -205,5 +224,16 @@ class Program
             await databaseContext.Database.ExecuteSqlRawAsync("VACUUM;");
             Console.WriteLine("Done.");
         }
+    }
+
+    private static bool TryGetArgumentValue(string[] args, string name, out string value)
+    {
+        value = "";
+        var index = Array.IndexOf(args, name);
+        if (index < 0) return false;
+        if (args.Length <= index + 1 || string.IsNullOrWhiteSpace(args[index + 1]))
+            throw new ArgumentException($"{name} requires a path argument.");
+        value = args[index + 1];
+        return true;
     }
 }

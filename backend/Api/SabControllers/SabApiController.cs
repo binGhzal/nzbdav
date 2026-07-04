@@ -40,7 +40,8 @@ public class SabApiController(
     ActiveStreamTracker activeStreamTracker,
     HealthCheckService healthCheckService,
     MountStatusProvider mountStatusProvider,
-    ArrDownloadReportService arrDownloadReportService
+    ArrDownloadReportService arrDownloadReportService,
+    ArrOperationsService arrOperationsService
 ) : ControllerBase
 {
     [HttpGet]
@@ -116,10 +117,12 @@ public class SabApiController(
                     HttpContext, dbClient, queueManager, configManager, isPaused: false);
             case "addfile":
                 return new AddFileController(
-                    HttpContext, dbClient, queueManager, configManager, websocketManager, arrDownloadReportService);
+                    HttpContext, dbClient, queueManager, configManager, websocketManager, arrDownloadReportService,
+                    arrOperationsService);
             case "addurl":
                 return new AddUrlController(
-                    HttpContext, dbClient, queueManager, configManager, websocketManager, arrDownloadReportService);
+                    HttpContext, dbClient, queueManager, configManager, websocketManager, arrDownloadReportService,
+                    arrOperationsService);
 
             case "queue" when HttpContext.GetRequestParam("name") == "delete":
                 return new RemoveFromQueueController(

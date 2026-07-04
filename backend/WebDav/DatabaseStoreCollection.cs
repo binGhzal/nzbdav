@@ -22,7 +22,8 @@ public class DatabaseStoreCollection(
     UsenetStreamingClient usenetClient,
     QueueManager queueManager,
     WebsocketManager websocketManager,
-    ArrDownloadReportService arrDownloadReportService
+    ArrDownloadReportService arrDownloadReportService,
+    ArrOperationsService arrOperationsService
 ) : BaseStoreReadonlyCollection
 {
     public override string Name => davDirectory.Name;
@@ -131,11 +132,12 @@ public class DatabaseStoreCollection(
                     davItem.Name, "", httpContext, dbClient, usenetClient, configManager),
             DavItem.ItemSubType.NzbsRoot =>
                 new DatabaseStoreWatchFolder(
-                    davItem, dbClient, configManager, queueManager, websocketManager, arrDownloadReportService),
+                    davItem, dbClient, configManager, queueManager, websocketManager, arrDownloadReportService,
+                    arrOperationsService),
             DavItem.ItemSubType.Directory or DavItem.ItemSubType.ContentRoot  =>
                 new DatabaseStoreCollection(
                     davItem, httpContext, dbClient, configManager, usenetClient, queueManager, websocketManager,
-                    arrDownloadReportService),
+                    arrDownloadReportService, arrOperationsService),
             DavItem.ItemSubType.SymlinkRoot =>
                 new DatabaseStoreSymlinkCollection(
                     davItem, dbClient, configManager),

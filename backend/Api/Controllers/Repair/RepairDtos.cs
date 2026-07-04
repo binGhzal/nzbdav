@@ -122,6 +122,12 @@ public sealed class RepairBrokenFileDto
 
 public sealed class RepairWorkerQueueDto
 {
+    [JsonPropertyName("max")]
+    public int Max { get; init; }
+
+    [JsonPropertyName("state")]
+    public string State { get; init; } = "idle";
+
     [JsonPropertyName("pending")]
     public int Pending { get; init; }
 
@@ -146,10 +152,12 @@ public sealed class RepairWorkerQueueDto
     [JsonPropertyName("total")]
     public int Total { get; init; }
 
-    public static RepairWorkerQueueDto FromStats(DavDatabaseClient.WorkerJobKindStats stats)
+    public static RepairWorkerQueueDto FromStats(DavDatabaseClient.WorkerJobKindStats stats, int max)
     {
         return new RepairWorkerQueueDto
         {
+            Max = max,
+            State = GetState(stats, max),
             Pending = stats.Pending,
             Retry = stats.Retry,
             Leased = stats.Leased,
@@ -159,5 +167,16 @@ public sealed class RepairWorkerQueueDto
             Cancelled = stats.Cancelled,
             Total = stats.Total
         };
+    }
+
+    private static string GetState(DavDatabaseClient.WorkerJobKindStats stats, int max)
+    {
+        if (max <= 0) return "disabled";
+        if (stats.Leased >= max && stats.Ready > 0) return "saturated";
+        if (stats.Leased > 0) return "active";
+        if (stats.Retry > 0) return "retrying";
+        if (stats.Ready > 0) return "ready";
+        if (stats.Quarantined > 0) return "quarantined";
+        return "idle";
     }
 }

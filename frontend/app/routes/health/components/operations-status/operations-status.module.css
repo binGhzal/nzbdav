@@ -120,6 +120,55 @@
     opacity: 0.45;
 }
 
+.tableWrap {
+    overflow-x: auto;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    color: hsl(180, 7%, 78%);
+    font-size: 0.9rem;
+}
+
+.table th,
+.table td {
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 10px 8px;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+}
+
+.table th {
+    color: hsl(180, 7%, 58%);
+    font-weight: 600;
+}
+
+.correlationForm {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.input {
+    min-height: 36px;
+    min-width: 0;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: hsl(196.8, 25%, 10%);
+    color: hsl(180, 7%, 86%);
+    padding: 7px 10px;
+}
+
+.checkboxLabel {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: hsl(180, 7%, 72%);
+}
+
 .providerList,
 .workerGrid {
     display: flex;
@@ -130,6 +179,7 @@
 .providerRow,
 .workerRow {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     gap: 12px;
     padding: 10px 0;
@@ -166,6 +216,10 @@
     .grid {
         grid-template-columns: 1fr;
     }
+
+    .correlationForm {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 @media (max-width: 560px) {
@@ -181,5 +235,9 @@
     .providerMeta {
         align-items: flex-start;
         text-align: left;
+    }
+
+    .correlationForm {
+        grid-template-columns: 1fr;
     }
 }

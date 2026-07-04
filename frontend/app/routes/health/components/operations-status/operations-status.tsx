@@ -1,5 +1,8 @@
 import { Form } from "react-router";
 import type {
+    ArrCorrelationsResponse,
+    ArrSearchNudgeCommandsResponse,
+    ArrValidationResponse,
     FullStatusResponse,
     ProviderDiagnosticStatus,
     RepairRun,
@@ -13,6 +16,12 @@ export type OperationsStatusProps = {
     fullStatusError: string | null;
     repairStatus: RepairStatusResponse | null;
     repairStatusError: string | null;
+    arrValidation: ArrValidationResponse | null;
+    arrValidationError: string | null;
+    arrNudges: ArrSearchNudgeCommandsResponse | null;
+    arrNudgesError: string | null;
+    arrCorrelations: ArrCorrelationsResponse | null;
+    arrCorrelationsError: string | null;
     websocketState: "connecting" | "connected" | "disconnected";
     isActionSubmitting: boolean;
 }
@@ -22,6 +31,12 @@ export function OperationsStatus({
     fullStatusError,
     repairStatus,
     repairStatusError,
+    arrValidation,
+    arrValidationError,
+    arrNudges,
+    arrNudgesError,
+    arrCorrelations,
+    arrCorrelationsError,
     websocketState,
     isActionSubmitting,
 }: OperationsStatusProps) {
@@ -29,7 +44,16 @@ export function OperationsStatus({
     const lastRun = repairStatus?.last_run ?? fullStatus?.repair_runs.last ?? null;
     const brokenFiles = repairStatus?.broken_files.length ?? fullStatus?.repair_runs.broken_files ?? 0;
     const hasActiveRun = activeRun?.status === "Running";
-    const degradedMessages = getDegradedMessages(fullStatus, repairStatus, fullStatusError, repairStatusError, websocketState);
+    const degradedMessages = getDegradedMessages(
+        fullStatus,
+        repairStatus,
+        fullStatusError,
+        repairStatusError,
+        arrValidation,
+        arrValidationError,
+        arrNudgesError,
+        arrCorrelationsError,
+        websocketState);
 
     return (
         <div className={styles.container}>
@@ -130,8 +154,10 @@ export function OperationsStatus({
                         <WorkerRow
                             label="Search"
                             active={fullStatus?.arr_search_nudge.planned ?? 0}
+                            max={Math.max(1, (fullStatus?.arr_search_nudge.planned ?? 0) + (fullStatus?.arr_search_nudge.failed ?? 0))}
                             ready={fullStatus?.arr_search_nudge.executed ?? 0}
                             retry={fullStatus?.arr_search_nudge.failed ?? 0}
+                            state={(fullStatus?.arr_search_nudge.failed ?? 0) > 0 ? "retrying" : (fullStatus?.arr_search_nudge.planned ?? 0) > 0 ? "ready" : "idle"}
                         />
                     </div>
                     {fullStatus?.arr_download_report.lifecycle_states.length ? (
@@ -142,8 +168,167 @@ export function OperationsStatus({
                         </div>
                     ) : null}
                 </section>
+
+                <section className={styles.panel}>
+                    <div className={styles.header}>
+                        <h3 className={styles.title}>ARR Validation</h3>
+                        <span className={styles.badge}>{arrValidation?.correlation_coverage_percent ?? 0}% correlated</span>
+                    </div>
+                    <div className={styles.metricGrid}>
+                        <Metric label="Instances" value={arrValidation?.instance_count ?? 0} />
+                        <Metric label="Queue" value={arrValidation?.queue_items ?? 0} />
+                        <Metric label="Hints" value={arrValidation?.active_priority_hints ?? 0} />
+                        <Metric label="Issues" value={arrValidation?.issues.length ?? 0} tone={arrValidation?.issues.length ? "warning" : undefined} />
+                    </div>
+                    {(arrValidation?.issues ?? []).slice(0, 5).map(issue =>
+                        <div className={styles.mutedLine} key={issue.code}>
+                            <span className={issue.severity === "error" ? styles.danger : styles.warning}>{issue.severity}</span>
+                            {` ${issue.message}`}
+                        </div>
+                    )}
+                </section>
             </div>
+
+            <section className={styles.panel}>
+                <div className={styles.header}>
+                    <h3 className={styles.title}>ARR Search Commands</h3>
+                    <span className={styles.badge}>{arrNudges?.commands.length ?? 0} recent</span>
+                </div>
+                <Form method="post" className={styles.actions}>
+                    <button
+                        className={styles.button}
+                        name="intent"
+                        value="clear-arr-failed-nudges"
+                        type="submit"
+                        disabled={isActionSubmitting || !(arrNudges?.commands.some(x => x.status === "failed"))}
+                    >
+                        Clear Failed
+                    </button>
+                </Form>
+                <div className={styles.tableWrap}>
+                    <table className={styles.table}>
+                        <thead>
+                            <tr>
+                                <th>Created</th>
+                                <th>App</th>
+                                <th>Command</th>
+                                <th>Status</th>
+                                <th>Targets</th>
+                                <th>Reason</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {(arrNudges?.commands ?? []).map(command =>
+                                <tr key={command.id}>
+                                    <td>{formatDate(command.created_at)}</td>
+                                    <td>{command.arr_app}</td>
+                                    <td>{command.command_name}</td>
+                                    <td className={command.status === "failed" ? styles.danger : undefined}>{command.status}</td>
+                                    <td>{command.targets.join(", ")}</td>
+                                    <td>{command.error ?? command.reasons.join(", ")}</td>
+                                    <td>
+                                        {command.status === "failed" &&
+                                            <Form method="post">
+                                                <input type="hidden" name="id" value={command.id} />
+                                                <button
+                                                    className={styles.button}
+                                                    name="intent"
+                                                    value="retry-arr-nudge"
+                                                    type="submit"
+                                                    disabled={isActionSubmitting}
+                                                >
+                                                    Retry
+                                                </button>
+                                            </Form>
+                                        }
+                                    </td>
+                                </tr>
+                            )}
+                            {(!arrNudges || arrNudges.commands.length === 0) &&
+                                <tr><td colSpan={7} className={styles.muted}>No ARR search commands recorded.</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section className={styles.panel}>
+                <div className={styles.header}>
+                    <h3 className={styles.title}>ARR Correlations</h3>
+                    <span className={styles.badge}>{arrCorrelations?.correlations.length ?? 0} recent</span>
+                </div>
+                <CorrelationForm isActionSubmitting={isActionSubmitting} />
+                <div className={styles.tableWrap}>
+                    <table className={styles.table}>
+                        <thead>
+                            <tr>
+                                <th>ARR</th>
+                                <th>Media</th>
+                                <th>NZBDav</th>
+                                <th>Title</th>
+                                <th>Seen</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {(arrCorrelations?.correlations ?? []).map(correlation =>
+                                <tr key={correlation.id}>
+                                    <td>{correlation.arr_app}</td>
+                                    <td>{correlation.media_key ?? correlation.download_id ?? "unknown"}</td>
+                                    <td>{correlation.queue_item_id ?? correlation.history_item_id ?? "unlinked"}</td>
+                                    <td>{correlation.release_title ?? correlation.category ?? "unknown"}</td>
+                                    <td>{formatDate(correlation.last_seen_at)}</td>
+                                    <td>
+                                        <Form method="post">
+                                            <input type="hidden" name="id" value={correlation.id} />
+                                            <button
+                                                className={styles.button}
+                                                name="intent"
+                                                value="delete-arr-correlation"
+                                                type="submit"
+                                                disabled={isActionSubmitting}
+                                            >
+                                                Delete
+                                            </button>
+                                        </Form>
+                                    </td>
+                                </tr>
+                            )}
+                            {(!arrCorrelations || arrCorrelations.correlations.length === 0) &&
+                                <tr><td colSpan={6} className={styles.muted}>No ARR correlations recorded.</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
         </div>
+    );
+}
+
+function CorrelationForm({ isActionSubmitting }: { isActionSubmitting: boolean }) {
+    return (
+        <Form method="post" className={styles.correlationForm}>
+            <input name="nzo_id" placeholder="NZBDav nzo_id" className={styles.input} />
+            <select name="arr_app" className={styles.input} defaultValue="sonarr">
+                <option value="sonarr">Sonarr</option>
+                <option value="radarr">Radarr</option>
+                <option value="lidarr">Lidarr</option>
+            </select>
+            <input name="instance_host" placeholder="ARR host" className={styles.input} />
+            <input name="download_id" placeholder="ARR download id" className={styles.input} />
+            <input name="movie_id" placeholder="Movie id" className={styles.input} />
+            <input name="series_id" placeholder="Series id" className={styles.input} />
+            <input name="episode_id" placeholder="Episode id" className={styles.input} />
+            <input name="release_title" placeholder="Release title" className={styles.input} />
+            <label className={styles.checkboxLabel}>
+                <input type="checkbox" name="is_duplicate" />
+                Duplicate
+            </label>
+            <button className={styles.button} name="intent" value="save-arr-correlation" type="submit" disabled={isActionSubmitting}>
+                Save
+            </button>
+        </Form>
     );
 }
 
@@ -203,18 +388,40 @@ function WorkerRows({
 }) {
     return (
         <div className={styles.workerGrid}>
-            <WorkerRow label="Download" active={fullStatus?.worker_queues.download_active ?? 0} ready={fullStatus?.worker_queues.download_ready ?? 0} retry={fullStatus?.worker_queues.download_retry ?? 0} />
-            <WorkerRow label="Verify" active={verify?.leased ?? fullStatus?.worker_queues.verify_active ?? 0} ready={verify?.ready ?? fullStatus?.worker_queues.verify_ready ?? 0} retry={verify?.retry ?? fullStatus?.worker_queues.verify_retry ?? 0} />
-            <WorkerRow label="Repair" active={repair?.leased ?? fullStatus?.worker_queues.repair_active ?? 0} ready={repair?.ready ?? fullStatus?.worker_queues.repair_ready ?? 0} retry={repair?.retry ?? fullStatus?.worker_queues.repair_retry ?? 0} />
+            <WorkerRow
+                label="Download"
+                active={fullStatus?.worker_queues.download_active ?? 0}
+                max={fullStatus?.worker_queues.download_max ?? fullStatus?.max_queue_workers ?? 0}
+                ready={fullStatus?.worker_queues.download_ready ?? 0}
+                retry={fullStatus?.worker_queues.download_retry ?? 0}
+                state={fullStatus?.worker_queues.download_state ?? "unknown"}
+            />
+            <WorkerRow
+                label="Verify"
+                active={verify?.leased ?? fullStatus?.worker_queues.verify_active ?? 0}
+                max={verify?.max ?? fullStatus?.worker_queues.verify_max ?? fullStatus?.max_verify_workers ?? 0}
+                ready={verify?.ready ?? fullStatus?.worker_queues.verify_ready ?? 0}
+                retry={verify?.retry ?? fullStatus?.worker_queues.verify_retry ?? 0}
+                state={verify?.state ?? fullStatus?.worker_queues.verify_state ?? "unknown"}
+            />
+            <WorkerRow
+                label="Repair"
+                active={repair?.leased ?? fullStatus?.worker_queues.repair_active ?? 0}
+                max={repair?.max ?? fullStatus?.worker_queues.repair_max ?? fullStatus?.max_repair_workers ?? 0}
+                ready={repair?.ready ?? fullStatus?.worker_queues.repair_ready ?? 0}
+                retry={repair?.retry ?? fullStatus?.worker_queues.repair_retry ?? 0}
+                state={repair?.state ?? fullStatus?.worker_queues.repair_state ?? "unknown"}
+            />
         </div>
     );
 }
 
-function WorkerRow({ label, active, ready, retry }: { label: string; active: number; ready: number; retry: number }) {
+function WorkerRow({ label, active, max, ready, retry, state }: { label: string; active: number; max: number; ready: number; retry: number; state: string }) {
     return (
         <div className={styles.workerRow}>
             <span className={styles.workerLabel}>{label}</span>
-            <span>active {active}</span>
+            <span>{state}</span>
+            <span>active {active}/{max}</span>
             <span>ready {ready}</span>
             <span>retry {retry}</span>
         </div>
@@ -251,12 +458,19 @@ function getDegradedMessages(
     repairStatus: RepairStatusResponse | null,
     fullStatusError: string | null,
     repairStatusError: string | null,
+    arrValidation: ArrValidationResponse | null,
+    arrValidationError: string | null,
+    arrNudgesError: string | null,
+    arrCorrelationsError: string | null,
     websocketState: "connecting" | "connected" | "disconnected"
 ): string[] {
     const messages: string[] = [];
     if (websocketState === "disconnected") messages.push("Live health updates are disconnected.");
     if (fullStatusError) messages.push(fullStatusError);
     if (repairStatusError) messages.push(repairStatusError);
+    if (arrValidationError) messages.push(arrValidationError);
+    if (arrNudgesError) messages.push(arrNudgesError);
+    if (arrCorrelationsError) messages.push(arrCorrelationsError);
     if (fullStatus?.rclone_invalidations.failed) messages.push("Rclone invalidation failures need attention.");
     if (fullStatus?.rclone_invalidations.pending || fullStatus?.rclone_invalidations.ready) messages.push("Rclone invalidations are waiting to drain.");
     if (fullStatus?.mount.enabled && !fullStatus.mount.ready) messages.push("Mounted filesystem is not ready.");
@@ -266,6 +480,9 @@ function getDegradedMessages(
     if (fullStatus?.arr_prioritization.stale_correlations) messages.push("ARR queue correlations are stale.");
     if (fullStatus?.arr_prioritization.duplicates) messages.push("ARR duplicate download requests were detected.");
     if (fullStatus?.arr_search_nudge.failed) messages.push("ARR search nudge commands have failed.");
+    for (const issue of arrValidation?.issues ?? []) {
+        if (issue.severity === "error") messages.push(issue.message);
+    }
     return messages;
 }
 
@@ -289,4 +506,11 @@ function formatBytes(value: number) {
         current /= 1024;
     }
     return `${current.toFixed(1)} PiB`;
+}
+
+function formatDate(value: string | null) {
+    if (!value) return "unknown";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
 }

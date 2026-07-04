@@ -6,6 +6,7 @@ using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Services;
 using NzbWebDAV.Streams.Caching;
 using NzbWebDAV.Utils;
 
@@ -17,6 +18,7 @@ public class ConfigManager
     private const int MaxQueueFileProcessingConcurrency = 256;
     private const int MaxAutoQueueDownloads = 16;
     private const int MaxManualQueueDownloads = 128;
+    private const int MaxManualWorkerJobsPerKind = 128;
     private const int MaxStreamingConnectionsPerStream = 256;
     private const int MaxTotalStreamingConnections = 512;
     private const int MaxHealthCheckConcurrency = 64;
@@ -264,9 +266,45 @@ public class ConfigManager
 
     public int GetAdaptiveMaxConcurrentQueueDownloads()
     {
-        if (!IsAdaptiveConnectionCountEnabled()) return GetMaxConcurrentQueueDownloads();
+        var configuredMax = int.Parse(GetConfigValue("queue.max-concurrent-downloads") ?? "0");
+        if (!IsAdaptiveConnectionCountEnabled() || configuredMax > 0) return GetMaxConcurrentQueueDownloads();
 
         return ApplyRuntimePressureLimit(GetAutomaticMaxConcurrentQueueDownloads(GetAdaptiveMaxDownloadConnections()));
+    }
+
+    public int GetMaxConcurrentVerifyJobs()
+    {
+        var configValue = int.Parse(GetConfigValue("queue.max-concurrent-verify") ?? "0");
+        if (configValue > 0)
+            return Math.Min(
+                Math.Clamp(configValue, 1, MaxManualWorkerJobsPerKind),
+                Math.Max(1, GetAdaptiveHealthCheckConcurrency()));
+
+        return GetAutomaticHealthCheckItemConcurrency(GetAdaptiveHealthCheckConcurrency());
+    }
+
+    public int GetAdaptiveMaxConcurrentVerifyJobs()
+    {
+        var configuredMax = int.Parse(GetConfigValue("queue.max-concurrent-verify") ?? "0");
+        if (!IsAdaptiveConnectionCountEnabled() || configuredMax > 0) return GetMaxConcurrentVerifyJobs();
+
+        return ApplyRuntimePressureLimit(GetAutomaticHealthCheckItemConcurrency(GetAdaptiveHealthCheckConcurrency()));
+    }
+
+    public int GetMaxConcurrentRepairJobs()
+    {
+        var configValue = int.Parse(GetConfigValue("queue.max-concurrent-repair") ?? "0");
+        if (configValue > 0) return Math.Clamp(configValue, 1, MaxManualWorkerJobsPerKind);
+
+        return GetAutomaticHealthCheckItemConcurrency(GetAdaptiveHealthCheckConcurrency());
+    }
+
+    public int GetAdaptiveMaxConcurrentRepairJobs()
+    {
+        var configuredMax = int.Parse(GetConfigValue("queue.max-concurrent-repair") ?? "0");
+        if (!IsAdaptiveConnectionCountEnabled() || configuredMax > 0) return GetMaxConcurrentRepairJobs();
+
+        return ApplyRuntimePressureLimit(GetAutomaticHealthCheckItemConcurrency(GetAdaptiveHealthCheckConcurrency()));
     }
 
     public int GetQueueFileProcessingConcurrency()
@@ -555,6 +593,11 @@ public class ConfigManager
         return Math.Clamp(Math.Min(connectionBased, coreBased), 1, MaxAutoQueueDownloads);
     }
 
+    private static int GetAutomaticHealthCheckItemConcurrency(int segmentConcurrency)
+    {
+        return Math.Clamp(segmentConcurrency / 2, 1, 4);
+    }
+
     private static int GetAutomaticQueueFileProcessingConcurrency(int downloadConnections)
     {
         return Math.Clamp(Math.Max(1, downloadConnections), 1, MaxQueueFileProcessingConcurrency);
@@ -702,8 +745,7 @@ public class ConfigManager
 
     public string GetDuplicateNzbBehavior()
     {
-        var defaultValue = "increment";
-        return GetConfigValue("api.duplicate-nzb-behavior") ?? defaultValue;
+        return ArrOperationsService.NormalizeDuplicateBehavior(GetConfigValue("api.duplicate-nzb-behavior"));
     }
 
     public HashSet<string> GetBlocklistedFiles()

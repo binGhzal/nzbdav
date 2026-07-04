@@ -19,7 +19,8 @@ public class AddFileController(
     QueueManager queueManager,
     ConfigManager configManager,
     WebsocketManager websocketManager,
-    ArrDownloadReportService arrDownloadReportService
+    ArrDownloadReportService arrDownloadReportService,
+    ArrOperationsService arrOperationsService
 ) : SabApiController.BaseController(httpContext, configManager)
 {
     private static readonly XmlReaderSettings XmlSettings = new()
@@ -34,6 +35,18 @@ public class AddFileController(
             throw new BadHttpRequestException("Invalid nzbFile/name param");
 
         var id = Guid.NewGuid();
+        var jobName = FilenameUtil.GetJobName(request.FileName);
+        if (ConfigManager.GetDuplicateNzbBehavior() == "reject"
+            && await arrOperationsService.HasRejectableDuplicateAsync(
+                    dbClient.Ctx,
+                    request.FileName,
+                    jobName,
+                    request.Category,
+                    request.CancellationToken)
+                .ConfigureAwait(false))
+        {
+            throw new BadHttpRequestException("Duplicate NZB rejected because an equivalent item is already active or recently completed.");
+        }
 
         // write the file to the blob-store
         await using var stream = request.NzbFileStream;
@@ -64,7 +77,7 @@ public class AddFileController(
                 Id = id,
                 CreatedAt = DateTime.Now,
                 FileName = request.FileName,
-                JobName = FilenameUtil.GetJobName(request.FileName),
+                JobName = jobName,
                 NzbFileSize = nzbFileStream.Length,
                 TotalSegmentBytes = totalSegmentBytes,
                 Category = request.Category,

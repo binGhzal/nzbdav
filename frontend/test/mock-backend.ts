@@ -34,6 +34,8 @@ let queuePaused = false;
 let requests: RecordedRequest[] = [];
 let repairRunStatus: "Running" | "Cancelled" = "Running";
 let repairBrokenFilesCleared = false;
+let arrFailedNudgesCleared = false;
+let arrCorrelationDeleted = false;
 
 const queueSlots: QueueSlot[] = [
   createQueueSlot("11111111-1111-1111-1111-111111111111", "Downloading Release", "movies", "Downloading", "45", "20"),
@@ -224,6 +226,9 @@ const server = http.createServer(async (req, res) => {
         { configName: "webdav.user", configValue: "admin" },
         { configName: "usenet.max-download-connections", configValue: "15" },
         { configName: "usenet.adaptive-connections-enabled", configValue: "true" },
+        { configName: "queue.max-concurrent-downloads", configValue: "4" },
+        { configName: "queue.max-concurrent-verify", configValue: "2" },
+        { configName: "queue.max-concurrent-repair", configValue: "1" },
       ],
     });
     return;
@@ -272,6 +277,84 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === "/api/repair/clear" && req.method === "POST") {
     repairBrokenFilesCleared = true;
+    writeJson(res, { status: true });
+    return;
+  }
+
+  if (url.pathname === "/api/arr/validation") {
+    writeJson(res, getArrValidationResponse());
+    return;
+  }
+
+  if (url.pathname === "/api/arr/search-nudges") {
+    writeJson(res, getArrSearchNudgesResponse());
+    return;
+  }
+
+  if (url.pathname === "/api/arr/search-nudges/nudge-2/retry" && req.method === "POST") {
+    arrFailedNudgesCleared = true;
+    writeJson(res, {
+      id: "nudge-2",
+      arr_app: "sonarr",
+      instance_key: "sonarr:test",
+      instance_host: "http://sonarr:8989",
+      command_name: "EpisodeSearch",
+      command_id: null,
+      targets: [123],
+      mode: "apply",
+      status: "planned",
+      score: 250,
+      reasons: ["recently-aired"],
+      error: null,
+      created_at: "2026-07-02T08:11:00Z",
+      completed_at: null,
+      next_allowed_at: "2026-07-02T08:11:00Z",
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/arr/search-nudges/clear" && req.method === "POST") {
+    arrFailedNudgesCleared = true;
+    writeJson(res, { status: true, deleted: 1 });
+    return;
+  }
+
+  if (url.pathname === "/api/arr/correlations" && req.method === "GET") {
+    writeJson(res, getArrCorrelationsResponse());
+    return;
+  }
+
+  if (url.pathname === "/api/arr/correlations" && req.method === "POST") {
+    writeJson(res, {
+      correlation: {
+        id: "corr-new",
+        queue_item_id: "11111111-1111-1111-1111-111111111111",
+        history_item_id: null,
+        arr_app: "sonarr",
+        instance_key: "sonarr:test",
+        instance_host: "http://sonarr:8989",
+        download_id: "11111111-1111-1111-1111-111111111111",
+        media_key: "sonarr:episode:123",
+        movie_id: null,
+        series_id: 456,
+        episode_id: 123,
+        season_number: 1,
+        artist_id: null,
+        album_id: null,
+        release_title: "Manual Release",
+        category: "tv",
+        quality: "HD",
+        status: "manual",
+        is_upgrade: false,
+        is_duplicate: false,
+        last_seen_at: "2026-07-02T08:14:00Z",
+      },
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/arr/correlations/corr-1" && req.method === "DELETE") {
+    arrCorrelationDeleted = true;
     writeJson(res, { status: true });
     return;
   }
@@ -356,6 +439,8 @@ function getRepairStatusResponse() {
     last_run: getRepairRun(),
     broken_files: brokenFiles,
     verify_queue: {
+      max: 2,
+      state: "saturated",
       pending: 3,
       retry: 1,
       leased: 2,
@@ -366,6 +451,8 @@ function getRepairStatusResponse() {
       total: 14,
     },
     repair_queue: {
+      max: 1,
+      state: "active",
       pending: 1,
       retry: 0,
       leased: 1,
@@ -386,6 +473,8 @@ function getFullStatusResponse() {
       jobs: 2,
       jobs_active: 1,
       max_queue_workers: 4,
+      max_verify_workers: 2,
+      max_repair_workers: 1,
       max_download_connections: 40,
       adaptive_max_download_connections: 32,
       queue_file_processing_concurrency: 4,
@@ -437,15 +526,21 @@ function getFullStatusResponse() {
         },
       ],
       worker_queues: {
+        download_max: 4,
+        download_state: "active",
         download_active: 1,
         download_waiting: 2,
         download_ready: 2,
         download_retry: 0,
         download_quarantined: 0,
+        verify_max: 2,
+        verify_state: "saturated",
         verify_active: 2,
         verify_ready: 3,
         verify_retry: 1,
         verify_quarantined: 0,
+        repair_max: 1,
+        repair_state: "active",
         repair_active: 1,
         repair_action_needed: 1,
         repair_ready: 1,
@@ -490,6 +585,106 @@ function getFullStatusResponse() {
       threadpool_pending_work_items: 3,
     },
   };
+}
+
+function getArrValidationResponse() {
+  return {
+    generated_at: "2026-07-02T08:12:00Z",
+    instance_count: 2,
+    queue_items: 3,
+    history_items: 1,
+    correlations: 2,
+    stale_correlations: 0,
+    correlation_coverage_percent: 67,
+    active_priority_hints: 1,
+    duplicates: 0,
+    search_nudges: {
+      planned: 1,
+      executed: 1,
+      failed: arrFailedNudgesCleared ? 0 : 1,
+      last_command_at: "2026-07-02T08:11:00Z",
+    },
+    lifecycle_states: [
+      { state: "Queued", count: 2 },
+      { state: "Imported", count: 1 },
+    ],
+    issues: arrFailedNudgesCleared
+      ? []
+      : [{ severity: "warning", code: "search_nudge_failures", message: "One or more ARR search nudge commands failed." }],
+  };
+}
+
+function getArrSearchNudgesResponse() {
+  const commands = [
+    {
+      id: "nudge-1",
+      arr_app: "radarr",
+      instance_key: "radarr:test",
+      instance_host: "http://radarr:7878",
+      command_name: "MoviesSearch",
+      command_id: 42,
+      targets: [99],
+      mode: "apply",
+      status: "executed",
+      score: 300,
+      reasons: ["collection-completion"],
+      error: null,
+      created_at: "2026-07-02T08:10:00Z",
+      completed_at: "2026-07-02T08:10:02Z",
+      next_allowed_at: "2026-07-02T14:10:00Z",
+    },
+  ];
+  if (!arrFailedNudgesCleared) {
+    commands.push({
+      id: "nudge-2",
+      arr_app: "sonarr",
+      instance_key: "sonarr:test",
+      instance_host: "http://sonarr:8989",
+      command_name: "EpisodeSearch",
+      command_id: null,
+      targets: [123],
+      mode: "apply",
+      status: "failed",
+      score: 250,
+      reasons: ["recently-aired"],
+      error: "ARR timeout",
+      created_at: "2026-07-02T08:11:00Z",
+      completed_at: "2026-07-02T08:11:30Z",
+      next_allowed_at: "2026-07-02T14:11:00Z",
+    });
+  }
+  return { commands };
+}
+
+function getArrCorrelationsResponse() {
+  const correlations = arrCorrelationDeleted
+    ? []
+    : [
+        {
+          id: "corr-1",
+          queue_item_id: "11111111-1111-1111-1111-111111111111",
+          history_item_id: null,
+          arr_app: "sonarr",
+          instance_key: "sonarr:test",
+          instance_host: "http://sonarr:8989",
+          download_id: "11111111-1111-1111-1111-111111111111",
+          media_key: "sonarr:episode:123",
+          movie_id: null,
+          series_id: 456,
+          episode_id: 123,
+          season_number: 1,
+          artist_id: null,
+          album_id: null,
+          release_title: "Downloading Release",
+          category: "tv",
+          quality: "HD",
+          status: "downloading",
+          is_upgrade: false,
+          is_duplicate: false,
+          last_seen_at: "2026-07-02T08:10:00Z",
+        },
+      ];
+  return { correlations };
 }
 
 const websocketServer = new WebSocketServer({ noServer: true });

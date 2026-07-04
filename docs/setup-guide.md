@@ -121,7 +121,36 @@ environment:
   - NZBDAV_DATABASE_CONNECTION_STRING=Host=postgres;Port=5432;Database=nzbdav;Username=nzbdav;Password=replace-with-db-password
 ```
 
-The SQLite database download/backup path only applies to SQLite. Moving existing data from SQLite to PostgreSQL is not automated yet; plan a manual export/import if you switch providers after running NZBDav.
+Existing SQLite installs can be moved to PostgreSQL with the repo-local JSON transfer path. Stop NZBDav first so the export is consistent, then export from the SQLite config volume:
+
+```bash
+docker run --rm \
+  -v ./config:/config \
+  -v "$PWD":/transfer \
+  ghcr.io/binghzal/nzbdav:latest \
+  --db-export-json /transfer/nzbdav-transfer.json
+```
+
+Start a PostgreSQL-backed NZBDav container with an empty database and import the snapshot:
+
+```bash
+docker run --rm \
+  -e NZBDAV_DATABASE_PROVIDER=postgres \
+  -e NZBDAV_DATABASE_CONNECTION_STRING='Host=postgres;Port=5432;Database=nzbdav;Username=nzbdav;Password=replace-with-db-password' \
+  -v "$PWD":/transfer \
+  ghcr.io/binghzal/nzbdav:latest \
+  --db-import-json /transfer/nzbdav-transfer.json --replace
+```
+
+The transfer covers database rows only. Copy `/config/blobs` from the SQLite deployment into the new config volume before starting production traffic, because NZB blob payloads live outside the database.
+
+**E. ARR Operations**
+
+Configure Radarr and Sonarr in `Settings` > `Radarr/Sonarr`. NZBDav keeps ARR as the source of truth: ARR still owns wanted state, quality decisions, collections, imports, naming, and library paths. NZBDav only uses ARR metadata to order already-requested downloads, report lifecycle state through SAB-compatible queue/history/status responses, and optionally nudge ARR to search selected missing media through ARR APIs.
+
+Keep search nudging in `report` mode first. The Health page shows ARR validation, command history, correlation coverage, duplicate-loop diagnostics, and manual correlation repair. After report mode shows correct Sonarr/Radarr command plans and stable correlation coverage, switch search nudging to apply mode only if you want NZBDav to ask ARR to run bounded `EpisodeSearch` or `MoviesSearch` commands.
+
+If ARR repeats the same download request, leave duplicate handling in diagnostic mode while validating. The SAB settings page also has an explicit `Reject duplicate add requests` option for operators who want hard duplicate suppression after confirming the diagnostics are accurate.
 
 ### 3. Speed Tuning (Optional)
 
@@ -155,6 +184,8 @@ You can find the optimal **Max Download Connections** for your network (`Setting
 Open `Health` in the WebUI for live repair, cache, provider, worker, mount, and rclone invalidation status. The page can start a repair verification run, cancel an active run, and clear broken-file repair records after review.
 
 Repair checking uses a separate connection budget so background verification does not steal active streaming slots. The defaults are conservative: `repair.connection-budget-percent=20` with at least one connection. Provider errors and unknown results are retried and reported as degraded state; NZBDav only queues repair for definitive missing-on-all-provider cases.
+
+Download, verify, and repair work run as separate queue lanes. In `Settings` > `WebDAV` > `Advanced Throughput`, set `queue.max-concurrent-downloads`, `queue.max-concurrent-verify`, and `queue.max-concurrent-repair` independently. Use `0` for automatic sizing, or set a positive value as a hard per-lane cap. A saturated verify lane will not consume repair slots, and a saturated repair lane will not consume download slots.
 
 The SAB-compatible `status` and `fullstatus` responses include additive `cache`, `mount`, `repair_runs`, `provider_diagnostics`, `worker_queues`, and `rclone_invalidations` fields for dashboards and ARR/Plex operational checks.
 

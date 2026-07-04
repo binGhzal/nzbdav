@@ -21,12 +21,15 @@ const topicSubscriptions = {
 
 export async function loader() {
     const enabledKey = 'repair.enable';
-    const [queueData, historyData, config, repairStatus, fullStatus] = await Promise.all([
+    const [queueData, historyData, config, repairStatus, fullStatus, arrValidation, arrNudges, arrCorrelations] = await Promise.all([
         backendClient.getHealthCheckQueue(30),
         backendClient.getHealthCheckHistory(),
         backendClient.getConfig([enabledKey]),
         loadOptional(() => backendClient.getRepairStatus()),
-        loadOptional(() => backendClient.getFullStatus())
+        loadOptional(() => backendClient.getFullStatus()),
+        loadOptional(() => backendClient.getArrValidation()),
+        loadOptional(() => backendClient.getArrSearchNudges(25)),
+        loadOptional(() => backendClient.getArrCorrelations(25))
     ]);
 
     return {
@@ -38,6 +41,12 @@ export async function loader() {
         repairStatusError: repairStatus.error,
         fullStatus: fullStatus.data,
         fullStatusError: fullStatus.error,
+        arrValidation: arrValidation.data,
+        arrValidationError: arrValidation.error,
+        arrNudges: arrNudges.data,
+        arrNudgesError: arrNudges.error,
+        arrCorrelations: arrCorrelations.data,
+        arrCorrelationsError: arrCorrelations.error,
         isEnabled: config
             .filter(x => x.configName === enabledKey)
             .filter(x => x.configValue.toLowerCase() === "true")
@@ -63,6 +72,45 @@ export async function action({ request }: Route.ActionArgs) {
 
     if (intent === "clear") {
         await backendClient.clearRepairRuns();
+        return { ok: true };
+    }
+
+    if (intent === "retry-arr-nudge") {
+        const id = formData.get("id")?.toString();
+        if (!id) throw new Error("ARR search nudge id is required.");
+        await backendClient.retryArrSearchNudge(id);
+        return { ok: true };
+    }
+
+    if (intent === "clear-arr-failed-nudges") {
+        await backendClient.clearArrSearchNudges("failed");
+        return { ok: true };
+    }
+
+    if (intent === "save-arr-correlation") {
+        await backendClient.saveArrCorrelation({
+            id: emptyToUndefined(formData.get("id")?.toString()),
+            nzo_id: emptyToUndefined(formData.get("nzo_id")?.toString()),
+            arr_app: emptyToUndefined(formData.get("arr_app")?.toString()),
+            instance_key: emptyToUndefined(formData.get("instance_key")?.toString()),
+            instance_host: emptyToUndefined(formData.get("instance_host")?.toString()),
+            download_id: emptyToUndefined(formData.get("download_id")?.toString()),
+            movie_id: numberOrUndefined(formData.get("movie_id")?.toString()),
+            series_id: numberOrUndefined(formData.get("series_id")?.toString()),
+            episode_id: numberOrUndefined(formData.get("episode_id")?.toString()),
+            season_number: numberOrUndefined(formData.get("season_number")?.toString()),
+            release_title: emptyToUndefined(formData.get("release_title")?.toString()),
+            category: emptyToUndefined(formData.get("category")?.toString()),
+            quality: emptyToUndefined(formData.get("quality")?.toString()),
+            is_duplicate: formData.get("is_duplicate") === "on"
+        });
+        return { ok: true };
+    }
+
+    if (intent === "delete-arr-correlation") {
+        const id = formData.get("id")?.toString();
+        if (!id) throw new Error("ARR correlation id is required.");
+        await backendClient.deleteArrCorrelation(id);
         return { ok: true };
     }
 
@@ -187,6 +235,12 @@ export default function Health({ loaderData }: Route.ComponentProps) {
                     fullStatusError={loaderData.fullStatusError}
                     repairStatus={loaderData.repairStatus}
                     repairStatusError={loaderData.repairStatusError}
+                    arrValidation={loaderData.arrValidation}
+                    arrValidationError={loaderData.arrValidationError}
+                    arrNudges={loaderData.arrNudges}
+                    arrNudgesError={loaderData.arrNudgesError}
+                    arrCorrelations={loaderData.arrCorrelations}
+                    arrCorrelationsError={loaderData.arrCorrelationsError}
                     websocketState={websocketState}
                     isActionSubmitting={isActionSubmitting}
                 />
@@ -215,6 +269,16 @@ export default function Health({ loaderData }: Route.ComponentProps) {
             </div>
         </div>
     );
+}
+
+function emptyToUndefined(value: string | undefined) {
+    return value && value.trim() ? value.trim() : undefined;
+}
+
+function numberOrUndefined(value: string | undefined) {
+    if (!value || !value.trim()) return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 async function loadOptional<T>(load: () => Promise<T>): Promise<{ data: T | null; error: string | null }> {

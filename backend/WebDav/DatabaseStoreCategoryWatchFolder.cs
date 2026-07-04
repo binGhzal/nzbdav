@@ -20,7 +20,8 @@ public class DatabaseStoreCategoryWatchFolder(
     ConfigManager configManager,
     QueueManager queueManager,
     WebsocketManager websocketManager,
-    ArrDownloadReportService arrDownloadReportService
+    ArrDownloadReportService arrDownloadReportService,
+    ArrOperationsService arrOperationsService
 ) : BaseStoreReadonlyCollection
 {
     public override string Name => category;
@@ -52,7 +53,8 @@ public class DatabaseStoreCategoryWatchFolder(
             queueManager,
             configManager,
             websocketManager,
-            arrDownloadReportService);
+            arrDownloadReportService,
+            arrOperationsService);
         var addFileRequest = new AddFileRequest()
         {
             FileName = request.Name,

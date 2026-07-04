@@ -284,6 +284,46 @@ class BackendClient {
         return await this.postRepairAction<{ status: boolean }>("/api/repair/clear", "clear repair runs");
     }
 
+    public async getArrValidation(): Promise<ArrValidationResponse> {
+        return await this.getJson<ArrValidationResponse>("/api/arr/validation", "get ARR validation");
+    }
+
+    public async getArrSearchNudges(limit = 50): Promise<ArrSearchNudgeCommandsResponse> {
+        return await this.getJson<ArrSearchNudgeCommandsResponse>(`/api/arr/search-nudges?limit=${limit}`, "get ARR search nudge history");
+    }
+
+    public async retryArrSearchNudge(id: string): Promise<ArrSearchNudgeCommand> {
+        return await this.postJson<ArrSearchNudgeCommand>(`/api/arr/search-nudges/${id}/retry`, undefined, "retry ARR search nudge");
+    }
+
+    public async clearArrSearchNudges(status?: string): Promise<{ status: boolean, deleted: number }> {
+        const query = status ? `?status=${encodeURIComponent(status)}` : "";
+        return await this.postJson<{ status: boolean, deleted: number }>(`/api/arr/search-nudges/clear${query}`, undefined, "clear ARR search nudges");
+    }
+
+    public async getArrCorrelations(limit = 50): Promise<ArrCorrelationsResponse> {
+        return await this.getJson<ArrCorrelationsResponse>(`/api/arr/correlations?limit=${limit}`, "get ARR correlations");
+    }
+
+    public async saveArrCorrelation(request: ArrManualCorrelationRequest): Promise<ArrCorrelationEnvelope> {
+        return await this.postJson<ArrCorrelationEnvelope>("/api/arr/correlations", request, "save ARR correlation");
+    }
+
+    public async deleteArrCorrelation(id: string): Promise<{ status: boolean }> {
+        const url = process.env.BACKEND_URL + `/api/arr/correlations/${id}`;
+
+        const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
+        const response = await fetch(url, {
+            method: "DELETE",
+            headers: { "x-api-key": apiKey }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to delete ARR correlation: ${(await response.json()).error}`);
+        }
+        return await response.json();
+    }
+
     private async postRepairAction<T>(path: string, description: string): Promise<T> {
         const url = process.env.BACKEND_URL + path;
 
@@ -291,6 +331,38 @@ class BackendClient {
         const response = await fetch(url, {
             method: "POST",
             headers: { "x-api-key": apiKey }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to ${description}: ${(await response.json()).error}`);
+        }
+        return await response.json();
+    }
+
+    private async getJson<T>(path: string, description: string): Promise<T> {
+        const url = process.env.BACKEND_URL + path;
+        const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
+        const response = await fetch(url, {
+            method: "GET",
+            headers: { "x-api-key": apiKey }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to ${description}: ${(await response.json()).error}`);
+        }
+        return await response.json();
+    }
+
+    private async postJson<T>(path: string, body: unknown, description: string): Promise<T> {
+        const url = process.env.BACKEND_URL + path;
+        const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "x-api-key": apiKey,
+                "Content-Type": "application/json",
+            },
+            body: body === undefined ? undefined : JSON.stringify(body)
         });
 
         if (!response.ok) {
@@ -442,6 +514,8 @@ export type FullStatusResponse = {
     jobs: number,
     jobs_active: number,
     max_queue_workers: number,
+    max_verify_workers: number,
+    max_repair_workers: number,
     max_download_connections: number,
     adaptive_max_download_connections: number,
     queue_file_processing_concurrency: number,
@@ -513,15 +587,21 @@ export type ProviderDiagnosticStatus = {
 }
 
 export type WorkerQueueStatus = {
+    download_max: number,
+    download_state: string,
     download_active: number,
     download_waiting: number,
     download_ready: number,
     download_retry: number,
     download_quarantined: number,
+    verify_max: number,
+    verify_state: string,
     verify_active: number,
     verify_ready: number,
     verify_retry: number,
     verify_quarantined: number,
+    repair_max: number,
+    repair_state: string,
     repair_active: number,
     repair_action_needed: number,
     repair_ready: number,
@@ -618,7 +698,111 @@ export type RepairBrokenFile = {
     created_at: string,
 }
 
+export type ArrValidationResponse = {
+    generated_at: string,
+    instance_count: number,
+    queue_items: number,
+    history_items: number,
+    correlations: number,
+    stale_correlations: number,
+    correlation_coverage_percent: number,
+    active_priority_hints: number,
+    duplicates: number,
+    search_nudges: {
+        planned: number,
+        executed: number,
+        failed: number,
+        last_command_at: string | null,
+    },
+    lifecycle_states: Array<{ state: string, count: number }>,
+    issues: ArrValidationIssue[],
+}
+
+export type ArrValidationIssue = {
+    severity: string,
+    code: string,
+    message: string,
+}
+
+export type ArrSearchNudgeCommandsResponse = {
+    commands: ArrSearchNudgeCommand[],
+}
+
+export type ArrSearchNudgeCommand = {
+    id: string,
+    arr_app: string,
+    instance_key: string,
+    instance_host: string,
+    command_name: string,
+    command_id: number | null,
+    targets: number[],
+    mode: string,
+    status: string,
+    score: number,
+    reasons: string[],
+    error: string | null,
+    created_at: string,
+    completed_at: string | null,
+    next_allowed_at: string,
+}
+
+export type ArrCorrelationsResponse = {
+    correlations: ArrDownloadCorrelation[],
+}
+
+export type ArrDownloadCorrelation = {
+    id: string,
+    queue_item_id: string | null,
+    history_item_id: string | null,
+    arr_app: string,
+    instance_key: string,
+    instance_host: string,
+    download_id: string | null,
+    media_key: string | null,
+    movie_id: number | null,
+    series_id: number | null,
+    episode_id: number | null,
+    season_number: number | null,
+    artist_id: number | null,
+    album_id: number | null,
+    release_title: string | null,
+    category: string | null,
+    quality: string | null,
+    status: string | null,
+    is_upgrade: boolean,
+    is_duplicate: boolean,
+    last_seen_at: string,
+}
+
+export type ArrManualCorrelationRequest = {
+    id?: string,
+    queue_item_id?: string,
+    history_item_id?: string,
+    nzo_id?: string,
+    arr_app?: string,
+    instance_key?: string,
+    instance_host?: string,
+    download_id?: string,
+    movie_id?: number,
+    series_id?: number,
+    episode_id?: number,
+    season_number?: number,
+    artist_id?: number,
+    album_id?: number,
+    release_title?: string,
+    category?: string,
+    quality?: string,
+    is_upgrade?: boolean,
+    is_duplicate?: boolean,
+}
+
+export type ArrCorrelationEnvelope = {
+    correlation: ArrDownloadCorrelation,
+}
+
 export type RepairWorkerQueue = {
+    max: number,
+    state: string,
     pending: number,
     retry: number,
     leased: number,

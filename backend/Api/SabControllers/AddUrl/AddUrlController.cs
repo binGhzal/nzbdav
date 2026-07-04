@@ -15,7 +15,8 @@ public class AddUrlController(
     QueueManager queueManager,
     ConfigManager configManager,
     WebsocketManager websocketManager,
-    ArrDownloadReportService arrDownloadReportService
+    ArrDownloadReportService arrDownloadReportService,
+    ArrOperationsService arrOperationsService
 ) : SabApiController.BaseController(httpContext, configManager)
 {
     public async Task<AddUrlResponse> AddUrlAsync(AddUrlRequest request)
@@ -26,7 +27,8 @@ public class AddUrlController(
             queueManager,
             ConfigManager,
             websocketManager,
-            arrDownloadReportService);
+            arrDownloadReportService,
+            arrOperationsService);
         var response = await controller.AddFileAsync(request).ConfigureAwait(false);
         return new AddUrlResponse()
         {

@@ -17,7 +17,8 @@ public class DatabaseStoreWatchFolder(
     ConfigManager configManager,
     QueueManager queueManager,
     WebsocketManager websocketManager,
-    ArrDownloadReportService arrDownloadReportService
+    ArrDownloadReportService arrDownloadReportService,
+    ArrOperationsService arrOperationsService
 ) : BaseStoreReadonlyCollection
 {
     public override string Name => davDirectory.Name;
@@ -29,7 +30,8 @@ public class DatabaseStoreWatchFolder(
         var categories = await GetCategoriesAsync(request.CancellationToken).ConfigureAwait(false);
         if (!categories.Contains(request.Name)) return null;
         return new DatabaseStoreCategoryWatchFolder(
-            request.Name, dbClient, configManager, queueManager, websocketManager, arrDownloadReportService);
+            request.Name, dbClient, configManager, queueManager, websocketManager, arrDownloadReportService,
+            arrOperationsService);
     }
 
     protected override async Task<IStoreItem[]> GetAllItemsAsync(CancellationToken cancellationToken)
@@ -37,7 +39,8 @@ public class DatabaseStoreWatchFolder(
         var categories = await GetCategoriesAsync(cancellationToken).ConfigureAwait(false);
         return categories
             .Select(c => new DatabaseStoreCategoryWatchFolder(
-                c, dbClient, configManager, queueManager, websocketManager, arrDownloadReportService))
+                c, dbClient, configManager, queueManager, websocketManager, arrDownloadReportService,
+                arrOperationsService))
             .Select(IStoreItem (x) => x)
             .ToArray();
     }

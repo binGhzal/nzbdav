@@ -23,6 +23,10 @@
 * extend ARR-driven design with ARR search nudging and stable SAB queue/history lifecycle reporting to prevent repeated ARR request loops.
 * implement ARR queue correlation, lifecycle reporting, report/apply queue priority hints, Sonarr/Radarr search nudge command history, and additive SAB/status diagnostics.
 * expose ARR priority metadata in queue rows plus ARR prioritization/search/download-report panels in the WebUI Health and Settings surfaces.
+* add ARR operations APIs and Health-page controls for report-mode validation, search command retry/clear history, and manual queue/history correlation correction.
+* add ARR custom-script event ingestion endpoints so Radarr/Sonarr/Lidarr webhook scripts can attach media metadata and lifecycle events to NZBDav downloads.
+* add a SQLite-to-PostgreSQL JSON transfer command path for existing installs.
+* add independent download, verify, and repair queue lane caps plus per-lane state reporting in status/fullstatus and the WebUI.
 * add opt-in relative `.rclonelink`/DFS symlink targets for Docker host/container path mismatches.
 
 ### Performance
@@ -66,6 +70,7 @@
 * fix DFS stat timestamps for static/root DAV nodes so FUSE `getattr` does not fail on unset creation times.
 * allow high operator overrides for queue and streaming connection settings without silently clamping them to old WebUI limits.
 * treat NNTP ports `563` and `443` as TLS ports even when imported provider JSON forgot `UseSsl=true`.
+* add an explicit duplicate-reject SAB add mode for validated ARR duplicate loops while preserving diagnostic/report-only defaults.
 
 ### Infrastructure
 

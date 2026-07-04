@@ -156,6 +156,7 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                 >
                     <option value="increment">Download again with suffix (2)</option>
                     <option value="mark-failed">Mark the download as failed</option>
+                    <option value="reject">Reject duplicate add requests</option>
                 </Form.Select>
                 <Form.Text id="duplicate-nzb-behavior-help" muted>
                     When an NZB is added, a new folder is created on the webdav. What should be done when the download folder for an NZB already exists?

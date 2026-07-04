@@ -16,8 +16,16 @@ using Serilog;
 
 namespace NzbWebDAV.Database;
 
-public sealed class DavDatabaseContext() : DbContext(CreateOptions())
+public sealed class DavDatabaseContext : DbContext
 {
+    public DavDatabaseContext() : base(CreateOptions())
+    {
+    }
+
+    public DavDatabaseContext(DbContextOptions<DavDatabaseContext> options) : base(options)
+    {
+    }
+
     public static string ConfigPath => EnvironmentUtil.GetVariable("CONFIG_PATH") ?? "/config";
     public static string DatabaseFilePath => Path.Join(ConfigPath, "db.sqlite");
     public static string DatabaseProvider => EnvironmentUtil.GetVariable("NZBDAV_DATABASE_PROVIDER") ?? "sqlite";
