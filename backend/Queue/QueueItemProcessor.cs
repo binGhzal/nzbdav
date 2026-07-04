@@ -26,16 +26,19 @@ public class QueueItemProcessor(
     DavDatabaseClient dbClient,
     INntpClient usenetClient,
     ConfigManager configManager,
+    QueueWorkLaneCoordinator queueWorkLaneCoordinator,
     WebsocketManager websocketManager,
     ArrDownloadReportService arrDownloadReportService,
     IProgress<int> progress,
-    CancellationToken ct
+    CancellationToken ct,
+    Action<QueueProcessingStage>? onStageChanged = null
 )
 {
     public async Task<ProcessingOutcome> ProcessAsync()
     {
         // initialize
         var startTime = DateTime.Now;
+        onStageChanged?.Invoke(QueueProcessingStage.Downloading);
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Downloading");
         await arrDownloadReportService
             .RecordQueueLifecycleAsync(dbClient, queueItem, "Downloading", ct: ct)
@@ -180,6 +183,7 @@ public class QueueItemProcessor(
         var healthCheckCategories = configManager.GetEnsureArticleExistenceCategories();
         if (healthCheckCategories.Contains(queueItem.Category.ToLower()))
         {
+            onStageChanged?.Invoke(QueueProcessingStage.WaitingForVerify);
             _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Verifying");
             await arrDownloadReportService
                 .RecordQueueLifecycleAsync(dbClient, queueItem, "Verifying", ct: ct)
@@ -193,13 +197,20 @@ public class QueueItemProcessor(
                 .ToPercentage(articlesToCheck.Count);
             var healthCheckConcurrency = configManager
                 .GetAdaptiveHealthCheckConcurrency();
-            await usenetClient
-                .CheckAllSegmentsAsync(articlesToCheck, healthCheckConcurrency, part3Progress, ct)
-                .ConfigureAwait(false);
+            using (await queueWorkLaneCoordinator
+                       .EnterVerifyAsync(configManager.GetAdaptiveMaxConcurrentVerifyJobs(), ct)
+                       .ConfigureAwait(false))
+            {
+                onStageChanged?.Invoke(QueueProcessingStage.Verifying);
+                await usenetClient
+                    .CheckAllSegmentsAsync(articlesToCheck, healthCheckConcurrency, part3Progress, ct)
+                    .ConfigureAwait(false);
+            }
             checkedFullHealth = true;
         }
 
         // update the database
+        onStageChanged?.Invoke(QueueProcessingStage.Moving);
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Moving");
         await arrDownloadReportService
             .RecordQueueLifecycleAsync(dbClient, queueItem, "Moving", ct: ct)

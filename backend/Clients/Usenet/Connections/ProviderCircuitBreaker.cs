@@ -65,11 +65,16 @@ public class ProviderCircuitBreaker
 
             if (_consecutiveFailures < FailureThreshold) return;
 
-            _trippedUntilMs = Environment.TickCount64 + (long)_currentCooldown.TotalMilliseconds;
-            Log.Warning(
-                "Provider {Provider} tripped after {Failures} consecutive failures. " +
-                "Skipping for {Cooldown}s.",
-                _providerName, _consecutiveFailures, _currentCooldown.TotalSeconds);
+            var now = Environment.TickCount64;
+            var alreadyTripped = _trippedUntilMs != 0 && now < _trippedUntilMs;
+            _trippedUntilMs = now + (long)_currentCooldown.TotalMilliseconds;
+            if (!alreadyTripped)
+            {
+                Log.Warning(
+                    "Provider {Provider} tripped after {Failures} consecutive failures. " +
+                    "Skipping for {Cooldown}s.",
+                    _providerName, _consecutiveFailures, _currentCooldown.TotalSeconds);
+            }
 
             _currentCooldown = TimeSpan.FromMilliseconds(
                 Math.Min(_currentCooldown.TotalMilliseconds * 2, MaxCooldown.TotalMilliseconds));
@@ -80,14 +85,19 @@ public class ProviderCircuitBreaker
     {
         lock (_lock)
         {
+            var now = Environment.TickCount64;
+            var alreadyTripped = _trippedUntilMs != 0 && now < _trippedUntilMs;
             _consecutiveFailures = FailureThreshold;
             _probeInFlight = 0;
-            _trippedUntilMs = Environment.TickCount64 + (long)MaxCooldown.TotalMilliseconds;
+            _trippedUntilMs = now + (long)MaxCooldown.TotalMilliseconds;
             _currentCooldown = MaxCooldown;
-            Log.Warning(
-                "Provider {Provider} tripped after a non-retryable connection failure. " +
-                "Skipping for {Cooldown}s.",
-                _providerName, MaxCooldown.TotalSeconds);
+            if (!alreadyTripped)
+            {
+                Log.Warning(
+                    "Provider {Provider} tripped after a non-retryable connection failure. " +
+                    "Skipping for {Cooldown}s.",
+                    _providerName, MaxCooldown.TotalSeconds);
+            }
         }
     }
 

@@ -20,6 +20,7 @@ public class QueueManager : IDisposable
     private readonly CancellationTokenSource? _cancellationTokenSource;
     private readonly SemaphoreSlim _queueLock = new(1, 1);
     private readonly ConfigManager _configManager;
+    private readonly QueueWorkLaneCoordinator _queueWorkLaneCoordinator;
     private readonly WebsocketManager _websocketManager;
     private readonly ArrDownloadReportService _arrDownloadReportService;
     private readonly Lock _inProgressQueueItemsLock = new();
@@ -30,12 +31,14 @@ public class QueueManager : IDisposable
     public QueueManager(
         UsenetStreamingClient usenetClient,
         ConfigManager configManager,
+        QueueWorkLaneCoordinator queueWorkLaneCoordinator,
         WebsocketManager websocketManager,
         ArrDownloadReportService arrDownloadReportService
     )
     {
         _usenetClient = usenetClient;
         _configManager = configManager;
+        _queueWorkLaneCoordinator = queueWorkLaneCoordinator;
         _websocketManager = websocketManager;
         _arrDownloadReportService = arrDownloadReportService;
         _cancellationTokenSource = CancellationTokenSource
@@ -59,6 +62,20 @@ public class QueueManager : IDisposable
                 .ThenBy(x => x.QueueItem.CreatedAt)
                 .Select(x => (x.QueueItem, x.ProgressPercentage))
                 .ToList();
+        }
+    }
+
+    public QueueLaneSnapshot GetLaneSnapshot()
+    {
+        lock (_inProgressQueueItemsLock)
+        {
+            var values = _inProgressQueueItems.Values.ToList();
+            return new QueueLaneSnapshot(
+                TotalActive: values.Count,
+                DownloadActive: values.Count(x => x.Stage == QueueProcessingStage.Downloading),
+                WaitingForVerify: values.Count(x => x.Stage == QueueProcessingStage.WaitingForVerify),
+                Verifying: values.Count(x => x.Stage == QueueProcessingStage.Verifying),
+                Moving: values.Count(x => x.Stage == QueueProcessingStage.Moving));
         }
     }
 
@@ -177,7 +194,13 @@ public class QueueManager : IDisposable
         try
         {
             var activeIds = GetInProgressQueueItemIds();
-            if (activeIds.Count >= _configManager.GetAdaptiveMaxConcurrentQueueDownloads())
+            var laneSnapshot = GetLaneSnapshot();
+            var maxDownloadWorkers = _configManager.GetAdaptiveMaxConcurrentQueueDownloads();
+            var maxVerifyWorkers = _configManager.GetAdaptiveMaxConcurrentVerifyJobs();
+            if (laneSnapshot.DownloadActive >= maxDownloadWorkers)
+                return false;
+
+            if (laneSnapshot.TotalActive >= maxDownloadWorkers + maxVerifyWorkers)
                 return false;
 
             var dbContext = new DavDatabaseContext();
@@ -278,10 +301,12 @@ public class QueueManager : IDisposable
                 dbClient,
                 inProgressQueueItem.UsenetClient,
                 _configManager,
+                _queueWorkLaneCoordinator,
                 _websocketManager,
                 _arrDownloadReportService,
                 progressHook,
-                inProgressQueueItem.CancellationTokenSource.Token
+                inProgressQueueItem.CancellationTokenSource.Token,
+                stage => inProgressQueueItem.Stage = stage
             ).ProcessAsync().ConfigureAwait(false);
             await UpdateDownloadWorkerJobAsync(inProgressQueueItem, dbClient, outcome)
                 .ConfigureAwait(false);
@@ -349,6 +374,13 @@ public class QueueManager : IDisposable
         public Stream? NzbStream { get; init; }
         public required ArticleCachingNntpClient UsenetClient { get; init; }
         public required WorkerJob WorkerJob { get; init; }
+        private int _stage;
+
+        public QueueProcessingStage Stage
+        {
+            get => (QueueProcessingStage)Volatile.Read(ref _stage);
+            set => Volatile.Write(ref _stage, (int)value);
+        }
 
         public async ValueTask DisposeAsync()
         {
@@ -360,3 +392,10 @@ public class QueueManager : IDisposable
         }
     }
 }
+
+public sealed record QueueLaneSnapshot(
+    int TotalActive,
+    int DownloadActive,
+    int WaitingForVerify,
+    int Verifying,
+    int Moving);

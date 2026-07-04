@@ -108,6 +108,7 @@ class Program
             .AddSingleton<ActiveStreamTracker>()
             .AddSingleton<MountStatusProvider>()
             .AddSingleton<StreamingConnectionLimiter>()
+            .AddSingleton<QueueWorkLaneCoordinator>()
             .AddSingleton<ArrDownloadReportService>()
             .AddSingleton<ArrOperationsService>()
             .AddSingleton<UsenetStreamingClient>()

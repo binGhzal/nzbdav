@@ -19,6 +19,8 @@ public sealed class WorkerQueueStatusTests
         var status = WorkerQueueStatus.FromStats(
             downloadActive: 1,
             downloadWaiting: 2,
+            inlineVerifyActive: 0,
+            inlineVerifyWaiting: 0,
             maxDownloadWorkers: 4,
             maxVerifyWorkers: 2,
             maxRepairWorkers: 1,
@@ -46,6 +48,8 @@ public sealed class WorkerQueueStatusTests
         var status = WorkerQueueStatus.FromStats(
             downloadActive: 0,
             downloadWaiting: 1,
+            inlineVerifyActive: 0,
+            inlineVerifyWaiting: 0,
             maxDownloadWorkers: 2,
             maxVerifyWorkers: 2,
             maxRepairWorkers: 2,
@@ -57,6 +61,33 @@ public sealed class WorkerQueueStatusTests
         Assert.Equal("paused", status.DownloadState);
         Assert.Equal("ready", status.VerifyState);
         Assert.Equal("retrying", status.RepairState);
+    }
+
+    [Fact]
+    public void FromStatsCountsInlineVerificationAgainstVerifyLane()
+    {
+        var stats = new DavDatabaseClient.WorkerJobQueueStats(
+            Download: BuildStats(WorkerJob.JobKind.Download, pending: 0, retry: 0, leased: 0, quarantined: 0),
+            Verify: BuildStats(WorkerJob.JobKind.Verify, pending: 0, retry: 0, leased: 0, quarantined: 0),
+            Repair: BuildStats(WorkerJob.JobKind.Repair, pending: 0, retry: 0, leased: 0, quarantined: 0));
+
+        var status = WorkerQueueStatus.FromStats(
+            downloadActive: 0,
+            downloadWaiting: 0,
+            inlineVerifyActive: 2,
+            inlineVerifyWaiting: 5,
+            maxDownloadWorkers: 8,
+            maxVerifyWorkers: 2,
+            maxRepairWorkers: 1,
+            downloadsPaused: false,
+            healthWorkers: new HealthCheckService.WorkerSnapshot(VerifyActive: 0, RepairActive: 0),
+            healthQueue: new DavDatabaseClient.HealthWorkerQueueStats(VerifyReady: 0, RepairActionNeeded: 0),
+            durableJobs: stats);
+
+        Assert.Equal(0, status.DownloadActive);
+        Assert.Equal(2, status.VerifyActive);
+        Assert.Equal(5, status.VerifyWaiting);
+        Assert.Equal("saturated", status.VerifyState);
     }
 
     private static DavDatabaseClient.WorkerJobKindStats BuildStats

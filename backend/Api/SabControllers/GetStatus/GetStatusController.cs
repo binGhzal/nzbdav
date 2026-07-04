@@ -24,7 +24,8 @@ public class GetStatusController(
 {
     protected override async Task<IActionResult> Handle()
     {
-        var activeJobs = queueManager.GetInProgressQueueItems().Count;
+        var laneSnapshot = queueManager.GetLaneSnapshot();
+        var activeJobs = laneSnapshot.TotalActive;
         var queuedJobs = await dbClient.GetQueueItemsCount(null, RequestContext.RequestAborted).ConfigureAwait(false);
         var isPaused = ConfigManager.IsQueuePaused();
         var activeStreams = activeStreamTracker.GetSnapshot();
@@ -75,8 +76,10 @@ public class GetStatusController(
                 Mount = MountDiagnosticStatus.FromSnapshot(mountStatusProvider.GetSnapshot(cacheSnapshot)),
                 ProviderDiagnostics = ProviderDiagnosticStatus.FromConfig(ConfigManager.GetUsenetProviderConfig()),
                 WorkerQueues = WorkerQueueStatus.FromStats(
-                    activeJobs,
+                    laneSnapshot.DownloadActive,
                     queuedJobs,
+                    laneSnapshot.Verifying,
+                    laneSnapshot.WaitingForVerify,
                     ConfigManager.GetAdaptiveMaxConcurrentQueueDownloads(),
                     ConfigManager.GetAdaptiveMaxConcurrentVerifyJobs(),
                     ConfigManager.GetAdaptiveMaxConcurrentRepairJobs(),
