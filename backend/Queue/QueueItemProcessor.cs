@@ -2,6 +2,8 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Api.SabControllers.GetHistory;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Concurrency;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -202,6 +204,10 @@ public class QueueItemProcessor(
                        .ConfigureAwait(false))
             {
                 onStageChanged?.Invoke(QueueProcessingStage.Verifying);
+                using var priorityScope = ct.SetContext(new DownloadPriorityContext
+                {
+                    Priority = SemaphorePriority.Normal
+                });
                 await usenetClient
                     .CheckAllSegmentsAsync(articlesToCheck, healthCheckConcurrency, part3Progress, ct)
                     .ConfigureAwait(false);

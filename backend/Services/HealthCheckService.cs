@@ -3,6 +3,8 @@ using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Concurrency;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -554,6 +556,10 @@ public class HealthCheckService : BackgroundService
         CancellationToken ct
     )
     {
+        using var priorityScope = ct.SetContext(new DownloadPriorityContext
+        {
+            Priority = SemaphorePriority.Normal
+        });
         return await _usenetClient.CheckSegmentsAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
     }
 

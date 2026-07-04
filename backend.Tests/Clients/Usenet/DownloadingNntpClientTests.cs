@@ -135,6 +135,39 @@ public class DownloadingNntpClientTests
         await second.WaitAsync(timeout.Token);
     }
 
+    [Fact]
+    public async Task VerificationPriorityRunsBeforeQueuedBulkDownloads()
+    {
+        using var innerClient = new BlockingNntpClient();
+        using var client = new DownloadingNntpClient(innerClient, CreateConfigManager(maxDownloadConnections: 1));
+        using var lowTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var verifyTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var verifyPriorityContext = verifyTimeout.Token.SetContext(new DownloadPriorityContext
+        {
+            Priority = SemaphorePriority.Normal
+        });
+
+        var activeDownload = client.DecodedBodyAsync("segment-1", lowTimeout.Token);
+        await innerClient.WaitForStartedBodyCountAsync(1, lowTimeout.Token);
+
+        var queuedDownload = client.DecodedBodyAsync("segment-2", lowTimeout.Token);
+        await Task.Delay(100, lowTimeout.Token);
+        var verification = client.StatPipelinedAsync(["segment-3"], verifyTimeout.Token);
+
+        await innerClient.ReleaseOneAsync(lowTimeout.Token);
+        await activeDownload.WaitAsync(lowTimeout.Token);
+        await innerClient.WaitForStartedPipelinedStatCountAsync(1, verifyTimeout.Token);
+
+        Assert.Equal(1, innerClient.StartedBodyDownloads);
+
+        await innerClient.ReleaseOneAsync(verifyTimeout.Token);
+        await verification.WaitAsync(verifyTimeout.Token);
+        await innerClient.WaitForStartedBodyCountAsync(2, lowTimeout.Token);
+
+        await innerClient.ReleaseOneAsync(lowTimeout.Token);
+        await queuedDownload.WaitAsync(lowTimeout.Token);
+    }
+
     private static ConfigManager CreateConfigManager(int maxDownloadConnections = 8)
     {
         var configManager = new ConfigManager();
