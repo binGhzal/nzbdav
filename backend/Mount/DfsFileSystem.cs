@@ -313,7 +313,7 @@ public sealed class DfsFileSystem : FileSystem
         return new DavMultipartFileRangeReader(
             rarFile.ToDavMultipartFileMeta().FileParts,
             usenetClient,
-            configManager.GetArticleBufferSize(),
+            configManager.GetAdaptiveArticleBufferSize(),
             cacheOptions: configManager.GetSparseSegmentCacheOptions());
     }
 
@@ -326,14 +326,14 @@ public sealed class DfsFileSystem : FileSystem
             return new DavMultipartFileRangeReader(
                 multipartFile.Metadata.FileParts,
                 usenetClient,
-                configManager.GetArticleBufferSize(),
+                configManager.GetAdaptiveArticleBufferSize(),
                 cacheOptions: configManager.GetSparseSegmentCacheOptions());
         }
 
         var packedStream = new DavMultipartFileStream(
             multipartFile.Metadata.FileParts,
             usenetClient,
-            configManager.GetArticleBufferSize(),
+            configManager.GetAdaptiveArticleBufferSize(),
             cacheOptions: configManager.GetSparseSegmentCacheOptions());
         return new StreamFileRangeReader(new AesDecoderStream(packedStream, multipartFile.Metadata.AesParams));
     }
@@ -344,7 +344,7 @@ public sealed class DfsFileSystem : FileSystem
             segmentIds,
             length,
             usenetClient,
-            configManager.GetArticleBufferSize());
+            configManager.GetAdaptiveArticleBufferSize());
         var options = configManager.GetSparseSegmentCacheOptions();
         if (!options.Enabled) return inner;
         return SparseSegmentCacheManager.Shared.Open(

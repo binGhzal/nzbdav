@@ -161,6 +161,23 @@ public class ConfigManagerConcurrencyTests
     }
 
     [Fact]
+    public void RuntimePressureReducesStreamingFanoutWhenAdaptiveConnectionsAreDisabled()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "200"),
+            ("usenet.adaptive-connections-enabled", "false"),
+            ("usenet.article-buffer-size", "8"),
+            ("usenet.max-streaming-connections", "8"),
+            ("usenet.max-total-streaming-connections", "64")
+        );
+        InjectCpuPressure(configManager, 0.50);
+
+        Assert.Equal(4, configManager.GetAdaptiveArticleBufferSize());
+        Assert.Equal(4, configManager.GetAdaptiveMaxStreamingConnections());
+        Assert.Equal(32, configManager.GetAdaptiveMaxTotalStreamingConnections());
+    }
+
+    [Fact]
     public void StreamingPriorityCannotCreateNegativeLowPriorityOdds()
     {
         var configManager = CreateConfigManager(("usenet.streaming-priority", "250"));
@@ -914,6 +931,22 @@ public class ConfigManagerConcurrencyTests
     {
         var cpuBased = Math.Clamp(Environment.ProcessorCount * 4, 4, 64);
         return Math.Clamp(Math.Min(cpuBased, Math.Max(1, downloadConnections)), 1, 512);
+    }
+
+    private static void InjectCpuPressure(ConfigManager configManager, double multiplier)
+    {
+        SetPrivateField(configManager, "_lastCpuSampleAt", DateTimeOffset.UtcNow);
+        SetPrivateField(configManager, "_lastProcessCpuCores", 1d);
+        SetPrivateField(configManager, "_lastCpuPressureMultiplier", multiplier);
+    }
+
+    private static void SetPrivateField<T>(ConfigManager configManager, string fieldName, T value)
+    {
+        var field = typeof(ConfigManager).GetField(
+            fieldName,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field.SetValue(configManager, value);
     }
 
 }

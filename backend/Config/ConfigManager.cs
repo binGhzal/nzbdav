@@ -495,9 +495,7 @@ public class ConfigManager
     public int GetAdaptiveMaxStreamingConnections()
     {
         var maxStreamingConnections = Math.Max(1, GetMaxStreamingConnections());
-        return IsAdaptiveConnectionCountEnabled()
-            ? ApplyRuntimePressureLimit(maxStreamingConnections)
-            : maxStreamingConnections;
+        return ApplyRuntimePressureLimit(maxStreamingConnections);
     }
 
     public int GetMaxStreamingConnections()
@@ -528,9 +526,7 @@ public class ConfigManager
     public int GetAdaptiveMaxTotalStreamingConnections()
     {
         var maxTotalStreamingConnections = GetMaxTotalStreamingConnections();
-        return IsAdaptiveConnectionCountEnabled()
-            ? ApplyRuntimePressureLimit(maxTotalStreamingConnections)
-            : maxTotalStreamingConnections;
+        return ApplyRuntimePressureLimit(maxTotalStreamingConnections);
     }
 
     public int GetMaxConcurrentQueueDownloads()
@@ -608,6 +604,11 @@ public class ConfigManager
     public int GetArticleBufferSize()
     {
         return GetPositiveIntConfigValue("usenet.article-buffer-size", 8);
+    }
+
+    public int GetAdaptiveArticleBufferSize()
+    {
+        return ApplyRuntimePressureLimit(Math.Max(1, GetArticleBufferSize()));
     }
 
     public SparseSegmentCacheOptions GetSparseSegmentCacheOptions()
