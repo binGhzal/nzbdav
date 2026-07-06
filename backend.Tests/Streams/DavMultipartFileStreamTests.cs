@@ -14,30 +14,29 @@ public sealed class DavMultipartFileStreamTests
         using var client = new FakeNntpClient()
             .AddSegment("segment-1", [0, 1, 2, 3], partOffset: 0)
             .AddSegment("segment-2", [4, 5, 6, 7], partOffset: 4);
-        await using var stream = new DavMultipartFileStream(
+        var filePart = new DavMultipartFile.FilePart
+        {
+            SegmentIds = ["segment-1", "segment-2"],
+            SegmentIdByteRange = new LongRange(0, 8),
+            FilePartByteRange = new LongRange(2, 6),
+            SegmentSlices =
             [
-                new DavMultipartFile.FilePart
+                new DavMultipartFile.SegmentSlice
                 {
-                    SegmentIds = ["segment-1", "segment-2"],
-                    SegmentIdByteRange = new LongRange(0, 8),
-                    FilePartByteRange = new LongRange(2, 6),
-                    SegmentSlices =
-                    [
-                        new DavMultipartFile.SegmentSlice
-                        {
-                            SegmentId = "segment-1",
-                            SegmentByteRange = new LongRange(2, 4),
-                            FilePartByteRange = new LongRange(0, 2)
-                        },
-                        new DavMultipartFile.SegmentSlice
-                        {
-                            SegmentId = "segment-2",
-                            SegmentByteRange = new LongRange(0, 2),
-                            FilePartByteRange = new LongRange(2, 4)
-                        }
-                    ]
+                    SegmentId = "segment-1",
+                    SegmentByteRange = new LongRange(2, 4),
+                    FilePartByteRange = new LongRange(0, 2)
+                },
+                new DavMultipartFile.SegmentSlice
+                {
+                    SegmentId = "segment-2",
+                    SegmentByteRange = new LongRange(0, 2),
+                    FilePartByteRange = new LongRange(2, 4)
                 }
-            ],
+            ]
+        };
+        await using var stream = new DavMultipartFileStream(
+            [filePart],
             client,
             articleBufferSize: 1);
         var buffer = new byte[4];
@@ -46,6 +45,7 @@ public sealed class DavMultipartFileStreamTests
 
         Assert.Equal(4, read);
         Assert.Equal([2, 3, 4, 5], buffer);
+        Assert.Empty(filePart.SegmentIds);
     }
 
     [Fact]

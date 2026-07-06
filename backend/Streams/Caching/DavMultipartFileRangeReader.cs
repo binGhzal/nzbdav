@@ -128,6 +128,7 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
                 }
 
                 ValidateSegmentSlicesCoverFilePart(part.SegmentSlices, part.FilePartByteRange.Count, i);
+                part.SegmentIds = [];
                 continue;
             }
 
