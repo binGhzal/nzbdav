@@ -77,7 +77,7 @@ public sealed class DavDatabaseContext : DbContext
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
-        return ExecuteWithSqliteBusyRetry(() => base.SaveChanges(acceptAllChangesOnSuccess));
+        return ExecuteWithSqliteBusyRetry(() => SaveChangesWithBlobsAndInvalidations(acceptAllChangesOnSuccess));
     }
 
     public override Task<int> SaveChangesAsync
@@ -87,11 +87,11 @@ public sealed class DavDatabaseContext : DbContext
     )
     {
         return ExecuteWithSqliteBusyRetryAsync(
-            () => base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken),
+            () => SaveChangesWithBlobsAndInvalidationsAsync(acceptAllChangesOnSuccess, cancellationToken),
             cancellationToken);
     }
 
-    private static T ExecuteWithSqliteBusyRetry<T>(Func<T> action)
+    public static T ExecuteWithSqliteBusyRetry<T>(Func<T> action)
     {
         for (var attempt = 1;; attempt++)
         {
@@ -99,14 +99,14 @@ public sealed class DavDatabaseContext : DbContext
             {
                 return action();
             }
-            catch (SqliteException ex) when (IsRetryableSqliteLock(ex) && attempt < 5)
+            catch (Exception ex) when (IsRetryableSqliteLock(ex) && attempt < 6)
             {
                 Thread.Sleep(GetSqliteRetryDelay(attempt));
             }
         }
     }
 
-    private static async Task<T> ExecuteWithSqliteBusyRetryAsync<T>
+    public static async Task<T> ExecuteWithSqliteBusyRetryAsync<T>
     (
         Func<Task<T>> action,
         CancellationToken cancellationToken
@@ -118,22 +118,33 @@ public sealed class DavDatabaseContext : DbContext
             {
                 return await action().ConfigureAwait(false);
             }
-            catch (SqliteException ex) when (IsRetryableSqliteLock(ex) && attempt < 5)
+            catch (Exception ex) when (IsRetryableSqliteLock(ex) && attempt < 6)
             {
                 await Task.Delay(GetSqliteRetryDelay(attempt), cancellationToken).ConfigureAwait(false);
             }
         }
     }
 
+    private static bool IsRetryableSqliteLock(Exception ex)
+    {
+        if (!IsSqlite) return false;
+
+        return ex switch
+        {
+            SqliteException sqliteException => IsRetryableSqliteLock(sqliteException),
+            DbUpdateException { InnerException: SqliteException sqliteException } => IsRetryableSqliteLock(sqliteException),
+            _ => false
+        };
+    }
+
     private static bool IsRetryableSqliteLock(SqliteException ex)
     {
-        return IsSqlite
-               && (ex.SqliteErrorCode == SqliteBusy || ex.SqliteErrorCode == SqliteLocked);
+        return ex.SqliteErrorCode == SqliteBusy || ex.SqliteErrorCode == SqliteLocked;
     }
 
     private static TimeSpan GetSqliteRetryDelay(int attempt)
     {
-        return TimeSpan.FromMilliseconds(50 * attempt * attempt);
+        return TimeSpan.FromMilliseconds(100 * attempt * attempt);
     }
 
     // database sets
@@ -1225,7 +1236,45 @@ public sealed class DavDatabaseContext : DbContext
         });
     }
 
-    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = new CancellationToken())
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = new CancellationToken())
+    {
+        return SaveChangesAsync(acceptAllChangesOnSuccess: true, cancellationToken);
+    }
+
+    private int SaveChangesWithBlobsAndInvalidations(bool acceptAllChangesOnSuccess)
+    {
+        try
+        {
+            foreach (var blobNzbFile in BlobNzbFiles)
+                BlobStore.WriteBlob(blobNzbFile.Id, blobNzbFile).GetAwaiter().GetResult();
+            foreach (var blobRarFile in BlobRarFiles)
+                BlobStore.WriteBlob(blobRarFile.Id, blobRarFile).GetAwaiter().GetResult();
+            foreach (var blobMultipartFile in BlobMultipartFiles)
+                BlobStore.WriteBlob(blobMultipartFile.Id, blobMultipartFile).GetAwaiter().GetResult();
+
+            var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();
+            if (!SuppressRcloneInvalidations)
+                EnqueueRcloneVfsForget(addedOrRemovedDavItems);
+            var result = base.SaveChanges(acceptAllChangesOnSuccess);
+
+            BlobNzbFiles.Clear();
+            BlobRarFiles.Clear();
+            BlobMultipartFiles.Clear();
+
+            return result;
+        }
+        catch
+        {
+            DeletePendingBlobWrites();
+            throw;
+        }
+    }
+
+    private async Task<int> SaveChangesWithBlobsAndInvalidationsAsync
+    (
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken
+    )
     {
         try
         {
@@ -1241,7 +1290,7 @@ public sealed class DavDatabaseContext : DbContext
             var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();
             if (!SuppressRcloneInvalidations)
                 EnqueueRcloneVfsForget(addedOrRemovedDavItems);
-            var result = await base.SaveChangesAsync(cancellationToken);
+            var result = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
 
             // clear pending blob writes
             BlobNzbFiles.Clear();
@@ -1253,17 +1302,22 @@ public sealed class DavDatabaseContext : DbContext
         }
         catch
         {
-            // on errors, remove any already-written blob files
-            foreach (var blobNzbFile in BlobNzbFiles)
-                BlobStore.Delete(blobNzbFile.Id);
-            foreach (var blobRarFile in BlobRarFiles)
-                BlobStore.Delete(blobRarFile.Id);
-            foreach (var blobMultipartFile in BlobMultipartFiles)
-                BlobStore.Delete(blobMultipartFile.Id);
+            DeletePendingBlobWrites();
 
             // rethrow the exception
             throw;
         }
+    }
+
+    private void DeletePendingBlobWrites()
+    {
+        // on errors, remove any already-written blob files
+        foreach (var blobNzbFile in BlobNzbFiles)
+            BlobStore.Delete(blobNzbFile.Id);
+        foreach (var blobRarFile in BlobRarFiles)
+            BlobStore.Delete(blobRarFile.Id);
+        foreach (var blobMultipartFile in BlobMultipartFiles)
+            BlobStore.Delete(blobMultipartFile.Id);
     }
 
     private List<DavItem> GetAddedOrRemovedDavItems()

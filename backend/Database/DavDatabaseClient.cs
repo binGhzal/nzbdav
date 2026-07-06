@@ -197,13 +197,27 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         return (queueItem, queueNzbStream);
     }
 
-    public async Task<(QueueItem? queueItem, Stream? queueNzbStream, WorkerJob? workerJob)> LeaseTopQueueItemAsync
+    public Task<(QueueItem? queueItem, Stream? queueNzbStream, WorkerJob? workerJob)> LeaseTopQueueItemAsync
     (
         IReadOnlyCollection<Guid>? excludeIds,
         string owner,
         TimeSpan leaseDuration,
         DateTimeOffset? now = null,
         CancellationToken ct = default
+    )
+    {
+        return DavDatabaseContext.ExecuteWithSqliteBusyRetryAsync(
+            () => LeaseTopQueueItemCoreAsync(excludeIds, owner, leaseDuration, now, ct),
+            ct);
+    }
+
+    private async Task<(QueueItem? queueItem, Stream? queueNzbStream, WorkerJob? workerJob)> LeaseTopQueueItemCoreAsync
+    (
+        IReadOnlyCollection<Guid>? excludeIds,
+        string owner,
+        TimeSpan leaseDuration,
+        DateTimeOffset? now,
+        CancellationToken ct
     )
     {
         var referenceTime = now ?? DateTimeOffset.UtcNow;
@@ -1865,7 +1879,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         return changed;
     }
 
-    public async Task<WorkerJob?> LeaseNextWorkerJobAsync
+    public Task<WorkerJob?> LeaseNextWorkerJobAsync
     (
         WorkerJob.JobKind kind,
         string owner,
@@ -1873,6 +1887,21 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         DateTimeOffset? now = null,
         CancellationToken ct = default,
         IReadOnlyCollection<Guid>? excludeTargetIds = null
+    )
+    {
+        return DavDatabaseContext.ExecuteWithSqliteBusyRetryAsync(
+            () => LeaseNextWorkerJobCoreAsync(kind, owner, leaseDuration, now, ct, excludeTargetIds),
+            ct);
+    }
+
+    private async Task<WorkerJob?> LeaseNextWorkerJobCoreAsync
+    (
+        WorkerJob.JobKind kind,
+        string owner,
+        TimeSpan leaseDuration,
+        DateTimeOffset? now,
+        CancellationToken ct,
+        IReadOnlyCollection<Guid>? excludeTargetIds
     )
     {
         var referenceTime = now ?? DateTimeOffset.UtcNow;

@@ -785,9 +785,11 @@ public class ConfigManager
         var pressure = memoryInfo.MemoryLoadBytes / (double)thresholdBytes;
         return pressure switch
         {
-            >= 0.95 => 0.25,
-            >= 0.90 => 0.50,
-            >= 0.80 => 0.75,
+            >= 0.95 => 0.15,
+            >= 0.90 => 0.25,
+            >= 0.80 => 0.35,
+            >= 0.70 => 0.50,
+            >= 0.60 => 0.75,
             _ => 1.00
         };
     }

@@ -21,9 +21,12 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
         SparseSegmentCacheOptions? cacheOptions = null)
     {
         fileParts = ValidateAndNormalizeFileParts(fileParts);
-        var inner = new UncachedDavMultipartFileRangeReader(fileParts, usenetClient, articleBufferSize);
         if (cacheOptions is { Enabled: true })
         {
+            // The sparse cache is responsible for read-ahead. Its backing
+            // source should stay sequential to avoid one rclone range request
+            // spawning multiple buffered decoded article streams per chunk.
+            var inner = new UncachedDavMultipartFileRangeReader(fileParts, usenetClient, articleBufferSize: 0);
             var readLimitExclusive = requestedEndByte.HasValue
                 ? Math.Clamp(requestedEndByte.Value + 1, 0, inner.Length)
                 : inner.Length;
@@ -35,6 +38,7 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
         }
         else
         {
+            var inner = new UncachedDavMultipartFileRangeReader(fileParts, usenetClient, articleBufferSize);
             _reader = inner;
         }
     }

@@ -202,7 +202,10 @@ public class NzbFileStream(
     )
     {
         if (options is not { Enabled: true }) return null;
-        var inner = new SegmentFileRangeReader(segmentIds, length, client, bufferSize);
+        // The sparse cache already has bounded read-ahead. Keep source reads
+        // sequential so every cache chunk does not multiply buffered article
+        // streams and retain decoded segment buffers under rclone range storms.
+        var inner = new SegmentFileRangeReader(segmentIds, length, client, articleBufferSize: 0);
         var key = SparseSegmentCacheManager.CreateKey(segmentIds, length);
         var readLimitExclusive = endByte.HasValue ? Math.Clamp(endByte.Value + 1, 0, length) : length;
         return SparseSegmentCacheManager.Shared.Open(key, inner, options, readLimitExclusive);
