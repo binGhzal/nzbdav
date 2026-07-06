@@ -34,8 +34,9 @@ public class HealthCheckService : BackgroundService
     private const int MaxMissingSegmentCacheEntries = 100_000;
     private const int MaxRecentlyVerifiedSegmentCacheEntries = 500_000;
     private const int VerificationJobEnqueueBatchSize = 64;
-    private const int MaxBlobSegmentReadConcurrency = 64;
+    private const int MaxBlobSegmentReadConcurrency = 8;
     private const int MaxDeduplicatedVerificationSegments = 20_000;
+    private const int MaxProviderVerificationBatchSegments = 2_000;
 
     private readonly ConfigManager _configManager;
     private readonly INntpClient _usenetClient;
@@ -920,9 +921,47 @@ public class HealthCheckService : BackgroundService
         CancellationToken ct
     )
     {
-        var batch = await _usenetClient.CheckSegmentsAsync(segments, concurrency, progress, ct)
-            .ConfigureAwait(false);
-        return batch.IsClean ? SegmentCheckBatch.AllExists(segments) : batch;
+        if (segments.Count <= MaxProviderVerificationBatchSegments)
+        {
+            var batch = await _usenetClient.CheckSegmentsAsync(segments, concurrency, progress, ct)
+                .ConfigureAwait(false);
+            return batch.IsClean ? SegmentCheckBatch.AllExists(segments) : batch;
+        }
+
+        var nonCleanResults = new List<SegmentCheckResult>();
+        var checkedCount = 0;
+        var missing = 0;
+        var providerErrors = 0;
+        var unknown = 0;
+
+        for (var offset = 0; offset < segments.Count; offset += MaxProviderVerificationBatchSegments)
+        {
+            ct.ThrowIfCancellationRequested();
+            var count = Math.Min(MaxProviderVerificationBatchSegments, segments.Count - offset);
+            var chunk = segments.GetRange(offset, count);
+            var batch = await _usenetClient
+                .CheckSegmentsAsync(chunk, concurrency, new OffsetProgress(progress, checkedCount), ct)
+                .ConfigureAwait(false);
+
+            checkedCount += batch.Checked;
+            missing += batch.Missing;
+            providerErrors += batch.ProviderErrors;
+            unknown += batch.Unknown;
+
+            if (batch.IsClean) continue;
+
+            nonCleanResults.AddRange(batch.Results.Where(x => x.State != SegmentCheckState.Exists));
+        }
+
+        if (nonCleanResults.Count == 0 && missing == 0 && providerErrors == 0 && unknown == 0)
+            return SegmentCheckBatch.AllExists(segments);
+
+        return new SegmentCheckBatch(
+            nonCleanResults,
+            Checked: segments.Count,
+            Missing: missing,
+            ProviderErrors: providerErrors,
+            Unknown: unknown);
     }
 
     private static int CountCachedLogicalSegments(
