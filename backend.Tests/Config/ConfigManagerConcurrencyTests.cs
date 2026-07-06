@@ -182,6 +182,11 @@ public class ConfigManagerConcurrencyTests
         Assert.Equal(4, configManager.GetAdaptiveMaxStreamingConnections());
         Assert.Equal(32, configManager.GetAdaptiveMaxTotalStreamingConnections());
         Assert.Equal(100, configManager.GetAdaptivePostDownloadVerificationConcurrency());
+        Assert.Equal(100, configManager.GetAdaptiveMaxDownloadConnections());
+        Assert.Equal(100, configManager.GetAdaptiveQueueFileProcessingConcurrency());
+        Assert.Equal(
+            Math.Max(1, (int)Math.Floor(GetExpectedAutomaticQueueWorkers(200) * 0.50)),
+            configManager.GetAdaptiveMaxConcurrentQueueDownloads());
         Assert.Equal(
             Math.Max(1, (int)Math.Floor(Math.Min(Math.Clamp(Environment.ProcessorCount * 2, 2, 64), 200) * 0.50)),
             configManager.GetAdaptiveHealthCheckConcurrency());

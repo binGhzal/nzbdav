@@ -489,7 +489,7 @@ public class ConfigManager
     public int GetAdaptiveMaxDownloadConnections()
     {
         var manualFallback = Math.Max(1, GetMaxDownloadConnections());
-        if (!IsAdaptiveConnectionCountEnabled()) return manualFallback;
+        if (!IsAdaptiveConnectionCountEnabled()) return ApplyRuntimePressureLimit(manualFallback);
 
         return ApplyRuntimePressureLimit(GetAutomaticDownloadConnectionBudget());
     }
@@ -542,9 +542,7 @@ public class ConfigManager
     public int GetAdaptiveMaxConcurrentQueueDownloads()
     {
         var maxConcurrentDownloads = GetMaxConcurrentQueueDownloads();
-        return IsAdaptiveConnectionCountEnabled()
-            ? ApplyRuntimePressureLimit(maxConcurrentDownloads)
-            : maxConcurrentDownloads;
+        return ApplyRuntimePressureLimit(maxConcurrentDownloads);
     }
 
     public int GetMaxConcurrentVerifyJobs()
@@ -587,7 +585,7 @@ public class ConfigManager
     {
         return IsAdaptiveConnectionCountEnabled()
             ? GetAutomaticQueueFileProcessingConcurrency(GetAdaptiveMaxDownloadConnections())
-            : GetQueueFileProcessingConcurrency();
+            : ApplyRuntimePressureLimit(GetQueueFileProcessingConcurrency());
     }
 
     public long GetArticleCacheMaxBytes()
