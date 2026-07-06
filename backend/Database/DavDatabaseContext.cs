@@ -18,6 +18,9 @@ namespace NzbWebDAV.Database;
 
 public sealed class DavDatabaseContext : DbContext
 {
+    private const int SqliteBusy = 5;
+    private const int SqliteLocked = 6;
+
     public DavDatabaseContext() : base(CreateOptions())
     {
     }
@@ -56,7 +59,11 @@ public sealed class DavDatabaseContext : DbContext
         {
             DataSource = DatabaseFilePath,
             Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared,
+            // Shared-cache mode uses table-level locks and returns SQLITE_LOCKED
+            // under concurrent writers, bypassing the busy timeout. NZBDav uses
+            // many short-lived DbContexts, so private cache + WAL gives better
+            // writer/read concurrency and fewer user-visible "file" errors.
+            Cache = SqliteCacheMode.Private,
             Pooling = true,
             DefaultTimeout = 30
         }.ToString();
@@ -66,6 +73,67 @@ public sealed class DavDatabaseContext : DbContext
             .AddInterceptors(new SqliteForeignKeyEnabler(), new ContentIndexSnapshotInterceptor())
             .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
             .Options;
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        return ExecuteWithSqliteBusyRetry(() => base.SaveChanges(acceptAllChangesOnSuccess));
+    }
+
+    public override Task<int> SaveChangesAsync
+    (
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default
+    )
+    {
+        return ExecuteWithSqliteBusyRetryAsync(
+            () => base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken),
+            cancellationToken);
+    }
+
+    private static T ExecuteWithSqliteBusyRetry<T>(Func<T> action)
+    {
+        for (var attempt = 1;; attempt++)
+        {
+            try
+            {
+                return action();
+            }
+            catch (SqliteException ex) when (IsRetryableSqliteLock(ex) && attempt < 5)
+            {
+                Thread.Sleep(GetSqliteRetryDelay(attempt));
+            }
+        }
+    }
+
+    private static async Task<T> ExecuteWithSqliteBusyRetryAsync<T>
+    (
+        Func<Task<T>> action,
+        CancellationToken cancellationToken
+    )
+    {
+        for (var attempt = 1;; attempt++)
+        {
+            try
+            {
+                return await action().ConfigureAwait(false);
+            }
+            catch (SqliteException ex) when (IsRetryableSqliteLock(ex) && attempt < 5)
+            {
+                await Task.Delay(GetSqliteRetryDelay(attempt), cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static bool IsRetryableSqliteLock(SqliteException ex)
+    {
+        return IsSqlite
+               && (ex.SqliteErrorCode == SqliteBusy || ex.SqliteErrorCode == SqliteLocked);
+    }
+
+    private static TimeSpan GetSqliteRetryDelay(int attempt)
+    {
+        return TimeSpan.FromMilliseconds(50 * attempt * attempt);
     }
 
     // database sets

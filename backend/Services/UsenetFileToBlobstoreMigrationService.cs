@@ -13,8 +13,13 @@ namespace NzbWebDAV.Services;
 /// </summary>
 public class UsenetFileToBlobstoreMigrationService(WebsocketManager websocketManager) : BackgroundService
 {
+    private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan SuccessThrottleDelay = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan ErrorDelay = TimeSpan.FromSeconds(10);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await Task.Delay(StartupDelay, stoppingToken).ConfigureAwait(false);
         Report("Determining number of files to migrate...");
         var initialRemaining = await GetTotalCountLeft(stoppingToken);
         var totalRemaining = initialRemaining;
@@ -104,6 +109,7 @@ public class UsenetFileToBlobstoreMigrationService(WebsocketManager websocketMan
                     await dbContext.SaveChangesAsync(ct);
                     totalRemaining--;
                     ReportProgress(totalRemaining, initialRemaining);
+                    await Task.Delay(SuccessThrottleDelay, ct).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -114,7 +120,7 @@ public class UsenetFileToBlobstoreMigrationService(WebsocketManager websocketMan
             catch (Exception e)
             {
                 Log.Error(e, $"Error migrating usenet-file to blob-store: {e.Message}");
-                await Task.Delay(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
+                await Task.Delay(ErrorDelay, ct).ConfigureAwait(false);
             }
         }
 

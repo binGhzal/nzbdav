@@ -1,4 +1,5 @@
 using backend.Tests.Services;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 
@@ -15,6 +16,18 @@ public sealed class DatabaseProviderSelectionTests
 
         Assert.Equal("Microsoft.EntityFrameworkCore.Sqlite", dbContext.Database.ProviderName);
         Assert.EndsWith("db.sqlite", DavDatabaseContext.DatabaseFilePath);
+    }
+
+    [Fact]
+    public void DavDatabaseContext_UsesPrivateSqliteCache()
+    {
+        using var env = DatabaseEnvironmentScope.Create(provider: null, connectionString: null);
+        using var dbContext = new DavDatabaseContext();
+
+        var builder = new SqliteConnectionStringBuilder(dbContext.Database.GetConnectionString());
+
+        Assert.Equal(SqliteCacheMode.Private, builder.Cache);
+        Assert.Equal(30, builder.DefaultTimeout);
     }
 
     [Fact]
