@@ -1340,7 +1340,7 @@ public class HealthCheckRepairPolicyTests
     }
 
     [Fact]
-    public void GetVerificationSegmentConcurrencyUsesPostDownloadBudgetForPrioritizedJobs()
+    public void GetVerificationSegmentConcurrencySharesPostDownloadBudgetAcrossVerifyLane()
     {
         Assert.Equal(2, HealthCheckService.GetVerificationSegmentConcurrency(
             segmentConcurrency: 2,
@@ -1348,13 +1348,13 @@ public class HealthCheckRepairPolicyTests
             maxVerifyJobs: 4,
             activeVerifyJobs: 0,
             workerJobPriority: 0));
-        Assert.Equal(8, HealthCheckService.GetVerificationSegmentConcurrency(
+        Assert.Equal(2, HealthCheckService.GetVerificationSegmentConcurrency(
             segmentConcurrency: 2,
             postDownloadSegmentConcurrency: 8,
             maxVerifyJobs: 4,
             activeVerifyJobs: 0,
             workerJobPriority: 10));
-        Assert.Equal(8, HealthCheckService.GetVerificationSegmentConcurrency(
+        Assert.Equal(2, HealthCheckService.GetVerificationSegmentConcurrency(
             segmentConcurrency: 2,
             postDownloadSegmentConcurrency: 8,
             maxVerifyJobs: 4,
@@ -1363,7 +1363,7 @@ public class HealthCheckRepairPolicyTests
     }
 
     [Fact]
-    public void GetVerificationSegmentConcurrencyDoesNotThrottlePostDownloadJobsBehindBackgroundVerifyWorkers()
+    public void GetVerificationSegmentConcurrencyKeepsPostDownloadBudgetIndependentFromCurrentBackgroundWorkers()
     {
         var concurrency = HealthCheckService.GetVerificationSegmentConcurrency(
             segmentConcurrency: 2,
@@ -1372,7 +1372,7 @@ public class HealthCheckRepairPolicyTests
             activeVerifyJobs: 3,
             workerJobPriority: 50);
 
-        Assert.Equal(8, concurrency);
+        Assert.Equal(2, concurrency);
     }
 
     [Fact]

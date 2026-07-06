@@ -248,9 +248,10 @@ public class HealthCheckService : BackgroundService
         int workerJobPriority
     )
     {
-        var plannedWorkers = Math.Clamp(activeVerifyJobs + 1, 1, Math.Max(1, maxVerifyJobs));
+        var verifyWorkerBudget = Math.Max(1, maxVerifyJobs);
+        var plannedWorkers = Math.Clamp(activeVerifyJobs + 1, 1, verifyWorkerBudget);
         if (workerJobPriority > 0)
-            return Math.Max(1, Math.Max(segmentConcurrency, postDownloadSegmentConcurrency));
+            return Math.Max(1, Math.Max(segmentConcurrency, postDownloadSegmentConcurrency) / verifyWorkerBudget);
 
         return Math.Max(1, Math.Max(1, segmentConcurrency) / plannedWorkers);
     }

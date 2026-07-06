@@ -831,9 +831,7 @@ public class ConfigManager
             ? automaticConcurrency
             : Math.Min(Math.Max(1, GetHealthCheckConcurrency()), automaticConcurrency);
 
-        return IsAdaptiveConnectionCountEnabled()
-            ? ApplyRuntimePressureLimit(healthCheckConcurrency)
-            : healthCheckConcurrency;
+        return ApplyRuntimePressureLimit(healthCheckConcurrency);
     }
 
     public int GetAdaptivePostDownloadVerificationConcurrency()
@@ -842,9 +840,7 @@ public class ConfigManager
             GetPostDownloadVerificationConnectionBudget(),
             1,
             MaxPostDownloadVerificationConcurrency);
-        return IsAdaptiveConnectionCountEnabled()
-            ? ApplyRuntimePressureLimit(automaticConcurrency)
-            : automaticConcurrency;
+        return ApplyRuntimePressureLimit(automaticConcurrency);
     }
 
     public int GetRepairConnectionBudget()

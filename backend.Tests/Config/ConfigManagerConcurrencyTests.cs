@@ -168,13 +168,19 @@ public class ConfigManagerConcurrencyTests
             ("usenet.adaptive-connections-enabled", "false"),
             ("usenet.article-buffer-size", "8"),
             ("usenet.max-streaming-connections", "8"),
-            ("usenet.max-total-streaming-connections", "64")
+            ("usenet.max-total-streaming-connections", "64"),
+            ("repair.healthcheck-concurrency", "200"),
+            ("repair.connection-budget-percent", "100")
         );
         InjectCpuPressure(configManager, 0.50);
 
         Assert.Equal(4, configManager.GetAdaptiveArticleBufferSize());
         Assert.Equal(4, configManager.GetAdaptiveMaxStreamingConnections());
         Assert.Equal(32, configManager.GetAdaptiveMaxTotalStreamingConnections());
+        Assert.Equal(100, configManager.GetAdaptivePostDownloadVerificationConcurrency());
+        Assert.Equal(
+            Math.Max(1, (int)Math.Floor(Math.Min(Math.Clamp(Environment.ProcessorCount * 2, 2, 64), 200) * 0.50)),
+            configManager.GetAdaptiveHealthCheckConcurrency());
     }
 
     [Fact]
