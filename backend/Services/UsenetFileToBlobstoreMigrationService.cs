@@ -98,6 +98,18 @@ public class UsenetFileToBlobstoreMigrationService(WebsocketManager websocketMan
                 var fileToMigrate = await getFileToMigrate(dbContext);
                 if (fileToMigrate == null) return totalRemaining;
                 var davItem = await GetDavItem(getFileToMigrateId(fileToMigrate), dbContext, ct);
+
+                if (davItem.FileBlobId is { } existingBlobId
+                    && BlobStore.TryStatBlob(existingBlobId).Status == BlobStore.BlobReadStatus.Found)
+                {
+                    removeFileToMigrateFromDb(dbContext, davItem.Id);
+                    await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+                    totalRemaining--;
+                    ReportProgress(totalRemaining, initialRemaining);
+                    await Task.Delay(SuccessThrottleDelay, ct).ConfigureAwait(false);
+                    continue;
+                }
+
                 dbContext.Entry(fileToMigrate).State = EntityState.Detached;
                 setFileToMigrateNewId(fileToMigrate);
                 await BlobStore.WriteBlob(getFileToMigrateId(fileToMigrate), fileToMigrate);

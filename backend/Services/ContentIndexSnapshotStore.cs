@@ -9,10 +9,11 @@ namespace NzbWebDAV.Services;
 
 public static class ContentIndexSnapshotStore
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     private const string SnapshotFileName = "content-index.snapshot.json";
     private const string BackupSnapshotFileName = "content-index.snapshot.backup.json";
+    private const long MaxSnapshotReadBytes = 512L * 1024 * 1024;
     private static readonly SemaphoreSlim Mutex = new(1, 1);
     private static readonly object PruneWarningLock = new();
     private static DateTime _lastPruneWarningUtc = DateTime.MinValue;
@@ -153,13 +154,18 @@ public static class ContentIndexSnapshotStore
                     Snapshot = backupResult.Snapshot,
                     SourcePath = backupResult.SourcePath,
                     Warnings = warnings,
+                    RewriteRecommended = primaryResult.RewriteRecommended || backupResult.RewriteRecommended,
                 };
             }
 
             if (backupResult.Warning != null)
                 warnings.Add(backupResult.Warning);
 
-            return new SnapshotReadResult { Warnings = warnings };
+            return new SnapshotReadResult
+            {
+                Warnings = warnings,
+                RewriteRecommended = primaryResult.RewriteRecommended || backupResult.RewriteRecommended,
+            };
         }
         finally
         {
@@ -173,6 +179,17 @@ public static class ContentIndexSnapshotStore
 
         try
         {
+            var fileInfo = new FileInfo(path);
+            if (fileInfo.Length > MaxSnapshotReadBytes)
+            {
+                return new SnapshotReadResult
+                {
+                    Warning =
+                        $"Ignored /content recovery snapshot at '{path}' because it is {fileInfo.Length} bytes, which exceeds the {MaxSnapshotReadBytes} byte safety limit.",
+                    RewriteRecommended = true
+                };
+            }
+
             await using var stream = File.OpenRead(path);
             var snapshot = await JsonSerializer
                 .DeserializeAsync<ContentIndexSnapshot>(stream, JsonOptions, cancellationToken)
@@ -215,7 +232,7 @@ public static class ContentIndexSnapshotStore
 
     private static bool TryValidate(ContentIndexSnapshot snapshot, out string error)
     {
-        if (snapshot.Version != CurrentVersion)
+        if (snapshot.Version is not (1 or CurrentVersion))
         {
             error = $"unsupported version {snapshot.Version}";
             return false;
@@ -267,9 +284,9 @@ public static class ContentIndexSnapshotStore
                 DavItem.ItemType.Directory => true,
                 DavItem.ItemType.UsenetFile => item.SubType switch
                 {
-                    DavItem.ItemSubType.NzbFile => nzbFilesById.ContainsKey(item.Id),
-                    DavItem.ItemSubType.RarFile => rarFilesById.ContainsKey(item.Id),
-                    DavItem.ItemSubType.MultipartFile => multipartFilesById.ContainsKey(item.Id),
+                    DavItem.ItemSubType.NzbFile => item.FileBlobId.HasValue || nzbFilesById.ContainsKey(item.Id),
+                    DavItem.ItemSubType.RarFile => item.FileBlobId.HasValue || rarFilesById.ContainsKey(item.Id),
+                    DavItem.ItemSubType.MultipartFile => item.FileBlobId.HasValue || multipartFilesById.ContainsKey(item.Id),
                     _ => false
                 },
                 _ => false
@@ -322,106 +339,56 @@ public static class ContentIndexSnapshotStore
             .OrderBy(x => x.Path)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        var itemIds = items.Select(x => x.Id).ToHashSet();
+        var legacyNzbIds = items
+            .Where(x => x.Type == DavItem.ItemType.UsenetFile
+                        && x.SubType == DavItem.ItemSubType.NzbFile
+                        && !x.FileBlobId.HasValue)
+            .Select(x => x.Id)
+            .ToHashSet();
+        var legacyRarIds = items
+            .Where(x => x.Type == DavItem.ItemType.UsenetFile
+                        && x.SubType == DavItem.ItemSubType.RarFile
+                        && !x.FileBlobId.HasValue)
+            .Select(x => x.Id)
+            .ToHashSet();
+        var legacyMultipartIds = items
+            .Where(x => x.Type == DavItem.ItemType.UsenetFile
+                        && x.SubType == DavItem.ItemSubType.MultipartFile
+                        && !x.FileBlobId.HasValue)
+            .Select(x => x.Id)
+            .ToHashSet();
 
-        var dbNzbFiles = await dbContext.NzbFiles
+        var nzbFiles = await dbContext.NzbFiles
             .AsNoTracking()
-            .Where(x => itemIds.Contains(x.Id))
+            .Where(x => legacyNzbIds.Contains(x.Id))
             .OrderBy(x => x.Id)
+            .Select(x => CloneForSnapshot(x.Id, x))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        var dbRarFiles = await dbContext.RarFiles
+        var rarFiles = await dbContext.RarFiles
             .AsNoTracking()
-            .Where(x => itemIds.Contains(x.Id))
+            .Where(x => legacyRarIds.Contains(x.Id))
             .OrderBy(x => x.Id)
+            .Select(x => CloneForSnapshot(x.Id, x))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        var dbMultipartFiles = await dbContext.MultipartFiles
+        var multipartFiles = await dbContext.MultipartFiles
             .AsNoTracking()
-            .Where(x => itemIds.Contains(x.Id))
+            .Where(x => legacyMultipartIds.Contains(x.Id))
             .OrderBy(x => x.Id)
+            .Select(x => CloneForSnapshot(x.Id, x))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        var nzbFilesById = dbNzbFiles.ToDictionary(x => x.Id);
-        var rarFilesById = dbRarFiles.ToDictionary(x => x.Id);
-        var multipartFilesById = dbMultipartFiles.ToDictionary(x => x.Id);
-        var nzbFiles = new List<DavNzbFile>();
-        var rarFiles = new List<DavRarFile>();
-        var multipartFiles = new List<DavMultipartFile>();
-
-        foreach (var item in items)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (item.Type != DavItem.ItemType.UsenetFile) continue;
-
-            switch (item.SubType)
-            {
-                case DavItem.ItemSubType.NzbFile:
-                {
-                    var file = await GetSnapshotMetadataAsync(
-                            item,
-                            nzbFilesById,
-                            "NZB")
-                        .ConfigureAwait(false);
-                    if (file is not null)
-                        nzbFiles.Add(CloneForSnapshot(item.Id, file));
-                    break;
-                }
-                case DavItem.ItemSubType.RarFile:
-                {
-                    var file = await GetSnapshotMetadataAsync(
-                            item,
-                            rarFilesById,
-                            "RAR")
-                        .ConfigureAwait(false);
-                    if (file is not null)
-                        rarFiles.Add(CloneForSnapshot(item.Id, file));
-                    break;
-                }
-                case DavItem.ItemSubType.MultipartFile:
-                {
-                    var file = await GetSnapshotMetadataAsync(
-                            item,
-                            multipartFilesById,
-                            "multipart")
-                        .ConfigureAwait(false);
-                    if (file is not null)
-                        multipartFiles.Add(CloneForSnapshot(item.Id, file));
-                    break;
-                }
-            }
-        }
 
         return new ContentIndexSnapshot
         {
             Version = CurrentVersion,
             GeneratedAtUtc = DateTimeOffset.UtcNow,
             Items = items,
-            NzbFiles = nzbFiles.OrderBy(x => x.Id).ToList(),
-            RarFiles = rarFiles.OrderBy(x => x.Id).ToList(),
-            MultipartFiles = multipartFiles.OrderBy(x => x.Id).ToList(),
+            NzbFiles = nzbFiles,
+            RarFiles = rarFiles,
+            MultipartFiles = multipartFiles,
         };
-    }
-
-    private static async Task<T?> GetSnapshotMetadataAsync<T>
-    (
-        DavItem item,
-        IReadOnlyDictionary<Guid, T> databaseRowsById,
-        string metadataKind
-    ) where T : class
-    {
-        if (databaseRowsById.TryGetValue(item.Id, out var databaseRow))
-            return databaseRow;
-
-        if (!item.FileBlobId.HasValue)
-            return null;
-
-        var blob = await BlobStore.ReadBlob<T>(item.FileBlobId.Value).ConfigureAwait(false);
-        if (blob is not null)
-            return blob;
-
-        throw new IOException(
-            $"Could not read blob-backed {metadataKind} metadata blob {item.FileBlobId.Value} for DavItem {item.Id}.");
     }
 
     private static DavNzbFile CloneForSnapshot(Guid itemId, DavNzbFile source)
@@ -547,9 +514,9 @@ public static class ContentIndexSnapshotStore
             DavItem.ItemType.Directory => true,
             DavItem.ItemType.UsenetFile => item.SubType switch
             {
-                DavItem.ItemSubType.NzbFile => nzbFileIds.Contains(item.Id),
-                DavItem.ItemSubType.RarFile => rarFileIds.Contains(item.Id),
-                DavItem.ItemSubType.MultipartFile => multipartFileIds.Contains(item.Id),
+                DavItem.ItemSubType.NzbFile => item.FileBlobId.HasValue || nzbFileIds.Contains(item.Id),
+                DavItem.ItemSubType.RarFile => item.FileBlobId.HasValue || rarFileIds.Contains(item.Id),
+                DavItem.ItemSubType.MultipartFile => item.FileBlobId.HasValue || multipartFileIds.Contains(item.Id),
                 _ => false
             },
             _ => false
@@ -585,6 +552,7 @@ public static class ContentIndexSnapshotStore
         public string? SourcePath { get; init; }
         public string? Warning { get; init; }
         public List<string> Warnings { get; init; } = [];
+        public bool RewriteRecommended { get; init; }
     }
 
     public sealed class ContentIndexSnapshot

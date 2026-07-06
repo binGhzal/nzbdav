@@ -89,7 +89,7 @@ public sealed class ContentIndexRecoveryServiceTests
     }
 
     [Fact]
-    public async Task StartupRecovery_RestoresBlobBackedFileMetadataAsDatabaseFallback()
+    public async Task StartupRecovery_RestoresBlobBackedItemsWithoutDatabaseMetadataRows()
     {
         var itemId = Guid.NewGuid();
         var blobId = Guid.NewGuid();
@@ -111,7 +111,11 @@ public sealed class ContentIndexRecoveryServiceTests
             await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
         }
 
-        BlobStore.Delete(blobId);
+        var snapshot = await File.ReadAllTextAsync(ContentIndexSnapshotStore.SnapshotFilePath);
+        Assert.Contains("BlobBacked.mkv", snapshot);
+        Assert.DoesNotContain("segment-1", snapshot);
+        Assert.DoesNotContain("segment-2", snapshot);
+
         await _fixture.RecreateDatabaseAsync();
 
         var recoveryService = new ContentIndexRecoveryService();
@@ -125,8 +129,9 @@ public sealed class ContentIndexRecoveryServiceTests
         Assert.Equal(blobId, restoredItem.FileBlobId);
         Assert.Equal(nzbBlobId, restoredItem.NzbBlobId);
         Assert.NotNull(restoredMetadata);
-        Assert.Equal(itemId, restoredMetadata.Id);
+        Assert.Equal(blobId, restoredMetadata.Id);
         Assert.Equal(["segment-1", "segment-2"], restoredMetadata.SegmentIds);
+        Assert.Empty(await restoredContext.NzbFiles.Where(x => x.Id == itemId).ToListAsync());
     }
 
     [Fact]
@@ -463,7 +468,7 @@ public sealed class ContentIndexRecoveryServiceTests
     }
 
     [Fact]
-    public async Task SnapshotWriter_SanitizesArchiveWithNullBlobMetadataInsteadOfFailing()
+    public async Task SnapshotWriter_DoesNotInlineBlobBackedArchiveMetadata()
     {
         await _fixture.ResetAsync();
         var blobId = Guid.NewGuid();
@@ -498,7 +503,7 @@ public sealed class ContentIndexRecoveryServiceTests
 
         var snapshot = await File.ReadAllTextAsync(ContentIndexSnapshotStore.SnapshotFilePath);
         Assert.Contains("BrokenArchive.mkv", snapshot);
-        Assert.Contains("\"RarParts\":[]", snapshot);
+        Assert.DoesNotContain("RarParts", snapshot);
     }
 
     [Fact]
@@ -601,7 +606,7 @@ public sealed class ContentIndexRecoveryServiceTests
     }
 
     [Fact]
-    public async Task SnapshotWriter_RetainsPreviousSnapshot_WhenBlobBackedMetadataIsTemporarilyUnreadable()
+    public async Task SnapshotWriter_KeepsBlobBackedItemsCompactWhenBlobIsMissing()
     {
         var itemId = Guid.NewGuid();
         var blobId = Guid.NewGuid();
@@ -629,8 +634,9 @@ public sealed class ContentIndexRecoveryServiceTests
         await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
 
         var snapshotAfterBlobReadFailure = await File.ReadAllTextAsync(ContentIndexSnapshotStore.SnapshotFilePath);
-        Assert.Equal(originalSnapshot, snapshotAfterBlobReadFailure);
+        Assert.NotEqual(originalSnapshot, snapshotAfterBlobReadFailure);
         Assert.Contains(itemId.ToString(), snapshotAfterBlobReadFailure);
+        Assert.DoesNotContain("segment-1", snapshotAfterBlobReadFailure);
     }
 
     private static DavItem CreateDirectory(string name, DavItem parent)

@@ -128,6 +128,31 @@ public class BlobStore
         }
     }
 
+    public static BlobReadResult<FileInfo> TryStatBlob(Guid id)
+    {
+        var blobPath = GetBlobPath(id);
+        try
+        {
+            var fileInfo = new FileInfo(blobPath);
+            return fileInfo.Exists
+                ? new BlobReadResult<FileInfo>(fileInfo, BlobReadStatus.Found, Error: null)
+                : new BlobReadResult<FileInfo>(default, BlobReadStatus.Missing, "Blob file does not exist.");
+        }
+        catch (Exception e) when (IsMissingFileRace(e))
+        {
+            return new BlobReadResult<FileInfo>(default, BlobReadStatus.Missing, e.Message);
+        }
+        catch (Exception e) when (IsDirectoryAtPath(e, blobPath))
+        {
+            TryDeleteBlobPathDirectory(blobPath);
+            return new BlobReadResult<FileInfo>(default, BlobReadStatus.Unreadable, e.Message);
+        }
+        catch (Exception e) when (IsBlobOpenFailure(e))
+        {
+            return new BlobReadResult<FileInfo>(default, BlobReadStatus.TemporarilyUnavailable, e.Message);
+        }
+    }
+
     public static async Task<T?> ReadBlob<T>(Guid id)
     {
         var result = await TryReadBlob<T>(id).ConfigureAwait(false);

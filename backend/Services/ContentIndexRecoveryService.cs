@@ -34,11 +34,21 @@ public sealed class ContentIndexRecoveryService : BackgroundService
                 Log.Warning(warning);
 
             var snapshot = snapshotReadResult.Snapshot;
-            if (snapshot == null || snapshot.Items.Count == 0) return;
-
             await using var dbContext = new DavDatabaseContext();
+            if (snapshot == null || snapshot.Items.Count == 0)
+            {
+                if (snapshotReadResult.RewriteRecommended)
+                    await RewriteCompactSnapshotAsync(dbContext, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             var plan = await BuildRecoveryPlanAsync(dbContext, snapshot, cancellationToken).ConfigureAwait(false);
-            if (!plan.NeedsRecovery) return;
+            if (!plan.NeedsRecovery)
+            {
+                if (snapshotReadResult.RewriteRecommended || snapshot.Version != ContentIndexSnapshotStore.CurrentVersion)
+                    await RewriteCompactSnapshotAsync(dbContext, cancellationToken).ConfigureAwait(false);
+                return;
+            }
 
             Log.Warning(
                 "Recovering /content from snapshot '{SourcePath}'. Full restore: {RestoreAll}. Missing items: {MissingItems}. Missing metadata rows: {MissingMetadata}.",
@@ -49,6 +59,8 @@ public sealed class ContentIndexRecoveryService : BackgroundService
             );
 
             await RestoreAsync(dbContext, snapshot, plan, cancellationToken).ConfigureAwait(false);
+            if (snapshotReadResult.RewriteRecommended || snapshot.Version != ContentIndexSnapshotStore.CurrentVersion)
+                await RewriteCompactSnapshotAsync(dbContext, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -57,6 +69,22 @@ public sealed class ContentIndexRecoveryService : BackgroundService
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to restore /content items from persisted snapshot.");
+        }
+    }
+
+    private static async Task RewriteCompactSnapshotAsync(DavDatabaseContext dbContext, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await ContentIndexSnapshotStore.WriteAsync(dbContext, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to rewrite compact /content recovery snapshot.");
         }
     }
 
@@ -124,15 +152,21 @@ public sealed class ContentIndexRecoveryService : BackgroundService
         {
             MissingItemIds = missingItemIds,
             MissingNzbFileIds = effectiveFileItems
-                .Where(x => x.SubType == DavItem.ItemSubType.NzbFile && !currentNzbIds.Contains(x.Id))
+                .Where(x => x.SubType == DavItem.ItemSubType.NzbFile
+                            && !x.FileBlobId.HasValue
+                            && !currentNzbIds.Contains(x.Id))
                 .Select(x => x.Id)
                 .ToHashSet(),
             MissingRarFileIds = effectiveFileItems
-                .Where(x => x.SubType == DavItem.ItemSubType.RarFile && !currentRarIds.Contains(x.Id))
+                .Where(x => x.SubType == DavItem.ItemSubType.RarFile
+                            && !x.FileBlobId.HasValue
+                            && !currentRarIds.Contains(x.Id))
                 .Select(x => x.Id)
                 .ToHashSet(),
             MissingMultipartFileIds = effectiveFileItems
-                .Where(x => x.SubType == DavItem.ItemSubType.MultipartFile && !currentMultipartIds.Contains(x.Id))
+                .Where(x => x.SubType == DavItem.ItemSubType.MultipartFile
+                            && !x.FileBlobId.HasValue
+                            && !currentMultipartIds.Contains(x.Id))
                 .Select(x => x.Id)
                 .ToHashSet(),
         };
