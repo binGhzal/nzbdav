@@ -174,7 +174,11 @@ public class ConfigManagerConcurrencyTests
         );
         InjectCpuPressure(configManager, 0.50);
 
-        Assert.Equal(4, configManager.GetAdaptiveArticleBufferSize());
+        var expectedArticleBuffer = Math.Max(
+            1,
+            (int)Math.Floor(Math.Min(8, Math.Clamp(Environment.ProcessorCount, 4, 32)) * 0.50));
+
+        Assert.Equal(expectedArticleBuffer, configManager.GetAdaptiveArticleBufferSize());
         Assert.Equal(4, configManager.GetAdaptiveMaxStreamingConnections());
         Assert.Equal(32, configManager.GetAdaptiveMaxTotalStreamingConnections());
         Assert.Equal(100, configManager.GetAdaptivePostDownloadVerificationConcurrency());
