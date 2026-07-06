@@ -17,6 +17,7 @@ nuget
 .env
 .env.*
 !.env.example
+.nzbdav-rclone-state.json
 
 #######################
 # benchmark artifacts #

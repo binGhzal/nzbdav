@@ -8,54 +8,55 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 {
     private static readonly Dictionary<string, int> SymlinkOrStrmToMovieIdCache = new();
 
-    public Task<RadarrMovie> GetMovieAsync(int id) =>
-        Get<RadarrMovie>($"/movie/{id}");
+    public Task<RadarrMovie> GetMovieAsync(int id, CancellationToken ct = default) =>
+        Get<RadarrMovie>($"/movie/{id}", ct);
 
-    public Task<List<RadarrMovie>> GetMoviesAsync() =>
-        Get<List<RadarrMovie>>($"/movie");
+    public Task<List<RadarrMovie>> GetMoviesAsync(CancellationToken ct = default) =>
+        Get<List<RadarrMovie>>($"/movie", ct);
 
-    public Task<RadarrQueue> GetRadarrQueueAsync() =>
-        Get<RadarrQueue>($"/queue?protocol=usenet&pageSize=5000");
+    public Task<RadarrQueue> GetRadarrQueueAsync(CancellationToken ct = default) =>
+        Get<RadarrQueue>($"/queue?protocol=usenet&pageSize=5000", ct);
 
-    public Task<ArrPagedResponse<RadarrMissingMovie>> GetMissingMoviesAsync(int pageSize = 500) =>
+    public Task<ArrPagedResponse<RadarrMissingMovie>> GetMissingMoviesAsync(int pageSize = 500, CancellationToken ct = default) =>
         Get<ArrPagedResponse<RadarrMissingMovie>>(
-            $"/wanted/missing?page=1&pageSize={pageSize}&sortKey=physicalRelease&sortDirection=descending&monitored=true");
+            $"/wanted/missing?page=1&pageSize={pageSize}&sortKey=physicalRelease&sortDirection=descending&monitored=true",
+            ct);
 
-    public Task<HttpStatusCode> DeleteMovieFile(int id) =>
-        Delete($"/moviefile/{id}");
+    public Task<HttpStatusCode> DeleteMovieFile(int id, CancellationToken ct = default) =>
+        Delete($"/moviefile/{id}", ct: ct);
 
-    public Task<ArrCommand> SearchMovieAsync(int id) =>
-        CommandAsync(new { name = "MoviesSearch", movieIds = new List<int> { id } });
+    public Task<ArrCommand> SearchMovieAsync(int id, CancellationToken ct = default) =>
+        CommandAsync(new { name = "MoviesSearch", movieIds = new List<int> { id } }, ct);
 
-    public Task<ArrCommand> SearchMoviesAsync(List<int> ids) =>
-        CommandAsync(new { name = "MoviesSearch", movieIds = ids });
+    public Task<ArrCommand> SearchMoviesAsync(List<int> ids, CancellationToken ct = default) =>
+        CommandAsync(new { name = "MoviesSearch", movieIds = ids }, ct);
 
-    public override async Task<bool> RemoveAndSearch(string symlinkOrStrmPath)
+    public override async Task<bool> RemoveAndSearch(string symlinkOrStrmPath, CancellationToken ct = default)
     {
-        var mediaIds = await GetMediaIds(symlinkOrStrmPath);
+        var mediaIds = await GetMediaIds(symlinkOrStrmPath, ct).ConfigureAwait(false);
         if (mediaIds == null) return false;
 
-        if (await DeleteMovieFile(mediaIds.Value.movieFileId) != HttpStatusCode.OK)
+        if (await DeleteMovieFile(mediaIds.Value.movieFileId, ct).ConfigureAwait(false) != HttpStatusCode.OK)
             throw new Exception($"Failed to delete movie file `{symlinkOrStrmPath}` from radarr instance `{Host}`.");
 
-        await SearchMovieAsync(mediaIds.Value.movieId);
+        await SearchMovieAsync(mediaIds.Value.movieId, ct).ConfigureAwait(false);
         return true;
     }
 
-    private async Task<(int movieFileId, int movieId)?> GetMediaIds(string symlinkOrStrmPath)
+    private async Task<(int movieFileId, int movieId)?> GetMediaIds(string symlinkOrStrmPath, CancellationToken ct)
     {
         // if we already have the movie-id cached
         // then let's use it to find and return the corresponding movie-file-id
         if (SymlinkOrStrmToMovieIdCache.TryGetValue(symlinkOrStrmPath, out var movieId))
         {
-            var movie = await GetMovieAsync(movieId);
+            var movie = await GetMovieAsync(movieId, ct).ConfigureAwait(false);
             if (movie.MovieFile?.Path == symlinkOrStrmPath)
                 return (movie.MovieFile.Id!, movieId);
         }
 
         // otherwise, let's fetch all movies, cache all movie files
         // and return the matching movie-id and movie-file-id
-        var allMovies = await GetMoviesAsync();
+        var allMovies = await GetMoviesAsync(ct).ConfigureAwait(false);
         (int movieFileId, int movieId)? result = null;
         foreach (var movie in allMovies)
         {

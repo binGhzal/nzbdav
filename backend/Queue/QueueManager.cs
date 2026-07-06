@@ -2,6 +2,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
@@ -145,37 +146,32 @@ public class QueueManager : IDisposable
 
     private async Task ProcessQueueAsync(CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested)
-        {
-            try
+        var loop = new QueueProcessingLoop(
+            _configManager.IsQueuePaused,
+            TryStartNextQueueItemAsync,
+            WaitForQueueWorkAsync,
+            e =>
             {
-                if (_configManager.IsQueuePaused())
-                {
-                    await WaitForQueueWorkAsync().ConfigureAwait(false);
-                    continue;
-                }
-
-                var startedItem = await TryStartNextQueueItemAsync(ct).ConfigureAwait(false);
-                if (startedItem) continue;
-
-                await WaitForQueueWorkAsync().ConfigureAwait(false);
-            }
-            catch (Exception e)
-            {
-                Log.Error($"An unexpected error occured while processing the queue: {e.Message}");
-            }
-        }
+                Log.Error(e, "An unexpected error occurred while processing the queue: {Message}", e.Message);
+                return Task.CompletedTask;
+            });
+        await loop.RunAsync(ct).ConfigureAwait(false);
     }
 
-    private async Task WaitForQueueWorkAsync()
+    private async Task WaitForQueueWorkAsync(CancellationToken ct)
     {
         try
         {
             // If every worker slot is busy, paused, or the queue is empty, wait briefly.
             // New NZBs, cancellations, config changes, and completed workers awaken the queue early.
-            await Task.Delay(TimeSpan.FromMinutes(1), _sleepingQueueToken.Token).ConfigureAwait(false);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _sleepingQueueToken.Token);
+            await Task.Delay(TimeSpan.FromMinutes(1), linkedCts.Token).ConfigureAwait(false);
         }
-        catch when (_sleepingQueueToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException) when (_sleepingQueueToken.IsCancellationRequested)
         {
             lock (_sleepingQueueLock)
             {
@@ -263,7 +259,6 @@ public class QueueManager : IDisposable
         CancellationTokenSource cts
     )
     {
-        var progressHook = new Progress<int>();
         var inProgressQueueItem = new InProgressQueueItem()
         {
             QueueItem = queueItem,
@@ -274,15 +269,15 @@ public class QueueManager : IDisposable
             UsenetClient = usenetClient,
             WorkerJob = workerJob
         };
-        inProgressQueueItem.ProcessingTask = RunQueueItemAsync(inProgressQueueItem, dbClient, progressHook);
         var debounce = DebounceUtil.CreateDebounce();
-        progressHook.ProgressChanged += (_, progress) =>
+        var progressHook = ProgressExtensions.FromAction(progress =>
         {
             inProgressQueueItem.ProgressPercentage = progress;
             var message = $"{queueItem.Id}|{progress}";
             if (progress is 100 or 200) _websocketManager.SendMessage(WebsocketTopic.QueueItemProgress, message);
             else debounce(() => _websocketManager.SendMessage(WebsocketTopic.QueueItemProgress, message));
-        };
+        });
+        inProgressQueueItem.ProcessingTask = RunQueueItemAsync(inProgressQueueItem, dbClient, progressHook);
         return inProgressQueueItem;
     }
 
@@ -301,7 +296,6 @@ public class QueueManager : IDisposable
                 dbClient,
                 inProgressQueueItem.UsenetClient,
                 _configManager,
-                _queueWorkLaneCoordinator,
                 _websocketManager,
                 _arrDownloadReportService,
                 progressHook,
@@ -347,6 +341,12 @@ public class QueueManager : IDisposable
                     nextAttemptAt: nextAttemptAt,
                     maxAttempts: DownloadWorkerRetryMaxAttempts)
                 .ConfigureAwait(false);
+            return;
+        }
+
+        if (outcome == QueueItemProcessor.ProcessingOutcome.Cancelled)
+        {
+            await dbClient.ReleaseWorkerJobLeaseAsync(inProgressQueueItem.WorkerJob).ConfigureAwait(false);
         }
     }
 

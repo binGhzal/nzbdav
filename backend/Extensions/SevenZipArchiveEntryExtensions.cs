@@ -42,9 +42,45 @@ public static class SevenZipArchiveEntryExtensions
         return databaseDataStartPosition + databasePackStreamStartPositions[folderFirstPackStreamId];
     }
 
-    public static long? GetPackedSize(this SevenZipArchiveEntry entry)
+    public static long? GetPackedSize(this SevenZipArchiveEntry? entry)
     {
-        throw new NotImplementedException();
+        if (entry == null) return null;
+
+        return TryGetLong(entry.GetReflectionProperty("CompressedSize"))
+               ?? TryGetLong(entry.GetReflectionProperty("PackedSize"))
+               ?? TryGetLong(entry.GetReflectionField("<CompressedSize>k__BackingField"))
+               ?? TryGetLong(entry.GetReflectionField("<PackedSize>k__BackingField"))
+               ?? TryGetFilePartPackedSize(entry);
+    }
+
+    private static long? TryGetFilePartPackedSize(SevenZipArchiveEntry entry)
+    {
+        try
+        {
+            var filePart = entry.GetReflectionProperty("FilePart");
+            if (filePart == null) return null;
+
+            return TryGetLong(filePart.GetReflectionProperty("PackedSize"))
+                   ?? TryGetLong(filePart.GetReflectionProperty("CompressedSize"))
+                   ?? TryGetLong(filePart.GetReflectionField("<PackedSize>k__BackingField"))
+                   ?? TryGetLong(filePart.GetReflectionField("<CompressedSize>k__BackingField"));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static long? TryGetLong(object? value)
+    {
+        return value switch
+        {
+            long longValue when longValue >= 0 => longValue,
+            ulong ulongValue when ulongValue <= long.MaxValue => (long)ulongValue,
+            int intValue when intValue >= 0 => intValue,
+            uint uintValue => uintValue,
+            _ => null
+        };
     }
 
     private static IEnumerable<object?>? GetCoders(this SevenZipArchiveEntry entry)

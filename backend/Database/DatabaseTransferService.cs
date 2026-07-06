@@ -78,37 +78,47 @@ public static class DatabaseTransferService
 
         await using var tx = await dbContext.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
         dbContext.ChangeTracker.AutoDetectChangesEnabled = false;
-        if (replace)
-            await ClearApplicationTablesAsync(dbContext, ct).ConfigureAwait(false);
+        dbContext.SuppressRcloneInvalidations = true;
 
-        await AddAndSaveAsync(dbContext, snapshot.Accounts, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.ConfigItems, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.Items, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.NzbFiles, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.RarFiles, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.MultipartFiles, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.QueueItems, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.HistoryItems, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.QueueNzbContents, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.HealthCheckResults, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.HealthCheckStats, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.BlobCleanupItems, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.HistoryCleanupItems, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.DavCleanupItems, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.NzbNames, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.NzbBlobCleanupItems, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.RcloneInvalidationItems, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.WorkerJobs, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.RepairRuns, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.RepairEntryHealth, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.RepairBrokenFiles, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.ArrDownloadCorrelations, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.QueuePriorityHints, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.ArrSearchNudgeCommands, ct).ConfigureAwait(false);
-        await AddAndSaveAsync(dbContext, snapshot.ArrDownloadLifecycleEvents, ct).ConfigureAwait(false);
+        try
+        {
+            if (replace)
+                await ClearApplicationTablesAsync(dbContext, ct).ConfigureAwait(false);
 
-        await tx.CommitAsync(ct).ConfigureAwait(false);
-        return new DatabaseTransferImportResult(snapshot.TotalRows);
+            await AddAndSaveAsync(dbContext, snapshot.Accounts, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.ConfigItems, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.Items, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.NzbFiles, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.RarFiles, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.MultipartFiles, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.QueueItems, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.HistoryItems, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.QueueNzbContents, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.HealthCheckResults, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.HealthCheckStats, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.BlobCleanupItems, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.HistoryCleanupItems, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.DavCleanupItems, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.NzbNames, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.NzbBlobCleanupItems, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.RcloneInvalidationItems, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.WorkerJobs, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.RepairRuns, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.RepairEntryHealth, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.RepairBrokenFiles, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.ArrDownloadCorrelations, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.QueuePriorityHints, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.ArrSearchNudgeCommands, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.ArrDownloadLifecycleEvents, ct).ConfigureAwait(false);
+
+            await tx.CommitAsync(ct).ConfigureAwait(false);
+            return new DatabaseTransferImportResult(snapshot.TotalRows);
+        }
+        finally
+        {
+            dbContext.SuppressRcloneInvalidations = false;
+            dbContext.ChangeTracker.AutoDetectChangesEnabled = true;
+        }
     }
 
     private static async Task AddAndSaveAsync<T>
@@ -135,6 +145,7 @@ public static class DatabaseTransferService
 
     private static async Task ClearApplicationTablesAsync(DavDatabaseContext dbContext, CancellationToken ct)
     {
+        await ClearGeneratedOperationalTablesAsync(dbContext, ct).ConfigureAwait(false);
         await dbContext.ArrDownloadLifecycleEvents.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.ArrSearchNudgeCommands.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.QueuePriorityHints.ExecuteDeleteAsync(ct).ConfigureAwait(false);
@@ -143,12 +154,6 @@ public static class DatabaseTransferService
         await dbContext.RepairEntryHealth.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.RepairRuns.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.WorkerJobs.ExecuteDeleteAsync(ct).ConfigureAwait(false);
-        await dbContext.RcloneInvalidationItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
-        await dbContext.NzbBlobCleanupItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
-        await dbContext.NzbNames.ExecuteDeleteAsync(ct).ConfigureAwait(false);
-        await dbContext.DavCleanupItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
-        await dbContext.HistoryCleanupItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
-        await dbContext.BlobCleanupItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.HealthCheckStats.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.HealthCheckResults.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.QueueNzbContents.ExecuteDeleteAsync(ct).ConfigureAwait(false);
@@ -160,6 +165,17 @@ public static class DatabaseTransferService
         await dbContext.Items.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.ConfigItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.Accounts.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        await ClearGeneratedOperationalTablesAsync(dbContext, ct).ConfigureAwait(false);
+    }
+
+    private static async Task ClearGeneratedOperationalTablesAsync(DavDatabaseContext dbContext, CancellationToken ct)
+    {
+        await dbContext.RcloneInvalidationItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        await dbContext.NzbBlobCleanupItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        await dbContext.NzbNames.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        await dbContext.DavCleanupItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        await dbContext.HistoryCleanupItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        await dbContext.BlobCleanupItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
     }
 }
 

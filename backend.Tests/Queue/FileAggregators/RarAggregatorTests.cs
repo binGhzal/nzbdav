@@ -10,6 +10,19 @@ namespace NzbWebDAV.Tests.Queue.FileAggregators;
 public class RarAggregatorTests
 {
     [Fact]
+    public void ToDavMultipartFileMetaRejectsNullRarParts()
+    {
+        var rarFile = new DavRarFile
+        {
+            Id = Guid.NewGuid(),
+            RarParts = null!
+        };
+
+        var exception = Assert.Throws<InvalidDataException>(() => rarFile.ToDavMultipartFileMeta());
+        Assert.Contains("rar", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void UpdateDatabaseKeepsMatchingPathsFromSeparateArchivesSeparate()
     {
         using var dbContext = new DavDatabaseContext();

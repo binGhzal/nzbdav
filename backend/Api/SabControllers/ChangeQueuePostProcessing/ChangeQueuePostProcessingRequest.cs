@@ -1,5 +1,4 @@
-﻿using System.Text.Json;
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http;
 using NzbWebDAV.Api.SabControllers.AddFile;
 using NzbWebDAV.Database.Models;
@@ -35,32 +34,14 @@ public class ChangeQueuePostProcessingRequest
 
     private static IEnumerable<Guid> NzoIdsFromQueryParam(HttpContext httpContext)
     {
-        return httpContext.GetQueryParamValues("value")
-            .SelectMany(x => x.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            .Select(TryParseGuid)
-            .Where(x => x.HasValue)
-            .Select(x => x!.Value);
+        return SabPagination.ParseValueIdList(httpContext);
     }
 
     private static async Task<RequestBody?> ReadRequestBody(HttpContext httpContext, CancellationToken ct)
     {
-        if (httpContext.Request.ContentLength is null or 0) return null;
-
-        try
-        {
-            return await JsonSerializer
-                .DeserializeAsync<RequestBody>(httpContext.Request.Body, cancellationToken: ct)
-                .ConfigureAwait(false);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static Guid? TryParseGuid(string value)
-    {
-        return Guid.TryParse(value, out var guid) ? guid : null;
+        return await SabPagination
+            .ReadOptionalJsonBody<RequestBody>(httpContext, ct)
+            .ConfigureAwait(false);
     }
 
     private class RequestBody

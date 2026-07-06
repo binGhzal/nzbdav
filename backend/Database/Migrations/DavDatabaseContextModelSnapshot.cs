@@ -475,6 +475,9 @@ namespace NzbWebDAV.Database.Migrations
 
                     b.HasIndex("CreatedAt");
 
+                    b.HasIndex("DavItemId", "CreatedAt", "Id")
+                        .IsDescending(false, true, true);
+
                     b.HasIndex("DavItemId")
                         .HasFilter("\"RepairStatus\" = 3");
 
@@ -932,6 +935,13 @@ namespace NzbWebDAV.Database.Migrations
                         .IsUnique();
 
                     b.HasIndex("Kind", "Status", "AvailableAt", "LeaseExpiresAt", "Priority", "CreatedAt");
+
+                    b.HasIndex("Kind", "Status", "LeaseExpiresAt")
+                        .HasDatabaseName("IX_WorkerJobs_Kind_Status_LeaseExpiresAt");
+
+                    b.HasIndex("Kind", "Status", "Priority", "AvailableAt", "CreatedAt")
+                        .IsDescending(false, false, true, false, false)
+                        .HasDatabaseName("IX_WorkerJobs_Kind_Status_Priority_AvailableAt_CreatedAt");
 
                     b.ToTable("WorkerJobs", (string)null);
                 });

@@ -9,6 +9,7 @@ namespace NzbWebDAV.Websocket;
 
 public class WebsocketManager
 {
+    private static readonly TimeSpan SendTimeout = TimeSpan.FromMilliseconds(250);
     private readonly HashSet<WebSocket> _authenticatedSockets = [];
     private readonly Dictionary<WebsocketTopic, string> _lastMessage = new();
 
@@ -58,7 +59,27 @@ public class WebsocketManager
         lock (_authenticatedSockets) authenticatedSockets = _authenticatedSockets.ToList();
         var topicMessage = new TopicMessage(topic, message);
         var bytes = new ArraySegment<byte>(Encoding.UTF8.GetBytes(topicMessage.ToJson()));
-        return Task.WhenAll(authenticatedSockets.Select(x => SendMessage(x, bytes)));
+        return SendMessageToAuthenticatedSockets(authenticatedSockets, bytes);
+    }
+
+    private async Task SendMessageToAuthenticatedSockets
+    (
+        List<WebSocket> authenticatedSockets,
+        ArraySegment<byte> bytes
+    )
+    {
+        var results = await Task.WhenAll(authenticatedSockets.Select(x => SendMessage(x, bytes)))
+            .ConfigureAwait(false);
+        var failedSockets = authenticatedSockets
+            .Where((_, index) => !results[index])
+            .ToList();
+        if (failedSockets.Count == 0) return;
+
+        lock (_authenticatedSockets)
+        {
+            foreach (var socket in failedSockets)
+                _authenticatedSockets.Remove(socket);
+        }
     }
 
     /// <summary>
@@ -117,15 +138,26 @@ public class WebsocketManager
     /// </summary>
     /// <param name="socket">The websocket to send the message to.</param>
     /// <param name="message">The message to send.</param>
-    private static async Task SendMessage(WebSocket socket, ArraySegment<byte> message)
+    private static async Task<bool> SendMessage(WebSocket socket, ArraySegment<byte> message)
     {
+        if (socket.State != WebSocketState.Open) return false;
+
         try
         {
-            await socket.SendAsync(message, WebSocketMessageType.Text, true, SigtermUtil.GetCancellationToken()).ConfigureAwait(false);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(SigtermUtil.GetCancellationToken());
+            cts.CancelAfter(SendTimeout);
+            await socket.SendAsync(message, WebSocketMessageType.Text, true, cts.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Debug("Timed out sending message to websocket.");
+            return false;
         }
         catch (Exception e)
         {
             Log.Debug($"Failed to send message to websocket. {e.Message}");
+            return false;
         }
     }
 

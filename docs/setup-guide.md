@@ -220,7 +220,7 @@ You can find the optimal **Max Download Connections** for your network (`Setting
 
 Open `Health` in the WebUI for live repair, cache, provider, worker, mount, and rclone invalidation status. The page can start a repair verification run, cancel an active run, and clear broken-file repair records after review.
 
-Repair checking uses a separate connection budget so background verification does not steal active streaming slots. The defaults are conservative: `repair.connection-budget-percent=20` with at least one connection. Provider errors and unknown results are retried and reported as degraded state; NZBDav only queues repair for definitive missing-on-all-provider cases.
+Repair checking uses a separate connection budget so continuous background verification does not steal active streaming slots. The defaults are conservative: `repair.connection-budget-percent=20` with at least one connection. Fresh post-download verify jobs are prioritized separately and can use the full automatic NNTP check budget, bounded by CPU/runtime pressure, so ARR-triggered downloads do not sit in slow verification behind the repair budget. Provider errors and unknown results are retried and reported as degraded state; NZBDav only queues repair for definitive missing-on-all-provider cases.
 
 Download, verify, and repair work run as separate queue lanes. In `Settings` > `WebDAV` > `Advanced Throughput`, set `queue.max-concurrent-downloads`, `queue.max-concurrent-verify`, and `queue.max-concurrent-repair` independently. Use `0` for automatic sizing, or set a positive value as a hard per-lane cap. A saturated verify lane will not consume repair slots, and a saturated repair lane will not consume download slots.
 
@@ -330,15 +330,41 @@ After the sidecar starts, enable rclone remote control in NZBDav:
 * **Username:** `nzbdav`
 * **Password:** the same value you used in `--rc-pass`
 
-Start `nzbdav_rclone`
+Start and update `nzbdav_rclone` with the safe updater from this repository.
+Use this instead of raw `docker compose up -d nzbdav_rclone` for routine
+deploys. The helper fingerprints the rendered compose service plus
+`rclone.conf`, records the fingerprint in `.nzbdav-rclone-state.json`, and
+skips `docker compose up` entirely when nothing effective changed:
 ```bash
-$ docker compose up -d nzbdav_rclone
+$ python3 scripts/nzbdav_safe_rclone_up.py \
+    --project-dir /path/to/apps/nzbdav \
+    --compose-file docker-compose.yml \
+    --watch-file rclone.conf
 ```
 
-If you make some rclone config changes or other changes in the compose file, apply the changes like this
+Run the same command after editing `rclone.conf` or the compose sidecar
+definition. If the rendered service and watched config content are unchanged,
+the helper exits without touching the live rclone container or mount:
 ```bash
-$ docker compose up -d --force-recreate nzbdav_rclone
+$ python3 scripts/nzbdav_safe_rclone_up.py \
+    --project-dir /path/to/apps/nzbdav \
+    --compose-file docker-compose.yml \
+    --watch-file rclone.conf
 ```
+
+If `.nzbdav-rclone-state.json` is missing but an `nzbdav_rclone` container is
+already running, the helper checks Docker Compose's live service hash and the
+watched config file timestamps. When the running container matches the rendered
+service and `rclone.conf` has not changed since the container started, it records
+the current fingerprint and still skips `docker compose up`. If `rclone.conf` is
+newer than the running container, it applies the update so rclone can reload the
+changed config.
+
+Do not use `--force-recreate` for routine restarts or unchanged settings. A
+forced recreate tears down the mount even when nothing changed, which can make
+Plex/Radarr/Sonarr briefly see an empty or stale library. Only force recreate
+the rclone sidecar when you intentionally need a clean remount and the media
+apps are stopped or gated behind the mount healthcheck below.
 
 Check out the mount is working
 ```bash

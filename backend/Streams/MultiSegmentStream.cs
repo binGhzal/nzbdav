@@ -18,6 +18,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly Task _downloadTask;
     private readonly int? _endSegmentCount;
     private Stream? _stream;
+    private Task<Stream>? _pendingStreamTask;
     private bool _disposed;
 
     public static Stream Create
@@ -108,14 +109,21 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     {
         ThrowIfDisposed();
 
-        while (!cancellationToken.IsCancellationRequested)
+        while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // if the stream is null, get the next stream.
             if (_stream == null)
             {
-                if (!await _streamTasks.Reader.WaitToReadAsync(cancellationToken)) return 0;
-                if (!_streamTasks.Reader.TryRead(out var streamTask)) return 0;
-                _stream = await streamTask;
+                if (_pendingStreamTask == null)
+                {
+                    if (!await _streamTasks.Reader.WaitToReadAsync(cancellationToken)) return 0;
+                    if (!_streamTasks.Reader.TryRead(out _pendingStreamTask)) return 0;
+                }
+
+                _stream = await _pendingStreamTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+                _pendingStreamTask = null;
             }
 
             // read from the stream
@@ -126,8 +134,6 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             await _stream.DisposeAsync();
             _stream = null;
         }
-
-        return 0;
     }
 
     private void ThrowIfDisposed()
@@ -143,6 +149,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         _cts.Cancel();
         _cts.Dispose();
         _stream?.Dispose();
+        if (_pendingStreamTask != null)
+        {
+            ObserveAndDisposeStreamTask(_pendingStreamTask);
+            _pendingStreamTask = null;
+        }
         _streamTasks.Writer.TryComplete();
 
         // ensure that streams that were never read from the channel get disposed

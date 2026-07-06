@@ -17,7 +17,7 @@ export default defineConfig({
         url: "https://media.example.test/nzbdav/queue",
       },
     },
-    include: ["app/**/*.test.ts", "app/**/*.test.tsx"],
+    include: ["app/**/*.test.ts", "app/**/*.test.tsx", "server/**/*.test.ts"],
     setupFiles: ["./test/setup.ts"],
   },
 });

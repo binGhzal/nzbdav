@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
 
@@ -17,7 +18,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     // file
     public Task<DavItem?> GetFileById(string id)
     {
-        var guid = Guid.Parse(id);
+        if (!Guid.TryParse(id, out var guid)) return Task.FromResult<DavItem?>(null);
         return ctx.Items.Where(i => i.Id == guid).FirstOrDefaultAsync();
     }
 
@@ -85,12 +86,13 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         var blobId = davItem.FileBlobId;
         if (blobId.HasValue)
         {
-            var blob = await BlobStore.ReadBlob<DavNzbFile>(blobId.Value);
+            var blob = await ReadBlobMetadataAsync<DavNzbFile>(blobId.Value).ConfigureAwait(false);
             if (blob is not null) return blob;
         }
 
         // read from database
         return await ctx.NzbFiles
+            .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == davItem.Id, ct)
             .ConfigureAwait(false);
     }
@@ -101,12 +103,13 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         var blobId = davItem.FileBlobId;
         if (blobId.HasValue)
         {
-            var blob = await BlobStore.ReadBlob<DavRarFile>(blobId.Value);
+            var blob = await ReadBlobMetadataAsync<DavRarFile>(blobId.Value).ConfigureAwait(false);
             if (blob is not null) return blob;
         }
 
         // read from database
         return await ctx.RarFiles
+            .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == davItem.Id, ct)
             .ConfigureAwait(false);
     }
@@ -117,14 +120,28 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         var blobId = davItem.FileBlobId;
         if (blobId.HasValue)
         {
-            var blob = await BlobStore.ReadBlob<DavMultipartFile>(blobId.Value);
+            var blob = await ReadBlobMetadataAsync<DavMultipartFile>(blobId.Value).ConfigureAwait(false);
             if (blob is not null) return blob;
         }
 
         // read from database
         return await ctx.MultipartFiles
+            .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == davItem.Id, ct)
             .ConfigureAwait(false);
+    }
+
+    private static async Task<T?> ReadBlobMetadataAsync<T>(Guid blobId)
+    {
+        var blob = await BlobStore.TryReadBlob<T>(blobId).ConfigureAwait(false);
+        if (blob.Status == BlobStore.BlobReadStatus.Found) return blob.Value;
+        if (blob.Status == BlobStore.BlobReadStatus.TemporarilyUnavailable)
+        {
+            throw new RetryableDownloadException(
+                $"Metadata blob `{blobId}` is temporarily unavailable: {blob.Error}");
+        }
+
+        return default;
     }
 
     // queue
@@ -253,43 +270,56 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             return (null, null, null);
         }
 
-        var workerJob = selected.workerJob;
-        if (workerJob is null)
-        {
-            workerJob = new WorkerJob
-            {
-                Id = Guid.NewGuid(),
-                Kind = WorkerJob.JobKind.Download,
-                TargetId = selected.queueItem.Id,
-                Priority = (int)selected.queueItem.Priority,
-                Attempts = 0,
-                CreatedAt = referenceTime,
-                UpdatedAt = referenceTime,
-                AvailableAt = referenceTime
-            };
-            Ctx.WorkerJobs.Add(workerJob);
-        }
-
-        workerJob.Status = WorkerJob.JobStatus.Leased;
-        workerJob.Priority = selected.effectivePriority;
-        workerJob.LeaseOwner = owner;
-        workerJob.LeaseExpiresAt = leaseExpiresAt;
-        workerJob.Attempts += 1;
-        workerJob.UpdatedAt = referenceTime;
-        workerJob.LastError = null;
-
-        await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
-        await transaction.CommitAsync(ct).ConfigureAwait(false);
-
         var queueNzbStream = await ReadQueueNzbStreamAsync(selected.queueItem.Id, ct).ConfigureAwait(false);
-        return (selected.queueItem, queueNzbStream, workerJob);
+        try
+        {
+            var workerJob = selected.workerJob;
+            if (workerJob is null)
+            {
+                workerJob = new WorkerJob
+                {
+                    Id = Guid.NewGuid(),
+                    Kind = WorkerJob.JobKind.Download,
+                    TargetId = selected.queueItem.Id,
+                    Priority = (int)selected.queueItem.Priority,
+                    Attempts = 0,
+                    CreatedAt = referenceTime,
+                    UpdatedAt = referenceTime,
+                    AvailableAt = referenceTime
+                };
+                Ctx.WorkerJobs.Add(workerJob);
+            }
+
+            workerJob.Status = WorkerJob.JobStatus.Leased;
+            workerJob.Priority = selected.effectivePriority;
+            workerJob.LeaseOwner = owner;
+            workerJob.LeaseExpiresAt = leaseExpiresAt;
+            workerJob.Attempts += 1;
+            workerJob.UpdatedAt = referenceTime;
+            workerJob.LastError = null;
+
+            await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+
+            return (selected.queueItem, queueNzbStream, workerJob);
+        }
+        catch
+        {
+            if (queueNzbStream is not null)
+                await queueNzbStream.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     private async Task<Stream?> ReadQueueNzbStreamAsync(Guid queueItemId, CancellationToken ct)
     {
         // attempt to read nzb contents from blob-store.
-        var queueNzbStream = BlobStore.ReadBlob(queueItemId);
-        if (queueNzbStream != null) return queueNzbStream;
+        var blobRead = BlobStore.TryOpenReadBlob(queueItemId);
+        if (blobRead.Status == BlobStore.BlobReadStatus.Found)
+            return blobRead.Value;
+        if (blobRead.Status == BlobStore.BlobReadStatus.TemporarilyUnavailable)
+            throw new RetryableDownloadException(
+                $"The NZB blob `{queueItemId}` is temporarily unavailable from the queue store: {blobRead.Error}");
 
         // otherwise, read nzb contents from database.
         var queueNzbContents = await Ctx.QueueNzbContents
@@ -472,11 +502,9 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         if (statuses is { Count: > 0 })
         {
             var includePaused = statuses.Contains("paused");
-            var includeDownloading = statuses.Contains("downloading");
             var includeQueued = statuses.Contains("queued");
             queueItems = queueItems.Where(q =>
                 includePaused && q.Priority == QueueItem.PriorityOption.Paused
-                || includeDownloading && q.Priority != QueueItem.PriorityOption.Paused
                 || includeQueued && q.Priority != QueueItem.PriorityOption.Paused);
         }
 
@@ -560,7 +588,8 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     // history
     public async Task<HistoryItem?> GetHistoryItemAsync(string id)
     {
-        return await Ctx.HistoryItems.FirstOrDefaultAsync(x => x.Id == Guid.Parse(id)).ConfigureAwait(false);
+        if (!Guid.TryParse(id, out var guid)) return null;
+        return await Ctx.HistoryItems.FirstOrDefaultAsync(x => x.Id == guid).ConfigureAwait(false);
     }
 
     public async Task RemoveHistoryItemsAsync(List<Guid> ids, bool deleteFiles, CancellationToken ct = default)
@@ -597,12 +626,17 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     {
         if (ids.Count == 0) return;
 
-        var existingCleanupIds = await Ctx.HistoryCleanupItems
+        var existingCleanupItems = await Ctx.HistoryCleanupItems
             .Where(x => ids.Contains(x.Id))
-            .Select(x => x.Id)
             .ToListAsync(ct)
             .ConfigureAwait(false);
-        var existingCleanupIdSet = existingCleanupIds.ToHashSet();
+        if (deleteFiles)
+        {
+            foreach (var cleanupItem in existingCleanupItems)
+                cleanupItem.DeleteMountedFiles = true;
+        }
+
+        var existingCleanupIdSet = existingCleanupItems.Select(x => x.Id).ToHashSet();
 
         Ctx.HistoryCleanupItems.AddRange(ids
             .Where(x => !existingCleanupIdSet.Contains(x))
@@ -662,24 +696,33 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     {
         var referenceTime = now ?? DateTimeOffset.UtcNow;
         var baseQuery = Ctx.RcloneInvalidationItems.AsNoTracking();
-        var failedQuery = baseQuery.Where(x => x.Attempts > 0 || x.LastError != null);
-
-        var pending = await baseQuery.CountAsync(ct).ConfigureAwait(false);
-        var ready = await baseQuery.CountAsync(x => x.NextAttemptAt <= referenceTime, ct).ConfigureAwait(false);
-        var failed = await failedQuery.CountAsync(ct).ConfigureAwait(false);
-        var maxAttempts = await baseQuery
-            .Select(x => (int?)x.Attempts)
-            .MaxAsync(ct)
-            .ConfigureAwait(false) ?? 0;
-        var lastError = await failedQuery
-            .Where(x => x.LastError != null)
-            .OrderByDescending(x => x.LastAttemptAt ?? x.CreatedAt)
-            .ThenByDescending(x => x.CreatedAt)
-            .Select(x => x.LastError)
+        var summary = await baseQuery
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                Pending = g.Count(),
+                Ready = g.Count(x => x.NextAttemptAt <= referenceTime),
+                Failed = g.Count(x => x.Attempts > 0 || x.LastError != null),
+                MaxAttempts = g.Max(x => (int?)x.Attempts) ?? 0
+            })
             .FirstOrDefaultAsync(ct)
             .ConfigureAwait(false);
+        var lastError = summary?.Failed > 0
+            ? await baseQuery
+                .Where(x => x.LastError != null)
+                .OrderByDescending(x => x.LastAttemptAt ?? x.CreatedAt)
+                .ThenByDescending(x => x.CreatedAt)
+                .Select(x => x.LastError)
+                .FirstOrDefaultAsync(ct)
+                .ConfigureAwait(false)
+            : null;
 
-        return new RcloneInvalidationStats(pending, ready, failed, maxAttempts, lastError);
+        return new RcloneInvalidationStats(
+            summary?.Pending ?? 0,
+            summary?.Ready ?? 0,
+            summary?.Failed ?? 0,
+            summary?.MaxAttempts ?? 0,
+            lastError);
     }
 
     public async Task<HealthWorkerQueueStats> GetHealthWorkerQueueStatsAsync
@@ -695,9 +738,16 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         var verifyReady = await healthCheckQueue
             .CountAsync(x => x.NextHealthCheck == null || x.NextHealthCheck < referenceTime, ct)
             .ConfigureAwait(false);
-        var repairActionNeeded = await Ctx.HealthCheckResults
+        var latestRepairStatuses = Ctx.HealthCheckResults
             .AsNoTracking()
-            .CountAsync(x => x.RepairStatus == HealthCheckResult.RepairAction.ActionNeeded, ct)
+            .GroupBy(x => x.DavItemId)
+            .Select(g => g
+                .OrderByDescending(x => x.CreatedAt)
+                .ThenByDescending(x => x.Id)
+                .Select(x => x.RepairStatus)
+                .First());
+        var repairActionNeeded = await latestRepairStatuses
+            .CountAsync(x => x == HealthCheckResult.RepairAction.ActionNeeded, ct)
             .ConfigureAwait(false);
 
         return new HealthWorkerQueueStats(verifyReady, repairActionNeeded);
@@ -718,6 +768,55 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         int RepairActionNeeded
     );
 
+    public sealed record HealthCheckQueueSnapshot
+    (
+        int UncheckedCount,
+        IReadOnlyList<HealthCheckQueueSnapshotItem> Items
+    );
+
+    public sealed record HealthCheckQueueSnapshotItem
+    (
+        Guid Id,
+        string Name,
+        string Path,
+        DateTimeOffset? ReleaseDate,
+        DateTimeOffset? LastHealthCheck,
+        DateTimeOffset? NextHealthCheck
+    );
+
+    public async Task<HealthCheckQueueSnapshot> GetHealthCheckQueueSnapshotAsync
+    (
+        int pageSize,
+        CancellationToken ct = default
+    )
+    {
+        var clampedPageSize = Math.Clamp(pageSize, 1, 500);
+        var baseQuery = HealthCheckService.GetHealthCheckQueueItemsQuery(this)
+            .AsNoTracking();
+
+        var items = await baseQuery
+            .OrderBy(x => x.NextHealthCheck == null ? 1 : 0)
+            .ThenBy(x => x.NextHealthCheck)
+            .ThenByDescending(x => x.ReleaseDate)
+            .ThenBy(x => x.Id)
+            .Select(x => new HealthCheckQueueSnapshotItem(
+                x.Id,
+                x.Name,
+                x.Path,
+                x.ReleaseDate,
+                x.LastHealthCheck,
+                x.NextHealthCheck))
+            .Take(clampedPageSize)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var uncheckedCount = await baseQuery
+            .CountAsync(x => x.NextHealthCheck == null, ct)
+            .ConfigureAwait(false);
+
+        return new HealthCheckQueueSnapshot(uncheckedCount, items);
+    }
+
     public async Task<ArrIntegrationStats> GetArrIntegrationStatsAsync
     (
         DateTimeOffset? now = null,
@@ -731,22 +830,36 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         var nudges = Ctx.ArrSearchNudgeCommands.AsNoTracking();
         var lifecycle = Ctx.ArrDownloadLifecycleEvents.AsNoTracking();
 
-        var totalCorrelations = await correlations.CountAsync(ct).ConfigureAwait(false);
-        var staleCorrelations = await correlations.CountAsync(x => x.LastSeenAt < staleThreshold, ct)
+        var correlationSummary = await correlations
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                Total = g.Count(),
+                Stale = g.Count(x => x.LastSeenAt < staleThreshold),
+                Duplicates = g.Count(x => x.IsDuplicate)
+            })
+            .FirstOrDefaultAsync(ct)
             .ConfigureAwait(false);
-        var duplicateCorrelations = await correlations.CountAsync(x => x.IsDuplicate, ct).ConfigureAwait(false);
-        var activeHints = await priorityHints.CountAsync(x => x.ExpiresAt >= referenceTime, ct)
+        var hintSummary = await priorityHints
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                Active = g.Count(x => x.ExpiresAt >= referenceTime),
+                Stale = g.Count(x => x.ExpiresAt < referenceTime)
+            })
+            .FirstOrDefaultAsync(ct)
             .ConfigureAwait(false);
-        var staleHints = await priorityHints.CountAsync(x => x.ExpiresAt < referenceTime, ct)
-            .ConfigureAwait(false);
-        var plannedNudges = await nudges
-            .CountAsync(x => x.Status == "planned" || x.Status == "pending_apply" || x.Status == "executing", ct)
-            .ConfigureAwait(false);
-        var executedNudges = await nudges.CountAsync(x => x.Status == "executed", ct).ConfigureAwait(false);
-        var failedNudges = await nudges.CountAsync(x => x.Status == "failed", ct).ConfigureAwait(false);
-        var lastNudgeAt = await nudges
-            .OrderByDescending(x => x.CreatedAt)
-            .Select(x => (DateTimeOffset?)x.CreatedAt)
+        var nudgeSummary = await nudges
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                Planned = g.Count(x => x.Status == "planned"
+                                      || x.Status == "pending_apply"
+                                      || x.Status == "executing"),
+                Executed = g.Count(x => x.Status == "executed"),
+                Failed = g.Count(x => x.Status == "failed"),
+                LastCreatedAt = g.Max(x => (DateTimeOffset?)x.CreatedAt)
+            })
             .FirstOrDefaultAsync(ct)
             .ConfigureAwait(false);
         var lifecycleStates = await lifecycle
@@ -757,15 +870,15 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .ConfigureAwait(false);
 
         return new ArrIntegrationStats(
-            totalCorrelations,
-            staleCorrelations,
-            duplicateCorrelations,
-            activeHints,
-            staleHints,
-            plannedNudges,
-            executedNudges,
-            failedNudges,
-            lastNudgeAt,
+            correlationSummary?.Total ?? 0,
+            correlationSummary?.Stale ?? 0,
+            correlationSummary?.Duplicates ?? 0,
+            hintSummary?.Active ?? 0,
+            hintSummary?.Stale ?? 0,
+            nudgeSummary?.Planned ?? 0,
+            nudgeSummary?.Executed ?? 0,
+            nudgeSummary?.Failed ?? 0,
+            nudgeSummary?.LastCreatedAt,
             lifecycleStates);
     }
 
@@ -784,6 +897,13 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     );
 
     public sealed record ArrLifecycleStateCount(string State, int Count);
+
+    public sealed record RepairRunStatusSnapshot
+    (
+        RepairRun? ActiveRun,
+        RepairRun? LastRun,
+        int BrokenFiles
+    );
 
     public async Task<RepairRun> StartRepairRunAsync
     (
@@ -960,6 +1080,41 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             await RefreshRepairRunSummaryAsync(run, ct: ct).ConfigureAwait(false);
 
         return runs;
+    }
+
+    public async Task<RepairRunStatusSnapshot> GetRepairRunStatusAsync
+    (
+        DateTimeOffset? now = null,
+        CancellationToken ct = default
+    )
+    {
+        var referenceTime = now ?? DateTimeOffset.UtcNow;
+        var latestRun = await Ctx.RepairRuns
+            .OrderByDescending(x => x.StartedAt)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        var activeRun = await Ctx.RepairRuns
+            .Where(x => x.Status == RepairRun.RepairRunStatus.Running)
+            .OrderByDescending(x => x.StartedAt)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+
+        foreach (var run in new[] { latestRun, activeRun }
+                     .OfType<RepairRun>()
+                     .Where(x => x.Status == RepairRun.RepairRunStatus.Running)
+                     .DistinctBy(x => x.Id))
+            await RefreshRepairRunSummaryAsync(run, referenceTime, ct).ConfigureAwait(false);
+
+        var brokenFiles = await Ctx.RepairBrokenFiles
+            .AsNoTracking()
+            .Where(x => !x.Cleared)
+            .CountAsync(ct)
+            .ConfigureAwait(false);
+
+        return new RepairRunStatusSnapshot(
+            activeRun?.Status == RepairRun.RepairRunStatus.Running ? activeRun : null,
+            latestRun,
+            brokenFiles);
     }
 
     public async Task<RepairRun> RefreshRepairRunSummaryAsync
@@ -1322,6 +1477,24 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         return JsonSerializer.Serialize(new RepairRunPayload(repairRunId));
     }
 
+    public static string CreatePostDownloadVerifyPayloadJson()
+    {
+        return JsonSerializer.Serialize(new WorkerJobPayload("post_download_verify", null));
+    }
+
+    public static bool IsPostDownloadVerifyPayload(string? payloadJson)
+    {
+        if (string.IsNullOrWhiteSpace(payloadJson)) return false;
+        try
+        {
+            return JsonSerializer.Deserialize<WorkerJobPayload>(payloadJson)?.Kind == "post_download_verify";
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     public static Guid? TryGetRepairRunId(string? payloadJson)
     {
         if (string.IsNullOrWhiteSpace(payloadJson)) return null;
@@ -1345,9 +1518,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     )
     {
         var payloadJson = CreateRepairRunPayloadJson(repairRunId);
-        var existingJobs = await Ctx.WorkerJobs
-            .Where(x => x.Kind == WorkerJob.JobKind.Verify && targetIds.Contains(x.TargetId))
-            .ToDictionaryAsync(x => x.TargetId, ct)
+        var existingJobs = await GetTrackedOrPersistedWorkerJobsAsync(WorkerJob.JobKind.Verify, targetIds, ct)
             .ConfigureAwait(false);
 
         foreach (var targetId in targetIds)
@@ -1394,6 +1565,37 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         }
     }
 
+    private async Task<Dictionary<Guid, WorkerJob>> GetTrackedOrPersistedWorkerJobsAsync
+    (
+        WorkerJob.JobKind kind,
+        IReadOnlyCollection<Guid> targetIds,
+        CancellationToken ct
+    )
+    {
+        if (targetIds.Count == 0)
+            return new Dictionary<Guid, WorkerJob>();
+
+        var distinctTargetIds = targetIds.Distinct().ToArray();
+        var targetIdSet = distinctTargetIds.ToHashSet();
+        var localJobs = Ctx.WorkerJobs.Local
+            .Where(x => x.Kind == kind && targetIdSet.Contains(x.TargetId))
+            .Where(x => Ctx.Entry(x).State != EntityState.Deleted)
+            .ToList();
+        var localTargetIds = localJobs
+            .Select(x => x.TargetId)
+            .ToHashSet();
+        var persistedJobs = await Ctx.WorkerJobs
+            .Where(x => x.Kind == kind && distinctTargetIds.Contains(x.TargetId))
+            .Where(x => !localTargetIds.Contains(x.TargetId))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return localJobs
+            .Concat(persistedJobs)
+            .GroupBy(x => x.TargetId)
+            .ToDictionary(x => x.Key, x => x.First());
+    }
+
     public async Task<WorkerJobQueueStats> GetWorkerJobQueueStatsAsync
     (
         DateTimeOffset? now = null,
@@ -1401,33 +1603,44 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     )
     {
         var referenceTime = now ?? DateTimeOffset.UtcNow;
-        var statusCounts = await Ctx.WorkerJobs
+        var rows = await Ctx.WorkerJobs
             .AsNoTracking()
             .GroupBy(x => new { x.Kind, x.Status })
-            .Select(x => new WorkerJobStatusCount(x.Key.Kind, x.Key.Status, x.Count()))
+            .Select(x => new
+            {
+                x.Key.Kind,
+                x.Key.Status,
+                Count = x.Count(),
+                Ready = x.Count(y =>
+                    (y.Status == WorkerJob.JobStatus.Pending
+                     || y.Status == WorkerJob.JobStatus.Retry
+                     || y.Status == WorkerJob.JobStatus.Leased && y.LeaseExpiresAt <= referenceTime)
+                    && y.AvailableAt <= referenceTime
+                    && (y.LeaseExpiresAt == null || y.LeaseExpiresAt <= referenceTime)),
+                ActiveLease = x.Count(y =>
+                    y.Status == WorkerJob.JobStatus.Leased
+                    && (y.LeaseExpiresAt == null || y.LeaseExpiresAt > referenceTime)),
+                ExpiredLease = x.Count(y =>
+                    y.Status == WorkerJob.JobStatus.Leased
+                    && y.LeaseExpiresAt != null
+                    && y.LeaseExpiresAt <= referenceTime)
+            })
             .ToListAsync(ct)
             .ConfigureAwait(false);
-        var readyCounts = await Ctx.WorkerJobs
-            .AsNoTracking()
-            .Where(x => x.Status == WorkerJob.JobStatus.Pending
-                        || x.Status == WorkerJob.JobStatus.Retry
-                        || x.Status == WorkerJob.JobStatus.Leased && x.LeaseExpiresAt <= referenceTime)
-            .Where(x => x.AvailableAt <= referenceTime)
-            .Where(x => x.LeaseExpiresAt == null || x.LeaseExpiresAt <= referenceTime)
+        var statusCounts = rows
+            .Select(x => new WorkerJobStatusCount(x.Kind, x.Status, x.Count))
+            .ToArray();
+        var readyCounts = rows
             .GroupBy(x => x.Kind)
-            .Select(x => new WorkerJobReadyCount(x.Key, x.Count()))
-            .ToListAsync(ct)
-            .ConfigureAwait(false);
-        var leaseCounts = await Ctx.WorkerJobs
-            .AsNoTracking()
-            .Where(x => x.Status == WorkerJob.JobStatus.Leased)
+            .Select(x => new WorkerJobReadyCount(x.Key, x.Sum(y => y.Ready)))
+            .ToArray();
+        var leaseCounts = rows
             .GroupBy(x => x.Kind)
             .Select(x => new WorkerJobLeaseCount(
                 x.Key,
-                x.Count(y => y.LeaseExpiresAt == null || y.LeaseExpiresAt > referenceTime),
-                x.Count(y => y.LeaseExpiresAt != null && y.LeaseExpiresAt <= referenceTime)))
-            .ToListAsync(ct)
-            .ConfigureAwait(false);
+                x.Sum(y => y.ActiveLease),
+                x.Sum(y => y.ExpiredLease)))
+            .ToArray();
 
         return new WorkerJobQueueStats(
             Download: WorkerJobKindStats.FromRows(WorkerJob.JobKind.Download, statusCounts, readyCounts, leaseCounts),
@@ -1545,9 +1758,9 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     )
     {
         var referenceTime = now ?? DateTimeOffset.UtcNow;
-        var existingJob = await Ctx.WorkerJobs
-            .FirstOrDefaultAsync(x => x.Kind == kind && x.TargetId == targetId, ct)
+        var existingJobs = await GetTrackedOrPersistedWorkerJobsAsync(kind, [targetId], ct)
             .ConfigureAwait(false);
+        existingJobs.TryGetValue(targetId, out var existingJob);
 
         if (existingJob is null)
         {
@@ -1590,13 +1803,76 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         return existingJob;
     }
 
+    public async Task<int> EnqueueWorkerJobsAsync
+    (
+        WorkerJob.JobKind kind,
+        IReadOnlyCollection<Guid> targetIds,
+        int priority,
+        DateTimeOffset? now = null,
+        string? payloadJson = null,
+        CancellationToken ct = default,
+        bool saveChanges = true
+    )
+    {
+        if (targetIds.Count == 0) return 0;
+
+        var referenceTime = now ?? DateTimeOffset.UtcNow;
+        var distinctTargetIds = targetIds.Distinct().ToArray();
+        var existingJobs = await GetTrackedOrPersistedWorkerJobsAsync(kind, distinctTargetIds, ct)
+            .ConfigureAwait(false);
+
+        var changed = 0;
+        foreach (var targetId in distinctTargetIds)
+        {
+            if (!existingJobs.TryGetValue(targetId, out var existingJob))
+            {
+                Ctx.WorkerJobs.Add(new WorkerJob
+                {
+                    Id = Guid.NewGuid(),
+                    Kind = kind,
+                    TargetId = targetId,
+                    Status = WorkerJob.JobStatus.Pending,
+                    Priority = priority,
+                    Attempts = 0,
+                    CreatedAt = referenceTime,
+                    UpdatedAt = referenceTime,
+                    AvailableAt = referenceTime,
+                    PayloadJson = payloadJson
+                });
+                changed++;
+                continue;
+            }
+
+            if (existingJob.Status is WorkerJob.JobStatus.Completed or WorkerJob.JobStatus.Cancelled)
+            {
+                existingJob.Status = WorkerJob.JobStatus.Pending;
+                existingJob.Attempts = 0;
+                existingJob.AvailableAt = referenceTime;
+                existingJob.CompletedAt = null;
+                existingJob.LeaseOwner = null;
+                existingJob.LeaseExpiresAt = null;
+                existingJob.LastError = null;
+            }
+
+            existingJob.Priority = priority;
+            existingJob.UpdatedAt = referenceTime;
+            if (payloadJson is not null) existingJob.PayloadJson = payloadJson;
+            changed++;
+        }
+
+        if (saveChanges)
+            await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        return changed;
+    }
+
     public async Task<WorkerJob?> LeaseNextWorkerJobAsync
     (
         WorkerJob.JobKind kind,
         string owner,
         TimeSpan leaseDuration,
         DateTimeOffset? now = null,
-        CancellationToken ct = default
+        CancellationToken ct = default,
+        IReadOnlyCollection<Guid>? excludeTargetIds = null
     )
     {
         var referenceTime = now ?? DateTimeOffset.UtcNow;
@@ -1606,13 +1882,21 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct)
             .ConfigureAwait(false);
 
-        var job = await Ctx.WorkerJobs
+        var query = Ctx.WorkerJobs
             .Where(x => x.Kind == kind)
             .Where(x => x.Status == WorkerJob.JobStatus.Pending
                         || x.Status == WorkerJob.JobStatus.Retry
                         || x.Status == WorkerJob.JobStatus.Leased && x.LeaseExpiresAt <= referenceTime)
             .Where(x => x.AvailableAt <= referenceTime)
-            .Where(x => x.LeaseExpiresAt == null || x.LeaseExpiresAt <= referenceTime)
+            .Where(x => x.LeaseExpiresAt == null || x.LeaseExpiresAt <= referenceTime);
+
+        if (excludeTargetIds is { Count: > 0 })
+        {
+            var excludedIds = excludeTargetIds.Distinct().ToArray();
+            query = query.Where(x => !excludedIds.Contains(x.TargetId));
+        }
+
+        var job = await query
             .OrderByDescending(x => x.Priority)
             .ThenBy(x => x.AvailableAt)
             .ThenBy(x => x.CreatedAt)
@@ -1719,6 +2003,8 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     }
 
     private sealed record RepairRunPayload(Guid RepairRunId);
+
+    private sealed record WorkerJobPayload(string? Kind, Guid? RepairRunId);
 
     private sealed record RepairEntryStateCount(RepairEntryHealth.RepairEntryState State, int Count);
 }

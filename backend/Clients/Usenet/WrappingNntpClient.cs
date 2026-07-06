@@ -1,4 +1,5 @@
 ﻿using NzbWebDAV.Clients.Usenet.Models;
+using Serilog;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Clients.Usenet;
@@ -83,20 +84,39 @@ public class WrappingNntpClient(INntpClient usenetClient) : NntpClient
     {
         if (drainDelay <= TimeSpan.Zero)
         {
-            disposable.Dispose();
+            DisposeClientSafely(disposable);
             return;
         }
 
         _ = Task.Run(async () =>
         {
-            await Task.Delay(drainDelay).ConfigureAwait(false);
-            disposable.Dispose();
+            try
+            {
+                await Task.Delay(drainDelay).ConfigureAwait(false);
+                DisposeClientSafely(disposable);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to dispose drained NNTP client {ClientType}.", disposable.GetType().FullName);
+            }
         });
+    }
+
+    private static void DisposeClientSafely(IDisposable disposable)
+    {
+        try
+        {
+            disposable.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to dispose NNTP client {ClientType}.", disposable.GetType().FullName);
+        }
     }
 
     public override void Dispose()
     {
-        _usenetClient.Dispose();
+        DisposeClientSafely(_usenetClient);
         GC.SuppressFinalize(this);
     }
 }

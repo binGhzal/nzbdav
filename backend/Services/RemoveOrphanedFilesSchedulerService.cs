@@ -63,9 +63,8 @@ public class RemoveOrphanedFilesSchedulerService : BackgroundService
                 var task = new RemoveUnlinkedFilesTask(_configManager, _websocketManager, isDryRun: false);
                 await task.Execute().ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (SigtermUtil.IsSigtermTriggered())
+            catch (OperationCanceledException e) when (BackgroundServiceCancellationUtil.IsExpectedCancellation(e, stoppingToken))
             {
-                // OperationCanceledException is expected on sigterm
                 return;
             }
             catch (OperationCanceledException)

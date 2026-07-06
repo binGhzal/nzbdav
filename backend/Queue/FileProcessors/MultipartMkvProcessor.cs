@@ -1,4 +1,5 @@
 ﻿using System.Text.RegularExpressions;
+using System.Globalization;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
@@ -65,7 +66,10 @@ public class MultipartMkvProcessor : BaseProcessor
     private static int GetPartNumber(string filename)
     {
         var match = Regex.Match(filename, @"\.mkv\.(\d+)?$", RegexOptions.IgnoreCase);
-        return string.IsNullOrEmpty(match.Groups[1].Value) ? -1 : int.Parse(match.Groups[1].Value);
+        if (string.IsNullOrEmpty(match.Groups[1].Value)) return -1;
+        return int.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var partNumber)
+            ? partNumber
+            : int.MaxValue;
     }
 
     public new class Result : BaseProcessor.Result

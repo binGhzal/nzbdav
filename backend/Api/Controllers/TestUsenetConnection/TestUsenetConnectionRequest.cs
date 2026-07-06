@@ -29,7 +29,7 @@ public class TestUsenetConnectionRequest
         var useSsl = context.Request.Form["use-ssl"].FirstOrDefault()
                      ?? throw new BadHttpRequestException("Usenet use-ssl is required");
 
-        Port = !int.TryParse(port, out int portValue)
+        Port = !int.TryParse(port, out int portValue) || portValue is < 1 or > 65535
             ? throw new BadHttpRequestException("Invalid usenet port")
             : portValue;
 

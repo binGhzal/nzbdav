@@ -120,31 +120,9 @@ public class PrioritizedSemaphore : IDisposable
                 // lowered through the UpdateMaxAllowed method.
                 toRelease = null;
             }
-            else if (_highPriorityWaiters.Count == 0)
-            {
-                // If there are no foreground stream waiters, alternate between verify/repair
-                // and bulk download waiters. This keeps completed downloads moving through
-                // verification without starving the main queue.
-                toRelease = ReleaseNormalOrLowWaiter();
-            }
-            else if (_normalPriorityWaiters.Count == 0 && _lowPriorityWaiters.Count == 0)
-            {
-                toRelease = Release(_highPriorityWaiters);
-            }
             else
             {
-                // if there are both high-priority waiters and non-foreground waiters,
-                // then roll the dice to determine which to release, based on the given odds.
-                _accumulatedOdds += _priorityOdds.LowPriorityOdds;
-                if (_accumulatedOdds >= 100)
-                {
-                    _accumulatedOdds -= 100;
-                    toRelease = ReleaseNormalOrLowWaiter() ?? Release(_highPriorityWaiters);
-                }
-                else
-                {
-                    toRelease = Release(_highPriorityWaiters) ?? ReleaseNormalOrLowWaiter();
-                }
+                toRelease = SelectWaiterToRelease();
             }
 
             if (toRelease == null)
@@ -162,6 +140,31 @@ public class PrioritizedSemaphore : IDisposable
         }
 
         toRelease.TrySetResult(true);
+    }
+
+    private TaskCompletionSource<bool>? SelectWaiterToRelease()
+    {
+        if (_highPriorityWaiters.Count == 0)
+        {
+            // If there are no foreground stream waiters, alternate between verify/repair
+            // and bulk download waiters. This keeps completed downloads moving through
+            // verification without starving the main queue.
+            return ReleaseNormalOrLowWaiter();
+        }
+
+        if (_normalPriorityWaiters.Count == 0 && _lowPriorityWaiters.Count == 0)
+            return Release(_highPriorityWaiters);
+
+        // if there are both high-priority waiters and non-foreground waiters,
+        // then roll the dice to determine which to release, based on the given odds.
+        _accumulatedOdds += _priorityOdds.LowPriorityOdds;
+        if (_accumulatedOdds >= 100)
+        {
+            _accumulatedOdds -= 100;
+            return ReleaseNormalOrLowWaiter() ?? Release(_highPriorityWaiters);
+        }
+
+        return Release(_highPriorityWaiters) ?? ReleaseNormalOrLowWaiter();
     }
 
     private static TaskCompletionSource<bool>? Release(LinkedList<TaskCompletionSource<bool>> queue)
@@ -200,10 +203,27 @@ public class PrioritizedSemaphore : IDisposable
 
     public void UpdateMaxAllowed(int newMaxAllowed)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(newMaxAllowed);
+
+        List<TaskCompletionSource<bool>> waitersToRelease = [];
         lock (_lock)
         {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(AsyncSemaphore));
+
             _maxAllowed = newMaxAllowed;
+            while (_enteredCount < _maxAllowed)
+            {
+                var waiter = SelectWaiterToRelease();
+                if (waiter == null) break;
+
+                _enteredCount++;
+                waitersToRelease.Add(waiter);
+            }
         }
+
+        foreach (var waiter in waitersToRelease)
+            waiter.TrySetResult(true);
     }
 
     public void UpdatePriorityOdds(SemaphorePriorityOdds newPriorityOdds)

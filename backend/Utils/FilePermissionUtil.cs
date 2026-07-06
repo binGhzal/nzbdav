@@ -27,8 +27,83 @@ public static class FilePermissionUtil
 
     public static async Task WriteAllTextAsync(string path, string contents, CancellationToken ct = default)
     {
-        await File.WriteAllTextAsync(path, contents, ct).ConfigureAwait(false);
+        if (await HasSameTextAsync(path, contents, ct).ConfigureAwait(false))
+        {
+            TrySetUnixFileMode(path, GroupWritableFileMode);
+            return;
+        }
+
+        var directory = Path.GetDirectoryName(path);
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var tempPath = GetTempPath(path);
+            try
+            {
+                if (!string.IsNullOrEmpty(directory))
+                    Directory.CreateDirectory(directory);
+
+                await File.WriteAllTextAsync(tempPath, contents, ct).ConfigureAwait(false);
+                TrySetUnixFileMode(tempPath, GroupWritableFileMode);
+                File.Move(tempPath, path, overwrite: true);
+                break;
+            }
+            catch (DirectoryNotFoundException) when (attempt == 0)
+            {
+                TryDeleteTempFile(tempPath);
+                continue;
+            }
+            finally
+            {
+                TryDeleteTempFile(tempPath);
+            }
+        }
+
         TrySetUnixFileMode(path, GroupWritableFileMode);
+    }
+
+    private static async Task<bool> HasSameTextAsync(string path, string contents, CancellationToken ct)
+    {
+        try
+        {
+            if (!File.Exists(path)) return false;
+            var existing = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
+            return string.Equals(existing, contents, StringComparison.Ordinal);
+        }
+        catch (Exception e) when (e is FileNotFoundException
+                                      or DirectoryNotFoundException
+                                      or IOException
+                                      or UnauthorizedAccessException
+                                      or NotSupportedException
+                                      or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private static string GetTempPath(string path)
+    {
+        var directory = Path.GetDirectoryName(path);
+        var fileName = Path.GetFileName(path);
+        var tempFileName = $".{fileName}.{Guid.NewGuid():N}.tmp";
+        return string.IsNullOrEmpty(directory)
+            ? tempFileName
+            : Path.Combine(directory, tempFileName);
+    }
+
+    private static void TryDeleteTempFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception e) when (e is FileNotFoundException
+                                      or DirectoryNotFoundException
+                                      or IOException
+                                      or UnauthorizedAccessException
+                                      or NotSupportedException
+                                      or ArgumentException)
+        {
+        }
     }
 
     private static void ApplyDirectoryPermissions(string directoryPath, string permissionRoot)
@@ -67,7 +142,11 @@ public static class FilePermissionUtil
         {
             File.SetUnixFileMode(path, unixFileMode);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        catch (Exception e) when (e is IOException
+                                      or UnauthorizedAccessException
+                                      or PlatformNotSupportedException
+                                      or NotSupportedException
+                                      or ArgumentException)
         {
         }
     }

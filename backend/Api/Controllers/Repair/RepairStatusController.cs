@@ -11,8 +11,8 @@ public sealed class RepairStatusController(DavDatabaseClient dbClient, ConfigMan
 {
     protected override async Task<IActionResult> HandleRequest()
     {
-        var activeRun = await dbClient.GetActiveRepairRunAsync(HttpContext.RequestAborted).ConfigureAwait(false);
-        var runs = await dbClient.GetRepairRunsAsync(1, HttpContext.RequestAborted).ConfigureAwait(false);
+        var repairStatus = await dbClient.GetRepairRunStatusAsync(
+            ct: HttpContext.RequestAborted).ConfigureAwait(false);
         var workerQueues = await dbClient.GetWorkerJobQueueStatsAsync(ct: HttpContext.RequestAborted)
             .ConfigureAwait(false);
         var brokenFiles = await dbClient.Ctx.RepairBrokenFiles
@@ -25,8 +25,8 @@ public sealed class RepairStatusController(DavDatabaseClient dbClient, ConfigMan
 
         return Ok(new RepairStatusResponse
         {
-            ActiveRun = activeRun == null ? null : RepairRunDto.FromModel(activeRun),
-            LastRun = runs.FirstOrDefault() is { } lastRun ? RepairRunDto.FromModel(lastRun) : null,
+            ActiveRun = repairStatus.ActiveRun == null ? null : RepairRunDto.FromModel(repairStatus.ActiveRun),
+            LastRun = repairStatus.LastRun == null ? null : RepairRunDto.FromModel(repairStatus.LastRun),
             BrokenFiles = brokenFiles.Select(RepairBrokenFileDto.FromModel).ToList(),
             VerifyQueue = RepairWorkerQueueDto.FromStats(workerQueues.Verify, configManager.GetAdaptiveMaxConcurrentVerifyJobs()),
             RepairQueue = RepairWorkerQueueDto.FromStats(workerQueues.Repair, configManager.GetAdaptiveMaxConcurrentRepairJobs())

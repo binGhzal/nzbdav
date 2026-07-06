@@ -9,6 +9,7 @@ using NzbWebDAV.Clients.RadarrSonarr.SonarrModels;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Utils;
 using Serilog;
 
 namespace NzbWebDAV.Services;
@@ -25,9 +26,9 @@ public sealed class ArrCorrelationService(ConfigManager configManager) : Backgro
             {
                 await RefreshAsync(stoppingToken).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is OperationCanceledException && stoppingToken.IsCancellationRequested)
+            catch (Exception ex) when (BackgroundServiceCancellationUtil.IsExpectedCancellation(ex, stoppingToken))
             {
-                throw;
+                return;
             }
             catch (Exception ex)
             {
@@ -104,11 +105,11 @@ public sealed class ArrCorrelationService(ConfigManager configManager) : Backgro
         {
             return instance.Client switch
             {
-                SonarrClient sonarr => (await sonarr.GetSonarrQueueAsync().WaitAsync(ct).ConfigureAwait(false))
+                SonarrClient sonarr => (await sonarr.GetSonarrQueueAsync(ct).ConfigureAwait(false))
                     .Records.Cast<ArrQueueRecord>().ToList(),
-                RadarrClient radarr => (await radarr.GetRadarrQueueAsync().WaitAsync(ct).ConfigureAwait(false))
+                RadarrClient radarr => (await radarr.GetRadarrQueueAsync(ct).ConfigureAwait(false))
                     .Records.Cast<ArrQueueRecord>().ToList(),
-                LidarrClient lidarr => (await lidarr.GetLidarrQueueAsync().WaitAsync(ct).ConfigureAwait(false))
+                LidarrClient lidarr => (await lidarr.GetLidarrQueueAsync(ct).ConfigureAwait(false))
                     .Records.Cast<ArrQueueRecord>().ToList(),
                 _ => []
             };

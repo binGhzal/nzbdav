@@ -9,6 +9,16 @@ public class BlobStore
     private static readonly string ConfigPath = DavDatabaseContext.ConfigPath;
     private static readonly Lock LockObj = new();
 
+    public enum BlobReadStatus
+    {
+        Found,
+        Missing,
+        TemporarilyUnavailable,
+        Unreadable
+    }
+
+    public sealed record BlobReadResult<T>(T? Value, BlobReadStatus Status, string? Error);
+
     private static string GetBlobPath(Guid id)
     {
         var guidStr = id.ToString("N"); // Without hyphens
@@ -19,18 +29,29 @@ public class BlobStore
         return Path.Combine(ConfigPath, "blobs", firstTwo, nextTwo, fileName);
     }
 
-    private static FileStream OpenBlobWrite(Guid id)
+    private static string GetBlobTempPath(string blobPath)
     {
-        var blobPath = GetBlobPath(id);
+        return $"{blobPath}.tmp-{Guid.NewGuid():N}";
+    }
+
+    private static FileStream OpenBlobWrite(string blobPath, out string tempPath)
+    {
         var directory = Path.GetDirectoryName(blobPath);
 
         // Acquire file handle inside lock to prevent race condition where
-        // directory gets deleted between CreateDirectory and File.Create
+        // directory gets deleted between CreateDirectory and FileStream open.
         FileStream fileStream;
         lock (LockObj)
         {
             Directory.CreateDirectory(directory!);
-            fileStream = File.Create(blobPath);
+            tempPath = GetBlobTempPath(blobPath);
+            fileStream = new FileStream(
+                tempPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 131072,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
         }
 
         return fileStream;
@@ -38,41 +59,128 @@ public class BlobStore
 
     public static async Task WriteBlob(Guid id, Stream stream)
     {
-        await using var fileStream = OpenBlobWrite(id);
-        await stream.CopyToAsync(fileStream);
+        await WriteBlobCore(id, fileStream => stream.CopyToAsync(fileStream));
     }
 
     public static async Task WriteBlob<T>(Guid id, T blob)
     {
-        await using var fileStream = OpenBlobWrite(id);
-        await using var compressionStream = new CompressionStream(fileStream, CompressionLevel);
-        await MemoryPackSerializer.SerializeAsync(compressionStream, blob);
+        await WriteBlobCore(id, async fileStream =>
+        {
+            await using var compressionStream = new CompressionStream(fileStream, CompressionLevel, leaveOpen: true);
+            await MemoryPackSerializer.SerializeAsync(compressionStream, blob);
+        });
+    }
+
+    private static async Task WriteBlobCore(Guid id, Func<FileStream, Task> writeAsync)
+    {
+        var blobPath = GetBlobPath(id);
+        var tempPath = "";
+        try
+        {
+            await using (var fileStream = OpenBlobWrite(blobPath, out tempPath))
+            {
+                await writeAsync(fileStream);
+                await fileStream.FlushAsync();
+            }
+
+            lock (LockObj)
+            {
+                if (Directory.Exists(blobPath))
+                    TryDeleteBlobPathDirectory(blobPath);
+                File.Move(tempPath, blobPath, overwrite: true);
+            }
+        }
+        catch
+        {
+            TryDeleteFile(tempPath);
+            throw;
+        }
     }
 
     public static Stream? ReadBlob(Guid id)
     {
+        var result = TryOpenReadBlob(id);
+        return result.Status == BlobReadStatus.Found ? result.Value : null;
+    }
+
+    public static BlobReadResult<Stream> TryOpenReadBlob(Guid id)
+    {
         var blobPath = GetBlobPath(id);
-        return File.Exists(blobPath) ? File.OpenRead(blobPath) : null;
+        try
+        {
+            return new BlobReadResult<Stream>(
+                File.Open(blobPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete),
+                BlobReadStatus.Found,
+                Error: null);
+        }
+        catch (Exception e) when (IsMissingFileRace(e))
+        {
+            return new BlobReadResult<Stream>(default, BlobReadStatus.Missing, e.Message);
+        }
+        catch (Exception e) when (IsDirectoryAtPath(e, blobPath))
+        {
+            TryDeleteBlobPathDirectory(blobPath);
+            return new BlobReadResult<Stream>(default, BlobReadStatus.Unreadable, e.Message);
+        }
+        catch (Exception e) when (IsBlobOpenFailure(e))
+        {
+            return new BlobReadResult<Stream>(default, BlobReadStatus.TemporarilyUnavailable, e.Message);
+        }
     }
 
     public static async Task<T?> ReadBlob<T>(Guid id)
     {
-        var stream = ReadBlob(id);
-        if (stream == null) return default;
-        await using var fileStream = stream;
-        await using var decompressionStream = new DecompressionStream(fileStream);
-        return await MemoryPackSerializer.DeserializeAsync<T>(decompressionStream);
+        var result = await TryReadBlob<T>(id).ConfigureAwait(false);
+        return result.Status == BlobReadStatus.Found ? result.Value : default;
+    }
+
+    public static async Task<BlobReadResult<T>> TryReadBlob<T>(Guid id)
+    {
+        var blobPath = GetBlobPath(id);
+        Stream stream;
+        try
+        {
+            stream = File.Open(blobPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        }
+        catch (Exception e) when (IsMissingFileRace(e))
+        {
+            return new BlobReadResult<T>(default, BlobReadStatus.Missing, e.Message);
+        }
+        catch (Exception e) when (IsDirectoryAtPath(e, blobPath))
+        {
+            TryDeleteBlobPathDirectory(blobPath);
+            return new BlobReadResult<T>(default, BlobReadStatus.Unreadable, e.Message);
+        }
+        catch (Exception e) when (IsBlobOpenFailure(e))
+        {
+            return new BlobReadResult<T>(default, BlobReadStatus.TemporarilyUnavailable, e.Message);
+        }
+
+        try
+        {
+            await using var fileStream = stream;
+            await using var decompressionStream = new DecompressionStream(fileStream);
+            var value = await MemoryPackSerializer.DeserializeAsync<T>(decompressionStream)
+                .ConfigureAwait(false);
+            return value is null
+                ? new BlobReadResult<T>(default, BlobReadStatus.Unreadable, "Blob deserialized to null.")
+                : new BlobReadResult<T>(value, BlobReadStatus.Found, null);
+        }
+        catch (Exception e) when (IsTemporarySerializedBlobReadFailure(e))
+        {
+            return new BlobReadResult<T>(default, BlobReadStatus.TemporarilyUnavailable, e.Message);
+        }
+        catch (Exception e) when (IsUnreadableSerializedBlob(e))
+        {
+            return new BlobReadResult<T>(default, BlobReadStatus.Unreadable, e.Message);
+        }
     }
 
     public static void Delete(Guid id)
     {
         var blobPath = GetBlobPath(id);
 
-        // Delete the file
-        if (File.Exists(blobPath))
-        {
-            File.Delete(blobPath);
-        }
+        TryDeleteFile(blobPath);
 
         lock (LockObj)
         {
@@ -89,13 +197,77 @@ public class BlobStore
     private static void TryDeleteEmptyDirectory(string? directory)
     {
         if (string.IsNullOrEmpty(directory)) return;
-        if (!Directory.Exists(directory)) return;
-        if (!IsDirectoryEmpty(directory)) return;
-        Directory.Delete(directory, recursive: false);
+        try
+        {
+            if (!Directory.Exists(directory)) return;
+            if (!IsDirectoryEmpty(directory)) return;
+            Directory.Delete(directory, recursive: false);
+        }
+        catch (Exception e) when (IsMissingFileRace(e) || e is IOException)
+        {
+            // Another cleanup pass may have raced us or the directory may still contain a blob.
+        }
     }
 
     private static bool IsDirectoryEmpty(string path)
     {
-        return !Directory.EnumerateFileSystemEntries(path).Any();
+        try
+        {
+            return !Directory.EnumerateFileSystemEntries(path).Any();
+        }
+        catch (Exception e) when (IsMissingFileRace(e))
+        {
+            return true;
+        }
     }
+
+    private static void TryDeleteFile(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return;
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception e) when (IsMissingFileRace(e))
+        {
+            // Delete is idempotent; a concurrently removed blob is already cleaned up.
+        }
+        catch (Exception e) when (IsDirectoryAtPath(e, path))
+        {
+            TryDeleteBlobPathDirectory(path);
+        }
+    }
+
+    private static void TryDeleteBlobPathDirectory(string path)
+    {
+        try
+        {
+            if (!Directory.Exists(path)) return;
+            Directory.Delete(path, recursive: true);
+        }
+        catch (Exception e) when (IsMissingFileRace(e) || e is IOException or UnauthorizedAccessException)
+        {
+            // The path is a single blob location under the blob root. If the directory cannot
+            // be removed now, leave it for a later cleanup pass instead of failing the caller.
+        }
+    }
+
+    private static bool IsMissingFileRace(Exception exception) =>
+        exception is FileNotFoundException or DirectoryNotFoundException;
+
+    private static bool IsDirectoryAtPath(Exception exception, string path) =>
+        exception is IOException or UnauthorizedAccessException
+        && Directory.Exists(path);
+
+    private static bool IsBlobOpenFailure(Exception exception) =>
+        exception is IOException or UnauthorizedAccessException;
+
+    private static bool IsTemporarySerializedBlobReadFailure(Exception exception) =>
+        exception is IOException or UnauthorizedAccessException;
+
+    private static bool IsUnreadableSerializedBlob(Exception exception) =>
+        exception is InvalidDataException
+            or EndOfStreamException
+            or MemoryPackSerializationException
+            or ZstdException;
 }

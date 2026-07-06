@@ -24,18 +24,21 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
     {
         ThrowIfDisposed();
 
-        while (!cancellationToken.IsCancellationRequested)
+        while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // if the stream is null, get the next stream.
             if (_stream == null)
             {
                 if (_currentIndex >= _segmentIds.Length) return 0;
-                var segmentId = _segmentIds.Span[_currentIndex++];
+                var segmentId = _segmentIds.Span[_currentIndex];
                 try
                 {
                     var body = await _usenetClient
                         .DecodedBodyWithFallbackAsync(segmentId, cancellationToken)
                         .ConfigureAwait(false);
+                    _currentIndex++;
                     _stream = body.Stream;
                 }
                 catch (UsenetArticleNotFoundException e)
@@ -53,8 +56,6 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             await _stream.DisposeAsync().ConfigureAwait(false);
             _stream = null;
         }
-
-        return 0;
     }
 
     private void ThrowIfDisposed()

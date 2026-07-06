@@ -44,4 +44,47 @@ public class PrioritizedSemaphoreTests
         semaphore.Release();
         await normal.WaitAsync(timeout.Token);
     }
+
+    [Fact]
+    public async Task IncreasingMaxAllowedImmediatelyReleasesQueuedWaiters()
+    {
+        using var semaphore = new PrioritizedSemaphore(initialAllowed: 1, maxAllowed: 1);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await semaphore.WaitAsync(SemaphorePriority.Low, timeout.Token);
+
+        var queued = semaphore.WaitAsync(SemaphorePriority.Low, timeout.Token);
+        Assert.False(queued.IsCompleted);
+
+        semaphore.UpdateMaxAllowed(2);
+
+        await queued.WaitAsync(timeout.Token);
+    }
+
+    [Fact]
+    public async Task IncreasingMaxAllowedPreservesPriorityOrder()
+    {
+        using var semaphore = new PrioritizedSemaphore(
+            initialAllowed: 1,
+            maxAllowed: 1,
+            new SemaphorePriorityOdds { HighPriorityOdds = 100 });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await semaphore.WaitAsync(SemaphorePriority.Low, timeout.Token);
+
+        var low = semaphore.WaitAsync(SemaphorePriority.Low, timeout.Token);
+        var normal = semaphore.WaitAsync(SemaphorePriority.Normal, timeout.Token);
+        var high = semaphore.WaitAsync(SemaphorePriority.High, timeout.Token);
+
+        semaphore.UpdateMaxAllowed(2);
+
+        await high.WaitAsync(timeout.Token);
+        Assert.False(normal.IsCompleted);
+        Assert.False(low.IsCompleted);
+
+        semaphore.UpdateMaxAllowed(3);
+        await normal.WaitAsync(timeout.Token);
+        Assert.False(low.IsCompleted);
+
+        semaphore.UpdateMaxAllowed(4);
+        await low.WaitAsync(timeout.Token);
+    }
 }

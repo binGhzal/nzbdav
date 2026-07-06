@@ -12,7 +12,7 @@ public class TestRcloneConnectionController() : BaseApiController
         try
         {
             var result = await RcloneClient
-                .TestConnection(request.Host, request.User, request.Pass)
+                .TestConnection(request.Host, request.User, request.Pass, request.CancellationToken)
                 .ConfigureAwait(false);
 
             return new TestRcloneConnectionResponse

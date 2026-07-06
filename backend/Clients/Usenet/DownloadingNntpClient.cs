@@ -80,7 +80,9 @@ public class DownloadingNntpClient : WrappingNntpClient
     /// </summary>
     public override async Task<UsenetStatResponse> StatAsync(SegmentId segmentId, CancellationToken cancellationToken)
     {
+        var semaphorePriority = GetSemaphorePriority(cancellationToken);
         var lease = await AcquireConnectionLeaseAsync(cancellationToken).ConfigureAwait(false);
+        using var priorityContext = EnsurePriorityContext(cancellationToken, semaphorePriority);
         try
         {
             return await base.StatAsync(segmentId, cancellationToken).ConfigureAwait(false);
@@ -95,7 +97,9 @@ public class DownloadingNntpClient : WrappingNntpClient
         IReadOnlyList<string> segmentIds,
         CancellationToken cancellationToken)
     {
+        var semaphorePriority = GetSemaphorePriority(cancellationToken);
         var lease = await AcquireConnectionLeaseAsync(cancellationToken).ConfigureAwait(false);
+        using var priorityContext = EnsurePriorityContext(cancellationToken, semaphorePriority);
         try
         {
             return await base.StatPipelinedAsync(segmentIds, cancellationToken).ConfigureAwait(false);
@@ -108,7 +112,9 @@ public class DownloadingNntpClient : WrappingNntpClient
 
     public override async Task<UsenetHeadResponse> HeadAsync(SegmentId segmentId, CancellationToken cancellationToken)
     {
+        var semaphorePriority = GetSemaphorePriority(cancellationToken);
         var lease = await AcquireConnectionLeaseAsync(cancellationToken).ConfigureAwait(false);
+        using var priorityContext = EnsurePriorityContext(cancellationToken, semaphorePriority);
         try
         {
             return await base.HeadAsync(segmentId, cancellationToken).ConfigureAwait(false);
@@ -134,44 +140,80 @@ public class DownloadingNntpClient : WrappingNntpClient
     public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId,
         Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken)
     {
+        var semaphorePriority = GetSemaphorePriority(cancellationToken);
         var lease = await AcquireConnectionLeaseAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
+        using var priorityContext = EnsurePriorityContext(cancellationToken, semaphorePriority);
+        var connectionReadyReported = 0;
         try
         {
-            return await base.DecodedBodyAsync(segmentId, OnConnectionReadyAgain, cancellationToken)
+            var response = await base.DecodedBodyAsync(segmentId, OnConnectionReadyAgain, cancellationToken)
                 .ConfigureAwait(false);
+            if (response.ResponseType != UsenetResponseType.ArticleRetrievedBodyFollows)
+                CompleteConnection(ArticleBodyResult.NotRetrieved);
+            return response;
         }
         catch
         {
-            lease.Release();
+            ReleaseLeaseWithoutNotification();
             throw;
         }
 
         void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult)
         {
+            CompleteConnection(articleBodyResult);
+        }
+
+        void CompleteConnection(ArticleBodyResult articleBodyResult)
+        {
+            if (Interlocked.Exchange(ref connectionReadyReported, 1) != 0) return;
             lease.Release();
             onConnectionReadyAgain?.Invoke(articleBodyResult);
+        }
+
+        void ReleaseLeaseWithoutNotification()
+        {
+            if (Interlocked.Exchange(ref connectionReadyReported, 1) != 0) return;
+            lease.Release();
         }
     }
 
     public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync(SegmentId segmentId,
         Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken)
     {
+        var semaphorePriority = GetSemaphorePriority(cancellationToken);
         var lease = await AcquireConnectionLeaseAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
+        using var priorityContext = EnsurePriorityContext(cancellationToken, semaphorePriority);
+        var connectionReadyReported = 0;
         try
         {
-            return await base.DecodedArticleAsync(segmentId, OnConnectionReadyAgain, cancellationToken)
+            var response = await base.DecodedArticleAsync(segmentId, OnConnectionReadyAgain, cancellationToken)
                 .ConfigureAwait(false);
+            if (response.ResponseType != UsenetResponseType.ArticleRetrievedHeadAndBodyFollow)
+                CompleteConnection(ArticleBodyResult.NotRetrieved);
+            return response;
         }
         catch
         {
-            lease.Release();
+            ReleaseLeaseWithoutNotification();
             throw;
         }
 
         void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult)
         {
+            CompleteConnection(articleBodyResult);
+        }
+
+        void CompleteConnection(ArticleBodyResult articleBodyResult)
+        {
+            if (Interlocked.Exchange(ref connectionReadyReported, 1) != 0) return;
             lease.Release();
             onConnectionReadyAgain?.Invoke(articleBodyResult);
+        }
+
+        void ReleaseLeaseWithoutNotification()
+        {
+            if (Interlocked.Exchange(ref connectionReadyReported, 1) != 0) return;
+            lease.Release();
         }
     }
 
@@ -193,7 +235,7 @@ public class DownloadingNntpClient : WrappingNntpClient
     {
         RefreshMaxAllowedConnections();
         var downloadPriorityContext = cancellationToken.GetContext<DownloadPriorityContext>();
-        var semaphorePriority = downloadPriorityContext?.Priority ?? SemaphorePriority.Low;
+        var semaphorePriority = GetSemaphorePriority(cancellationToken);
         var streamLimiters = GetStreamLimiters(downloadPriorityContext, semaphorePriority);
 
         var acquiredStreamLimiters = new List<IConnectionLimiter>();
@@ -260,18 +302,24 @@ public class DownloadingNntpClient : WrappingNntpClient
         return new UsenetExclusiveConnection(_ => lease.Release());
     }
 
-    public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId,
+    public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId,
         UsenetExclusiveConnection exclusiveConnection, CancellationToken cancellationToken)
     {
         var onConnectionReadyAgain = exclusiveConnection.OnConnectionReadyAgain;
-        return base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, cancellationToken);
+        var semaphorePriority = GetSemaphorePriority(cancellationToken);
+        using var priorityContext = EnsurePriorityContext(cancellationToken, semaphorePriority);
+        return await base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, cancellationToken)
+            .ConfigureAwait(false);
     }
 
-    public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(SegmentId segmentId,
+    public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync(SegmentId segmentId,
         UsenetExclusiveConnection exclusiveConnection, CancellationToken cancellationToken)
     {
         var onConnectionReadyAgain = exclusiveConnection.OnConnectionReadyAgain;
-        return base.DecodedArticleAsync(segmentId, onConnectionReadyAgain, cancellationToken);
+        var semaphorePriority = GetSemaphorePriority(cancellationToken);
+        using var priorityContext = EnsurePriorityContext(cancellationToken, semaphorePriority);
+        return await base.DecodedArticleAsync(segmentId, onConnectionReadyAgain, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public override void Dispose()
@@ -279,5 +327,19 @@ public class DownloadingNntpClient : WrappingNntpClient
         _configManager.OnConfigChanged -= OnConfigChanged;
         base.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    private static SemaphorePriority GetSemaphorePriority(CancellationToken cancellationToken)
+    {
+        return cancellationToken.GetContext<DownloadPriorityContext>()?.Priority ?? SemaphorePriority.Low;
+    }
+
+    private static IDisposable? EnsurePriorityContext(
+        CancellationToken cancellationToken,
+        SemaphorePriority semaphorePriority)
+    {
+        return cancellationToken.GetContext<DownloadPriorityContext>() == null
+            ? cancellationToken.SetContext(new DownloadPriorityContext { Priority = semaphorePriority })
+            : null;
     }
 }

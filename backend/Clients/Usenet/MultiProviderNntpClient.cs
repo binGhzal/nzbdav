@@ -10,6 +10,11 @@ namespace NzbWebDAV.Clients.Usenet;
 
 public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) : NntpClient
 {
+    private long _providerFanoutCursor;
+
+    protected override bool SupportsPipelinedSegmentChecks =>
+        providers.Any(provider => provider.ProviderType != ProviderType.Disabled && provider.StatPipeliningEnabled);
+
     public override Task ConnectAsync(string host, int port, bool useSsl, CancellationToken ct)
     {
         throw new NotSupportedException("Please connect within the connectionFactory");
@@ -25,6 +30,175 @@ public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) 
         return RunFromPoolWithBackup(x => x.StatAsync(segmentId, cancellationToken), cancellationToken);
     }
 
+    public override async Task<SegmentCheckBatch> CheckSegmentsAsync
+    (
+        IEnumerable<string> segmentIds,
+        int concurrency,
+        IProgress<int>? progress,
+        CancellationToken cancellationToken
+    )
+    {
+        var segmentList = segmentIds.ToList();
+        if (segmentList.Count == 0) return SegmentCheckBatch.AllExists(segmentList);
+
+        var results = new SegmentCheckResult?[segmentList.Count];
+        var unresolvedResults = new SegmentCheckResult?[segmentList.Count];
+        var triedProviderMasks = new ulong[segmentList.Count];
+        var triedProviderCounts = new int[segmentList.Count];
+        var pending = Enumerable.Range(0, segmentList.Count).ToList();
+        var processed = 0;
+
+        var orderedProviders = GetOrderedProviders();
+        while (pending.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var assignments = CreateProviderStatAssignments(pending, triedProviderMasks, orderedProviders);
+            if (assignments.Count == 0) break;
+
+            foreach (var assignment in assignments)
+            foreach (var index in assignment.Indexes)
+                MarkProviderTried(triedProviderMasks, triedProviderCounts, index, assignment.ProviderIndex);
+
+            var assignmentResults = await Task.WhenAll(assignments
+                    .Select(assignment => CheckProviderSegmentAssignmentAsync(
+                        assignment,
+                        segmentList,
+                        GetAssignmentConcurrency(concurrency, assignment.Indexes.Count, pending.Count),
+                        cancellationToken)))
+                .ConfigureAwait(false);
+
+            var nextPending = new List<int>();
+            foreach (var assignmentResult in assignmentResults)
+            {
+                if (assignmentResult.Exception is not null)
+                {
+                    var error = assignmentResult.Exception.SourceException.Message;
+                    foreach (var index in assignmentResult.Indexes)
+                    {
+                        PreserveUnresolvedResult(index, new SegmentCheckResult(
+                            segmentList[index],
+                            SegmentCheckState.ProviderError,
+                            Provider: null,
+                            Error: error));
+                        if (triedProviderCounts[index] < orderedProviders.Count)
+                            nextPending.Add(index);
+                    }
+
+                    continue;
+                }
+
+                var providerResults = assignmentResult.Results!;
+                for (var i = 0; i < assignmentResult.Indexes.Count; i++)
+                {
+                    var index = assignmentResult.Indexes[i];
+                    if (results[index] is not null) continue;
+
+                    var result = providerResults[i];
+                    if (result.State == SegmentCheckState.Exists)
+                    {
+                        Complete(index, result);
+                        continue;
+                    }
+
+                    PreserveUnresolvedResult(index, result);
+                    if (triedProviderCounts[index] < orderedProviders.Count)
+                        nextPending.Add(index);
+                }
+            }
+
+            pending = nextPending
+                .Where(index => results[index] is null)
+                .Distinct()
+                .ToList();
+        }
+
+        for (var index = 0; index < results.Length; index++)
+        {
+            if (results[index] is not null) continue;
+            Complete(index, unresolvedResults[index] ?? new SegmentCheckResult(
+                segmentList[index],
+                SegmentCheckState.ProviderError,
+                Provider: null,
+                Error: "There are no usenet providers configured."));
+        }
+
+        return CreateSegmentCheckBatch(segmentList, results);
+
+        void PreserveUnresolvedResult(int index, SegmentCheckResult result)
+        {
+            var existing = unresolvedResults[index];
+            if (existing is null || GetUnresolvedStateWeight(result.State) > GetUnresolvedStateWeight(existing.State))
+                unresolvedResults[index] = result;
+        }
+
+        static int GetUnresolvedStateWeight(SegmentCheckState state)
+        {
+            return state switch
+            {
+                SegmentCheckState.ProviderError => 3,
+                SegmentCheckState.Unknown => 2,
+                SegmentCheckState.Missing => 1,
+                _ => 0
+            };
+        }
+
+        void Complete(int index, SegmentCheckResult result)
+        {
+            if (results[index] is not null) return;
+            results[index] = result;
+            progress?.Report(Interlocked.Increment(ref processed));
+        }
+    }
+
+    private static async Task<ProviderSegmentAssignmentResult> CheckProviderSegmentAssignmentAsync
+    (
+        ProviderStatAssignment assignment,
+        IReadOnlyList<string> segmentIds,
+        int concurrency,
+        CancellationToken cancellationToken
+    )
+    {
+        var subBatch = assignment.Indexes.Select(i => segmentIds[i]).ToArray();
+        try
+        {
+            var batch = await assignment.Provider
+                .CheckSegmentsAsync(subBatch, concurrency, null, cancellationToken)
+                .ConfigureAwait(false);
+            if (batch.Results.Count != subBatch.Length)
+            {
+                return new ProviderSegmentAssignmentResult(
+                    assignment.ProviderIndex,
+                    assignment.Indexes,
+                    Results: null,
+                    ExceptionDispatchInfo.Capture(new IOException(
+                        $"Provider returned {batch.Results.Count} segment check results for {subBatch.Length} requested segments.")));
+            }
+
+            return new ProviderSegmentAssignmentResult(
+                assignment.ProviderIndex,
+                assignment.Indexes,
+                batch.Results,
+                Exception: null);
+        }
+        catch (Exception e) when (!e.IsCancellationException())
+        {
+            return new ProviderSegmentAssignmentResult(
+                assignment.ProviderIndex,
+                assignment.Indexes,
+                Results: null,
+                ExceptionDispatchInfo.Capture(e));
+        }
+    }
+
+    private static int GetAssignmentConcurrency(int totalConcurrency, int assignmentCount, int pendingCount)
+    {
+        if (pendingCount <= 0) return 1;
+        var normalizedTotal = Math.Max(1, totalConcurrency);
+        var share = (int)Math.Ceiling(normalizedTotal * (assignmentCount / (double)pendingCount));
+        return Math.Clamp(share, 1, Math.Max(1, assignmentCount));
+    }
+
     public override async Task<IReadOnlyList<UsenetStatResponse>> StatPipelinedAsync
     (
         IReadOnlyList<string> segmentIds,
@@ -33,71 +207,251 @@ public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) 
     {
         if (segmentIds.Count == 0) return [];
 
-        // Same semantics as running each STAT through RunFromPoolWithBackup individually: a segment
-        // is only "missing" if it is missing on every provider. We send the batch to the first
-        // provider, then re-query just the still-missing segments on each subsequent provider.
         var results = new UsenetStatResponse?[segmentIds.Count];
+        var unresolvedResults = new UsenetStatResponse?[segmentIds.Count];
+        var providerErrors = new ExceptionDispatchInfo?[segmentIds.Count];
+        var triedProviderMasks = new ulong[segmentIds.Count];
+        var triedProviderCounts = new int[segmentIds.Count];
         var pending = new List<int>(segmentIds.Count);
         for (var i = 0; i < segmentIds.Count; i++) pending.Add(i);
 
-        ExceptionDispatchInfo? lastException = null;
         var orderedProviders = GetOrderedProviders();
-        foreach (var provider in orderedProviders)
+        while (pending.Count > 0)
         {
-            if (pending.Count == 0) break;
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (lastException is not null)
+            var assignments = CreateProviderStatAssignments(pending, triedProviderMasks, orderedProviders);
+            if (assignments.Count == 0) break;
+
+            foreach (var assignment in assignments)
+            foreach (var index in assignment.Indexes)
+                MarkProviderTried(triedProviderMasks, triedProviderCounts, index, assignment.ProviderIndex);
+
+            var assignmentResults = await Task.WhenAll(assignments
+                    .Select(assignment => CheckProviderStatAssignmentAsync(
+                        assignment,
+                        segmentIds,
+                        cancellationToken)))
+                .ConfigureAwait(false);
+
+            var nextPending = new List<int>();
+            foreach (var assignmentResult in assignmentResults)
             {
-                var msg = lastException.SourceException.Message;
-                Log.Debug($"Encountered error during pipelined STAT batch: `{msg}`. Trying another provider.");
+                if (assignmentResult.Exception is not null)
+                {
+                    foreach (var index in assignmentResult.Indexes)
+                    {
+                        providerErrors[index] = assignmentResult.Exception;
+                        if (triedProviderCounts[index] < orderedProviders.Count)
+                            nextPending.Add(index);
+                    }
+
+                    continue;
+                }
+
+                var responses = assignmentResult.Responses!;
+                for (var k = 0; k < assignmentResult.Indexes.Count; k++)
+                {
+                    var index = assignmentResult.Indexes[k];
+                    if (results[index] is not null) continue;
+
+                    var response = responses[k];
+                    if (response.ResponseType == UsenetResponseType.ArticleExists)
+                    {
+                        results[index] = response;
+                        continue;
+                    }
+
+                    PreserveUnresolvedResult(index, response);
+                    if (triedProviderCounts[index] < orderedProviders.Count)
+                        nextPending.Add(index);
+                }
             }
 
-            var subBatch = pending.Select(i => segmentIds[i]).ToList();
-            IReadOnlyList<UsenetStatResponse> subResults;
-            try
+            pending = nextPending
+                .Where(index => results[index] is null)
+                .Distinct()
+                .ToList();
+        }
+
+        for (var i = 0; i < results.Length; i++)
+        {
+            if (results[i] is not null) continue;
+            if (providerErrors[i] is not null)
+                ThrowProviderException(providerErrors[i]!);
+            if (unresolvedResults[i] is not null)
             {
-                subResults = await provider.StatPipelinedAsync(subBatch, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception e) when (!e.IsCancellationException())
-            {
-                // The whole sub-batch is unresolved on this provider; leave those segments pending
-                // so the next provider gets a chance at them.
-                lastException = ExceptionDispatchInfo.Capture(e);
+                results[i] = unresolvedResults[i];
                 continue;
             }
 
-            var stillPending = new List<int>();
-            for (var k = 0; k < pending.Count; k++)
-            {
-                var idx = pending[k];
-                var result = subResults[k];
-                results[idx] = result;
-                // Only keep re-querying segments this provider says are missing.
-                if (result.ResponseType == UsenetResponseType.NoArticleWithThatMessageId)
-                    stillPending.Add(idx);
-            }
-
-            pending = stillPending;
-        }
-
-        // If any still-missing segment hit a provider error on the way through, we cannot prove it
-        // is missing on every provider. Surface the provider error so repair can retry instead of
-        // treating an unknown provider as definitive corruption.
-        if (pending.Count > 0 && lastException is not null) ThrowProviderException(lastException);
-
-        // Any segment that never received a result only failed because providers threw -- surface
-        // that as an error rather than silently reporting the article as missing.
-        for (var i = 0; i < results.Length; i++)
-        {
-            if (results[i] is null)
-            {
-                if (lastException is not null) ThrowProviderException(lastException);
-                throw new Exception("There are no usenet providers configured.");
-            }
+            throw new Exception("There are no usenet providers configured.");
         }
 
         return results!;
+
+        void PreserveUnresolvedResult(int index, UsenetStatResponse response)
+        {
+            if (unresolvedResults[index] is null
+                || response.ResponseType != UsenetResponseType.NoArticleWithThatMessageId)
+                unresolvedResults[index] = response;
+        }
+    }
+
+    private List<ProviderStatAssignment> CreateProviderStatAssignments
+    (
+        IReadOnlyList<int> pending,
+        IReadOnlyList<ulong> triedProviderMasks,
+        IReadOnlyList<MultiConnectionNntpClient> orderedProviders
+    )
+    {
+        var providerOrder = CreateProviderFanoutOrder(orderedProviders, pending.Count);
+        var assignmentIndexes = new Dictionary<int, List<int>>();
+        var providerCursor = ReserveProviderFanoutCursor(pending.Count, providerOrder.Count);
+
+        foreach (var index in pending)
+        {
+            for (var attempt = 0; attempt < providerOrder.Count; attempt++)
+            {
+                var providerIndex = providerOrder[(int)(providerCursor % providerOrder.Count)];
+                providerCursor++;
+                if (HasProviderBeenTried(triedProviderMasks[index], providerIndex)) continue;
+
+                if (!assignmentIndexes.TryGetValue(providerIndex, out var indexes))
+                {
+                    indexes = [];
+                    assignmentIndexes[providerIndex] = indexes;
+                }
+
+                indexes.Add(index);
+                break;
+            }
+        }
+
+        return assignmentIndexes
+            .OrderBy(x => x.Key)
+            .Select(x => new ProviderStatAssignment(x.Key, orderedProviders[x.Key], x.Value))
+            .ToList();
+    }
+
+    private static bool HasProviderBeenTried(ulong mask, int providerIndex)
+    {
+        return (mask & (1UL << providerIndex)) != 0;
+    }
+
+    private static void MarkProviderTried(
+        ulong[] triedProviderMasks,
+        int[] triedProviderCounts,
+        int segmentIndex,
+        int providerIndex)
+    {
+        var bit = 1UL << providerIndex;
+        if ((triedProviderMasks[segmentIndex] & bit) != 0) return;
+
+        triedProviderMasks[segmentIndex] |= bit;
+        triedProviderCounts[segmentIndex]++;
+    }
+
+    private long ReserveProviderFanoutCursor(int pendingCount, int providerOrderCount)
+    {
+        if (providerOrderCount <= 0) return 0;
+
+        var reservedSlots = Math.Max(1, pendingCount);
+        var nextCursor = Interlocked.Add(ref _providerFanoutCursor, reservedSlots);
+        return PositiveModulo(nextCursor - reservedSlots, providerOrderCount);
+    }
+
+    private static long PositiveModulo(long value, int modulo)
+    {
+        var result = value % modulo;
+        return result < 0 ? result + modulo : result;
+    }
+
+    private static List<int> CreateProviderFanoutOrder(
+        IReadOnlyList<MultiConnectionNntpClient> orderedProviders,
+        int pendingCount)
+    {
+        var maxUsefulSlotsPerProvider = Math.Max(1, pendingCount);
+        var providerOrder = new List<int>();
+        for (var providerIndex = 0; providerIndex < orderedProviders.Count; providerIndex++)
+        {
+            var provider = orderedProviders[providerIndex];
+            var slots = Math.Clamp(provider.AvailableConnections, 1, maxUsefulSlotsPerProvider);
+            for (var i = 0; i < slots; i++)
+                providerOrder.Add(providerIndex);
+        }
+
+        return providerOrder;
+    }
+
+    private static async Task<ProviderStatAssignmentResult> CheckProviderStatAssignmentAsync
+    (
+        ProviderStatAssignment assignment,
+        IReadOnlyList<string> segmentIds,
+        CancellationToken cancellationToken
+    )
+    {
+        var subBatch = assignment.Indexes.Select(i => segmentIds[i]).ToList();
+        try
+        {
+            var responses = assignment.Provider.StatPipeliningEnabled
+                ? await assignment.Provider
+                    .StatPipelinedAsync(subBatch, cancellationToken)
+                    .ConfigureAwait(false)
+                : await CheckNonPipelinedProviderStatsAsync(
+                        assignment.Provider,
+                        subBatch,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            if (responses.Count != subBatch.Count)
+            {
+                return new ProviderStatAssignmentResult(
+                    assignment.ProviderIndex,
+                    assignment.Indexes,
+                    Responses: null,
+                    ExceptionDispatchInfo.Capture(new IOException(
+                        $"Provider returned {responses.Count} pipelined STAT responses for {subBatch.Count} requested segments.")));
+            }
+
+            return new ProviderStatAssignmentResult(
+                assignment.ProviderIndex,
+                assignment.Indexes,
+                responses,
+                Exception: null);
+        }
+        catch (Exception e) when (!e.IsCancellationException())
+        {
+            return new ProviderStatAssignmentResult(
+                assignment.ProviderIndex,
+                assignment.Indexes,
+                Responses: null,
+                ExceptionDispatchInfo.Capture(e));
+        }
+    }
+
+    private static async Task<IReadOnlyList<UsenetStatResponse>> CheckNonPipelinedProviderStatsAsync
+    (
+        MultiConnectionNntpClient provider,
+        IReadOnlyList<string> segmentIds,
+        CancellationToken cancellationToken
+    )
+    {
+        var responses = new UsenetStatResponse?[segmentIds.Count];
+        var concurrency = Math.Clamp(provider.AvailableConnections, 1, Math.Max(1, segmentIds.Count));
+        var tasks = segmentIds
+            .Select((segmentId, index) => CheckAsync(index, segmentId))
+            .WithConcurrencyAsync(concurrency, cancellationToken);
+
+        await foreach (var item in tasks.ConfigureAwait(false))
+            responses[item.Index] = item.Response;
+
+        return responses.Select(x => x!).ToArray();
+
+        async Task<(int Index, UsenetStatResponse Response)> CheckAsync(int index, string segmentId)
+        {
+            var response = await provider.StatAsync(segmentId, cancellationToken).ConfigureAwait(false);
+            return (index, response);
+        }
     }
 
     public override Task<UsenetHeadResponse> HeadAsync(SegmentId segmentId, CancellationToken cancellationToken)
@@ -201,12 +555,12 @@ public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) 
     ) where T : UsenetResponse
     {
         ExceptionDispatchInfo? lastException = null;
+        T? unresolvedResult = null;
         var orderedProviders = GetOrderedProviders();
         for (var i = 0; i < orderedProviders.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var provider = orderedProviders[i];
-            var isLastProvider = i == orderedProviders.Count - 1;
 
             if (lastException is not null)
             {
@@ -218,16 +572,15 @@ public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) 
             {
                 var result = await task.Invoke(provider).ConfigureAwait(false);
 
-                // If no article with that message-id is found, try again with the next provider.
-                // If any earlier provider errored, a later miss is not definitive; retry later
-                // instead of handing repair a partial-provider conclusion.
-                if (result.ResponseType == UsenetResponseType.NoArticleWithThatMessageId)
-                {
-                    if (!isLastProvider) continue;
-                    if (lastException is not null) ThrowProviderException(lastException);
-                }
+                if (result.ResponseType is not UsenetResponseType.NoArticleWithThatMessageId
+                    and not UsenetResponseType.Unknown)
+                    return result;
 
-                return result;
+                // Missing and Unknown both remain unresolved until every provider has had a
+                // chance. Preserve Unknown over Missing so repair never treats an inconclusive
+                // provider response as definitive article loss.
+                if (unresolvedResult is null || result.ResponseType != UsenetResponseType.NoArticleWithThatMessageId)
+                    unresolvedResult = result;
             }
             catch (Exception e) when (!e.IsCancellationException())
             {
@@ -236,6 +589,7 @@ public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) 
         }
 
         if (lastException is not null) ThrowProviderException(lastException);
+        if (unresolvedResult is not null) return unresolvedResult;
         throw new Exception("There are no usenet providers configured.");
     }
 
@@ -258,6 +612,23 @@ public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) 
                || exception.TryGetCausingException<IOException>(out _)
                || exception.TryGetCausingException<TimeoutException>(out _);
     }
+
+    private sealed record ProviderStatAssignment(
+        int ProviderIndex,
+        MultiConnectionNntpClient Provider,
+        IReadOnlyList<int> Indexes);
+
+    private sealed record ProviderStatAssignmentResult(
+        int ProviderIndex,
+        IReadOnlyList<int> Indexes,
+        IReadOnlyList<UsenetStatResponse>? Responses,
+        ExceptionDispatchInfo? Exception);
+
+    private sealed record ProviderSegmentAssignmentResult(
+        int ProviderIndex,
+        IReadOnlyList<int> Indexes,
+        IReadOnlyList<SegmentCheckResult>? Results,
+        ExceptionDispatchInfo? Exception);
 
     private List<MultiConnectionNntpClient> GetOrderedProviders()
     {

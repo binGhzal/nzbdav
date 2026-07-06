@@ -84,7 +84,7 @@ public sealed class ProviderDiagnosticStatus
                 UseSsl = provider.GetEffectiveUseSsl(),
                 ConfiguredUseSsl = provider.UseSsl,
                 ImplicitTls = provider.IsImplicitTlsEnabled(),
-                StatPipeliningEnabled = provider.StatPipeliningEnabled
+                StatPipeliningEnabled = provider.IsStatPipeliningEnabled()
             })
             .ToList();
     }

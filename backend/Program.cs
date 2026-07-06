@@ -27,6 +27,8 @@ namespace NzbWebDAV;
 
 class Program
 {
+    private const long DefaultMaxStartupVacuumBytes = 1L * 1024 * 1024 * 1024;
+
     static async Task Main(string[] args)
     {
         EnvironmentUtil.LoadDotEnvFile();
@@ -220,11 +222,61 @@ class Program
                 return;
             }
 
+            var forceVacuum = EnvironmentUtil.IsVariableTrue("NZBDAV_FORCE_STARTUP_VACUUM");
+            var maxStartupVacuumBytes = Math.Max(
+                1,
+                EnvironmentUtil.GetLongVariable("NZBDAV_STARTUP_VACUUM_MAX_BYTES")
+                ?? DefaultMaxStartupVacuumBytes);
+            var sqliteBytes = GetSqliteDatabaseBytes();
+            if (ShouldSkipStartupVacuum(sqliteBytes, maxStartupVacuumBytes, forceVacuum))
+            {
+                Console.WriteLine(
+                    "Skipping database vacuum because SQLite database files total "
+                    + $"{FormatBytes(sqliteBytes)}, above the startup vacuum limit "
+                    + $"{FormatBytes(maxStartupVacuumBytes)}. "
+                    + "Run manual maintenance or set NZBDAV_FORCE_STARTUP_VACUUM=true to override.");
+                return;
+            }
+
             Console.Write("Performing database vacuum...");
             await using var databaseContext = new DavDatabaseContext();
             await databaseContext.Database.ExecuteSqlRawAsync("VACUUM;");
             Console.WriteLine("Done.");
         }
+    }
+
+    private static bool ShouldSkipStartupVacuum(long sqliteBytes, long maxStartupVacuumBytes, bool forceVacuum)
+    {
+        return !forceVacuum && sqliteBytes > maxStartupVacuumBytes;
+    }
+
+    private static long GetSqliteDatabaseBytes()
+    {
+        var paths = new[]
+        {
+            DavDatabaseContext.DatabaseFilePath,
+            $"{DavDatabaseContext.DatabaseFilePath}-wal",
+            $"{DavDatabaseContext.DatabaseFilePath}-shm"
+        };
+
+        var total = 0L;
+        foreach (var path in paths)
+        {
+            var fileInfo = new FileInfo(path);
+            if (fileInfo.Exists)
+                total += fileInfo.Length;
+        }
+
+        return total;
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        const double kib = 1024d;
+        if (bytes < kib) return $"{bytes} B";
+        if (bytes < kib * kib) return $"{bytes / kib:0.##} KiB";
+        if (bytes < kib * kib * kib) return $"{bytes / kib / kib:0.##} MiB";
+        return $"{bytes / kib / kib / kib:0.##} GiB";
     }
 
     private static bool TryGetArgumentValue(string[] args, string name, out string value)

@@ -1,8 +1,12 @@
 using NzbWebDAV.Streams;
 using NzbWebDAV.Streams.Caching;
+using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Services;
 using NzbWebDAV.Tests.TestDoubles;
+using System.Reflection;
+using UsenetSharp.Models;
 
 namespace backend.Tests.Streams.Caching;
 
@@ -56,6 +60,33 @@ public sealed class SparseSegmentCacheTests
             Assert.Equal([0, 1], first);
             Assert.Equal([1, 2], second);
             Assert.Equal(1, inner.ReadCalls);
+        }
+        finally
+        {
+            await DisposeReaderAsync(cached);
+        }
+    }
+
+    [Fact]
+    public async Task ReadAtAsyncRefetchesCompletedChunkWhenCacheFileIsTruncated()
+    {
+        using var tempDir = new TempDirectory();
+        using var manager = new SparseSegmentCacheManager();
+        var inner = new ByteArrayRangeReader([0, 1, 2, 3]);
+        var cached = Open(manager, "file-a", inner, tempDir.Path, chunkBytes: 4, maxBytes: 1024);
+
+        try
+        {
+            var first = new byte[4];
+            var second = new byte[4];
+
+            Assert.Equal(4, await cached.ReadAtAsync(0, first, CancellationToken.None));
+            TruncateCacheFile(cached, length: 1);
+
+            Assert.Equal(4, await cached.ReadAtAsync(0, second, CancellationToken.None));
+
+            Assert.Equal([0, 1, 2, 3], second);
+            Assert.Equal(2, inner.ReadCalls);
         }
         finally
         {
@@ -120,6 +151,47 @@ public sealed class SparseSegmentCacheTests
     }
 
     [Fact]
+    public void OrphanCleanupIgnoresMissingCacheDirectory()
+    {
+        using var tempDir = new TempDirectory();
+        using var manager = new SparseSegmentCacheManager();
+        var missingDirectory = Path.Join(tempDir.Path, "missing-cache");
+
+        InvokeCleanupOrphanFilesOnce(manager, missingDirectory);
+    }
+
+    [Fact]
+    public void OpenFallsBackToInnerReaderWhenCacheDirectoryCannotBeCreated()
+    {
+        using var tempDir = new TempDirectory();
+        using var manager = new SparseSegmentCacheManager();
+        var fileInsteadOfDirectory = Path.Join(tempDir.Path, "cache-file");
+        File.WriteAllText(fileInsteadOfDirectory, "not a directory");
+        var inner = new ByteArrayRangeReader([0, 1, 2, 3]);
+
+        var reader = manager.Open(
+            "file-a",
+            inner,
+            CreateOptions(fileInsteadOfDirectory, chunkBytes: 4, maxBytes: 1024));
+
+        Assert.Same(inner, reader);
+    }
+
+    [Fact]
+    public void OpenFallsBackToInnerReaderWhenCacheFilePathCannotBeOpened()
+    {
+        using var tempDir = new TempDirectory();
+        using var manager = new SparseSegmentCacheManager();
+        var options = CreateOptions(tempDir.Path, chunkBytes: 4, maxBytes: 1024);
+        var inner = new ByteArrayRangeReader([0, 1, 2, 3]);
+        Directory.CreateDirectory(GetCachePath("file-a", options));
+
+        var reader = manager.Open("file-a", inner, options);
+
+        Assert.Same(inner, reader);
+    }
+
+    [Fact]
     public async Task NzbFileStreamUsesSparseCacheForSeekBackIntoCachedChunk()
     {
         using var tempDir = new TempDirectory();
@@ -172,6 +244,92 @@ public sealed class SparseSegmentCacheTests
     }
 
     [Fact]
+    public async Task NzbFileStreamRejectsNegativeSeekWithoutChangingPosition()
+    {
+        using var client = new FakeNntpClient()
+            .AddSegment("segment-1", [0, 1, 2], partOffset: 0);
+        await using var stream = new NzbFileStream(
+            ["segment-1"],
+            fileSize: 3,
+            client,
+            articleBufferSize: 1,
+            requestedEndByte: null,
+            cacheOptions: null);
+
+        stream.Seek(1, SeekOrigin.Begin);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => stream.Seek(-2, SeekOrigin.Current));
+        Assert.Equal(1, stream.Position);
+    }
+
+    [Fact]
+    public async Task SegmentFileRangeReaderReadsFullRangeWhenSegmentSizesAreSkewed()
+    {
+        using var client = new FakeNntpClient();
+        var segmentIds = new List<string>();
+        var expected = Enumerable.Range(0, 20).Select(x => (byte)x).ToArray();
+        long partOffset = 0;
+        for (var i = 0; i < 10; i++)
+        {
+            var segmentId = $"small-segment-{i}";
+            segmentIds.Add(segmentId);
+            client.AddSegment(segmentId, [(byte)i], partOffset);
+            partOffset++;
+        }
+
+        var largeSegment = Enumerable.Range(10, 90).Select(x => (byte)x).ToArray();
+        segmentIds.Add("large-segment");
+        client.AddSegment("large-segment", largeSegment, partOffset);
+
+        var reader = new SegmentFileRangeReader(
+            segmentIds.ToArray(),
+            fileSize: 100,
+            client,
+            articleBufferSize: 1);
+        var buffer = new byte[20];
+
+        var read = await reader.ReadAtAsync(0, buffer, CancellationToken.None);
+
+        Assert.Equal(20, read);
+        Assert.Equal(expected, buffer);
+    }
+
+    [Fact]
+    public async Task SegmentFileRangeReaderThrowsWhenSegmentEndsBeforeRequestedRange()
+    {
+        using var client = new TruncatedSegmentNntpClient();
+        var reader = new SegmentFileRangeReader(
+            ["segment-1"],
+            fileSize: 4,
+            client,
+            articleBufferSize: 0);
+        var buffer = new byte[4];
+
+        var exception = await Assert.ThrowsAsync<IOException>(() =>
+            reader.ReadAtAsync(0, buffer, CancellationToken.None).AsTask());
+        Assert.Contains("ended before satisfying range read", exception.Message);
+    }
+
+    [Fact]
+    public async Task NzbFileStreamThrowsWhenDirectSegmentEndsBeforeDeclaredLength()
+    {
+        using var client = new TruncatedSegmentNntpClient();
+        await using var stream = new NzbFileStream(
+            ["segment-1"],
+            fileSize: 4,
+            client,
+            articleBufferSize: 0,
+            requestedEndByte: null,
+            cacheOptions: null);
+        var buffer = new byte[4];
+
+        Assert.Equal(1, await stream.ReadAsync(buffer, CancellationToken.None));
+        var exception = await Assert.ThrowsAsync<IOException>(() =>
+            stream.ReadAsync(buffer.AsMemory(1), CancellationToken.None).AsTask());
+        Assert.Contains("ended before declared file length", exception.Message);
+    }
+
+    [Fact]
     public async Task NzbFileStreamFailsBeforeFetchingKnownMissingSegment()
     {
         var missingSegment = $"missing-{Guid.NewGuid():N}";
@@ -192,6 +350,169 @@ public sealed class SparseSegmentCacheTests
             () => stream.ReadAsync(buffer, CancellationToken.None).AsTask());
         Assert.Equal(missingSegment, exception.SegmentId);
         Assert.Equal(0, client.DecodedBodyCallCount);
+    }
+
+    [Fact]
+    public async Task NzbFileStreamRejectsNonEmptyFileWithoutSegmentMetadata()
+    {
+        using var client = new FakeNntpClient();
+        await using var stream = new NzbFileStream(
+            [],
+            fileSize: 3,
+            client,
+            articleBufferSize: 1,
+            requestedEndByte: null,
+            cacheOptions: null);
+
+        var buffer = new byte[1];
+
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(
+            () => stream.ReadAsync(buffer, CancellationToken.None).AsTask());
+        Assert.Contains("segment metadata", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, client.DecodedBodyCallCount);
+        Assert.Equal(0, client.GetYencHeadersCallCount);
+    }
+
+    [Fact]
+    public async Task NzbFileStreamRejectsNonEmptyFileWithNullSegmentMetadata()
+    {
+        using var client = new FakeNntpClient();
+        await using var stream = new NzbFileStream(
+            null!,
+            fileSize: 3,
+            client,
+            articleBufferSize: 1,
+            requestedEndByte: null,
+            cacheOptions: null);
+
+        var buffer = new byte[1];
+
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(
+            () => stream.ReadAsync(buffer, CancellationToken.None).AsTask());
+        Assert.Contains("segment metadata", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, client.DecodedBodyCallCount);
+        Assert.Equal(0, client.GetYencHeadersCallCount);
+    }
+
+    [Fact]
+    public async Task NzbFileStreamRejectsNonEmptyFileWithBlankSegmentMetadata()
+    {
+        using var client = new FakeNntpClient();
+        await using var stream = new NzbFileStream(
+            ["", " "],
+            fileSize: 3,
+            client,
+            articleBufferSize: 1,
+            requestedEndByte: null,
+            cacheOptions: null);
+
+        var buffer = new byte[1];
+
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(
+            () => stream.ReadAsync(buffer, CancellationToken.None).AsTask());
+        Assert.Contains("segment metadata", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, client.DecodedBodyCallCount);
+        Assert.Equal(0, client.GetYencHeadersCallCount);
+    }
+
+    [Fact]
+    public async Task SegmentFileRangeReaderCachesYencHeadersAcrossRepeatedSeeks()
+    {
+        using var client = new FakeNntpClient()
+            .AddSegment("segment-1", [0, 1, 2], partOffset: 0)
+            .AddSegment("segment-2", [3, 4, 5], partOffset: 3)
+            .AddSegment("segment-3", [6, 7, 8], partOffset: 6);
+        var reader = new SegmentFileRangeReader(
+            ["segment-1", "segment-2", "segment-3"],
+            fileSize: 9,
+            client,
+            articleBufferSize: 1);
+        var first = new byte[1];
+        var second = new byte[1];
+
+        Assert.Equal(1, await reader.ReadAtAsync(4, first, CancellationToken.None));
+        Assert.Equal(1, await reader.ReadAtAsync(5, second, CancellationToken.None));
+
+        Assert.Equal([4], first);
+        Assert.Equal([5], second);
+        Assert.Equal(1, client.GetYencHeadersCallCount);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task SegmentFileRangeReaderRejectsNonEmptyFileWithoutUsableSegmentMetadata(string? segmentId)
+    {
+        using var client = new FakeNntpClient();
+        var reader = new SegmentFileRangeReader(
+            segmentId is null ? null! : [segmentId],
+            fileSize: 3,
+            client,
+            articleBufferSize: 1);
+        var buffer = new byte[1];
+
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(
+            () => reader.ReadAtAsync(0, buffer, CancellationToken.None).AsTask());
+        Assert.Contains("segment metadata", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, client.DecodedBodyCallCount);
+        Assert.Equal(0, client.GetYencHeadersCallCount);
+    }
+
+    [Fact]
+    public async Task SegmentFileRangeReaderDoesNotCacheCancelledYencHeaderLookup()
+    {
+        using var client = new DelayedHeaderNntpClient(TimeSpan.FromMilliseconds(100));
+        client
+            .AddSegment("segment-1", [0, 1, 2], partOffset: 0)
+            .AddSegment("segment-2", [3, 4, 5], partOffset: 3)
+            .AddSegment("segment-3", [6, 7, 8], partOffset: 6);
+        var reader = new SegmentFileRangeReader(
+            ["segment-1", "segment-2", "segment-3"],
+            fileSize: 9,
+            client,
+            articleBufferSize: 1);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(20));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            reader.ReadAtAsync(4, new byte[1], cts.Token).AsTask());
+
+        client.Delay = TimeSpan.Zero;
+        var buffer = new byte[1];
+        Assert.Equal(1, await reader.ReadAtAsync(4, buffer, CancellationToken.None));
+        Assert.Equal([4], buffer);
+    }
+
+    [Fact]
+    public async Task SegmentFileRangeReaderDoesNotCancelSharedYencHeaderLookupWhenOneWaiterCancels()
+    {
+        using var client = new BlockingHeaderNntpClient();
+        client
+            .AddSegment("segment-1", [0, 1, 2], partOffset: 0)
+            .AddSegment("segment-2", [3, 4, 5], partOffset: 3)
+            .AddSegment("segment-3", [6, 7, 8], partOffset: 6);
+        var reader = new SegmentFileRangeReader(
+            ["segment-1", "segment-2", "segment-3"],
+            fileSize: 9,
+            client,
+            articleBufferSize: 1);
+        using var firstCts = new CancellationTokenSource();
+        var first = new byte[1];
+        var second = new byte[1];
+
+        var firstRead = reader.ReadAtAsync(4, first, firstCts.Token).AsTask();
+        await client.FirstHeaderStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var secondRead = reader.ReadAtAsync(5, second, CancellationToken.None).AsTask();
+        await WaitUntilAsync(() => client.HeaderLookupCalls == 1);
+
+        await firstCts.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => firstRead);
+
+        client.ReleaseHeaders();
+
+        Assert.Equal(1, await secondRead.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal([5], second);
+        Assert.Equal(1, client.GetYencHeadersCallCount);
     }
 
     [Fact]
@@ -242,6 +563,32 @@ public sealed class SparseSegmentCacheTests
     }
 
     [Fact]
+    public async Task ActiveReaderFallsBackToSourceWhenCacheFileIsInvalidated()
+    {
+        using var tempDir = new TempDirectory();
+        var manager = new SparseSegmentCacheManager();
+        var inner = new ByteArrayRangeReader([0, 1, 2, 3, 4, 5, 6, 7]);
+        var cached = Open(manager, "file-a", inner, tempDir.Path, chunkBytes: 4, maxBytes: 1024);
+
+        try
+        {
+            var first = new byte[4];
+            Assert.Equal(4, await cached.ReadAtAsync(0, first, CancellationToken.None));
+            manager.Dispose();
+
+            var second = new byte[2];
+            Assert.Equal(2, await cached.ReadAtAsync(4, second, CancellationToken.None));
+
+            Assert.Equal([4, 5], second);
+        }
+        finally
+        {
+            await DisposeReaderAsync(cached);
+            manager.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task ReadAheadDoesNotFetchBeyondRequestedReadLimit()
     {
         using var tempDir = new TempDirectory();
@@ -263,6 +610,90 @@ public sealed class SparseSegmentCacheTests
         finally
         {
             await DisposeReaderAsync(cached);
+        }
+    }
+
+    [Fact]
+    public async Task ForegroundReadDoesNotFetchFullChunkBeyondRequestedReadLimit()
+    {
+        using var tempDir = new TempDirectory();
+        using var manager = new SparseSegmentCacheManager();
+        var inner = new RecordingRangeReader([9, 1, 2, 3, 4, 5, 6, 7]);
+        var options = CreateOptions(tempDir.Path, chunkBytes: 4, maxBytes: 1024);
+        var cached = manager.Open("file-a", inner, options, readLimitExclusive: 1);
+        var buffer = new byte[1];
+
+        try
+        {
+            Assert.Equal(1, await cached.ReadAtAsync(0, buffer, CancellationToken.None));
+            Assert.Equal([9], buffer);
+            Assert.Equal([1], inner.RequestedByteCounts);
+            Assert.Equal(0, manager.GetSnapshot().Bytes);
+        }
+        finally
+        {
+            await DisposeReaderAsync(cached);
+        }
+    }
+
+    [Fact]
+    public async Task CacheFetchUsesBoundedSourceReadBufferForLargeChunks()
+    {
+        using var tempDir = new TempDirectory();
+        using var manager = new SparseSegmentCacheManager();
+        var inner = new RecordingRangeReader(new byte[4 * 1024 * 1024]);
+        var options = CreateOptions(
+            tempDir.Path,
+            chunkBytes: 4 * 1024 * 1024,
+            maxBytes: 8 * 1024 * 1024);
+        var cached = manager.Open("file-a", inner, options);
+        var buffer = new byte[1];
+
+        try
+        {
+            Assert.Equal(1, await cached.ReadAtAsync(0, buffer, CancellationToken.None));
+
+            Assert.All(inner.RequestedByteCounts, count => Assert.True(count <= 256 * 1024));
+        }
+        finally
+        {
+            await DisposeReaderAsync(cached);
+        }
+    }
+
+    [Fact]
+    public async Task RangeLimitedReadReusesCompletedCachedChunk()
+    {
+        using var tempDir = new TempDirectory();
+        using var manager = new SparseSegmentCacheManager();
+        var firstInner = new ByteArrayRangeReader([9, 1, 2, 3, 4, 5, 6, 7]);
+        var secondInner = new RecordingRangeReader([100, 101, 102, 103, 104, 105, 106, 107]);
+        var options = CreateOptions(tempDir.Path, chunkBytes: 4, maxBytes: 1024);
+        var first = manager.Open("file-a", firstInner, options);
+
+        try
+        {
+            var firstBuffer = new byte[4];
+            Assert.Equal(4, await first.ReadAtAsync(0, firstBuffer, CancellationToken.None));
+            Assert.Equal([9, 1, 2, 3], firstBuffer);
+        }
+        finally
+        {
+            await DisposeReaderAsync(first);
+        }
+
+        var second = manager.Open("file-a", secondInner, options, readLimitExclusive: 1);
+        try
+        {
+            var secondBuffer = new byte[1];
+            Assert.Equal(1, await second.ReadAtAsync(0, secondBuffer, CancellationToken.None));
+
+            Assert.Equal([9], secondBuffer);
+            Assert.Empty(secondInner.RequestedByteCounts);
+        }
+        finally
+        {
+            await DisposeReaderAsync(second);
         }
     }
 
@@ -387,6 +818,54 @@ public sealed class SparseSegmentCacheTests
     }
 
     [Fact]
+    public async Task RangeLimitedDirectReadUsesNoProgressTimeout()
+    {
+        using var tempDir = new TempDirectory();
+        using var manager = new SparseSegmentCacheManager();
+        var inner = new NeverCompletingRangeReader(length: 4);
+        var options = CreateOptions(tempDir.Path, chunkBytes: 4, maxBytes: 1024) with
+        {
+            NoProgressTimeout = TimeSpan.FromMilliseconds(20)
+        };
+        var cached = manager.Open("file-a", inner, options, readLimitExclusive: 1);
+        var buffer = new byte[1];
+
+        try
+        {
+            var exception = await Assert.ThrowsAsync<RetryableDownloadException>(() =>
+                cached.ReadAtAsync(0, buffer, CancellationToken.None).AsTask()
+                    .WaitAsync(TimeSpan.FromSeconds(1)));
+            Assert.Contains("No progress reading cache direct range", exception.Message);
+        }
+        finally
+        {
+            await DisposeReaderAsync(cached);
+        }
+    }
+
+    [Fact]
+    public async Task RangeLimitedDirectReadReportsZeroProgress()
+    {
+        using var tempDir = new TempDirectory();
+        using var manager = new SparseSegmentCacheManager();
+        var inner = new ZeroProgressRangeReader(length: 4);
+        var options = CreateOptions(tempDir.Path, chunkBytes: 4, maxBytes: 1024);
+        var cached = manager.Open("file-a", inner, options, readLimitExclusive: 1);
+        var buffer = new byte[1];
+
+        try
+        {
+            var exception = await Assert.ThrowsAsync<IOException>(() =>
+                cached.ReadAtAsync(0, buffer, CancellationToken.None).AsTask());
+            Assert.Contains("No progress reading cache direct range", exception.Message);
+        }
+        finally
+        {
+            await DisposeReaderAsync(cached);
+        }
+    }
+
+    [Fact]
     public async Task SameContentKeyUsesDifferentEntriesForDifferentCacheDirectories()
     {
         using var firstTempDir = new TempDirectory();
@@ -446,6 +925,42 @@ public sealed class SparseSegmentCacheTests
         };
     }
 
+    private static string GetCachePath(string key, SparseSegmentCacheOptions options)
+    {
+        var method = typeof(SparseSegmentCacheManager).GetMethod(
+            "CreateNamespacedKey",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+        var cacheKey = Assert.IsType<string>(method.Invoke(null, [key, options]));
+        return Path.Join(options.Directory, $"{cacheKey}.nzbdav-cache.tmp");
+    }
+
+    private static void InvokeCleanupOrphanFilesOnce(SparseSegmentCacheManager manager, string directory)
+    {
+        var method = typeof(SparseSegmentCacheManager).GetMethod(
+            "CleanupOrphanFilesOnce",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+        method.Invoke(manager, [directory]);
+    }
+
+    private static void TruncateCacheFile(IFileRangeReader reader, long length)
+    {
+        var cacheFile = reader
+            .GetType()
+            .GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(x => x.FieldType.Name == "CacheFile")
+            .GetValue(reader);
+        Assert.NotNull(cacheFile);
+        var stream = Assert.IsType<FileStream>(cacheFile
+            .GetType()
+            .GetField("_stream", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(cacheFile));
+
+        stream.SetLength(length);
+        stream.Flush();
+    }
+
     private static async ValueTask DisposeReaderAsync(IFileRangeReader reader)
     {
         if (reader is IAsyncDisposable asyncDisposable)
@@ -481,6 +996,34 @@ public sealed class SparseSegmentCacheTests
         }
     }
 
+    private sealed class RecordingRangeReader(byte[] bytes) : IFileRangeReader
+    {
+        private readonly List<int> _requestedByteCounts = [];
+        private readonly object _lock = new();
+
+        public long Length => bytes.LongLength;
+
+        public IReadOnlyList<int> RequestedByteCounts
+        {
+            get
+            {
+                lock (_lock)
+                    return _requestedByteCounts.ToArray();
+            }
+        }
+
+        public ValueTask<int> ReadAtAsync(long offset, Memory<byte> buffer, CancellationToken ct)
+        {
+            lock (_lock)
+                _requestedByteCounts.Add(buffer.Length);
+            if (offset >= bytes.Length) return ValueTask.FromResult(0);
+
+            var count = Math.Min(buffer.Length, bytes.Length - (int)offset);
+            bytes.AsMemory((int)offset, count).CopyTo(buffer);
+            return ValueTask.FromResult(count);
+        }
+    }
+
     private sealed class NeverCompletingRangeReader(long length) : IFileRangeReader
     {
         public long Length { get; } = length;
@@ -489,6 +1032,16 @@ public sealed class SparseSegmentCacheTests
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, ct);
             return 0;
+        }
+    }
+
+    private sealed class ZeroProgressRangeReader(long length) : IFileRangeReader
+    {
+        public long Length { get; } = length;
+
+        public ValueTask<int> ReadAtAsync(long offset, Memory<byte> buffer, CancellationToken ct)
+        {
+            return ValueTask.FromResult(0);
         }
     }
 
@@ -519,6 +1072,133 @@ public sealed class SparseSegmentCacheTests
         public void ReleaseReadAhead()
         {
             _readAheadGate.TrySetResult();
+        }
+    }
+
+    private sealed class TruncatedSegmentNntpClient : NntpClient
+    {
+        private static readonly UsenetYencHeader Header = new()
+        {
+            FileName = "segment.bin",
+            FileSize = 4,
+            LineLength = 128,
+            PartNumber = 1,
+            TotalParts = 1,
+            PartSize = 4,
+            PartOffset = 0
+        };
+
+        public override Task ConnectAsync(string host, int port, bool useSsl, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
+        public override Task<UsenetResponse> AuthenticateAsync(
+            string user,
+            string pass,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromException<UsenetResponse>(new NotSupportedException());
+        }
+
+        public override Task<UsenetStatResponse> StatAsync(SegmentId segmentId, CancellationToken cancellationToken)
+        {
+            return Task.FromException<UsenetStatResponse>(new NotSupportedException());
+        }
+
+        public override Task<UsenetHeadResponse> HeadAsync(SegmentId segmentId, CancellationToken cancellationToken)
+        {
+            return Task.FromException<UsenetHeadResponse>(new NotSupportedException());
+        }
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId,
+            CancellationToken cancellationToken)
+        {
+            return DecodedBodyAsync(segmentId, onConnectionReadyAgain: null, cancellationToken);
+        }
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId,
+            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+            return Task.FromResult(new UsenetDecodedBodyResponse
+            {
+                SegmentId = segmentId,
+                ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
+                ResponseMessage = "222 - Body retrieved",
+                Stream = new CachedYencStream(Header, new MemoryStream([1], writable: false))
+            });
+        }
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromException<UsenetDecodedArticleResponse>(new NotSupportedException());
+        }
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId,
+            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromException<UsenetDecodedArticleResponse>(new NotSupportedException());
+        }
+
+        public override Task<UsenetDateResponse> DateAsync(CancellationToken cancellationToken)
+        {
+            return Task.FromException<UsenetDateResponse>(new NotSupportedException());
+        }
+
+        public override Task<UsenetYencHeader> GetYencHeadersAsync(string segmentId, CancellationToken ct)
+        {
+            return Task.FromResult(Header);
+        }
+
+        public override void Dispose()
+        {
+            GC.SuppressFinalize(this);
+        }
+    }
+
+    private sealed class DelayedHeaderNntpClient(TimeSpan delay) : FakeNntpClient
+    {
+        public TimeSpan Delay { get; set; } = delay;
+
+        public override async Task<UsenetYencHeader> GetYencHeadersAsync(string segmentId, CancellationToken ct)
+        {
+            if (Delay > TimeSpan.Zero)
+                await Task.Delay(Delay, ct);
+
+            return await base.GetYencHeadersAsync(segmentId, ct);
+        }
+    }
+
+    private sealed class BlockingHeaderNntpClient : FakeNntpClient
+    {
+        private readonly TaskCompletionSource _releaseHeaders =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _headerLookupCalls;
+
+        public TaskCompletionSource FirstHeaderStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int HeaderLookupCalls => Volatile.Read(ref _headerLookupCalls);
+
+        public override async Task<UsenetYencHeader> GetYencHeadersAsync(string segmentId, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _headerLookupCalls);
+            FirstHeaderStarted.TrySetResult();
+            await _releaseHeaders.Task.WaitAsync(ct);
+            return await base.GetYencHeadersAsync(segmentId, ct);
+        }
+
+        public void ReleaseHeaders()
+        {
+            _releaseHeaders.TrySetResult();
         }
     }
 

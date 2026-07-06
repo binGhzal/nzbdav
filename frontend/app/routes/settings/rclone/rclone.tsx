@@ -2,6 +2,7 @@ import { Button, Form, InputGroup, Spinner } from "react-bootstrap";
 import styles from "./rclone.module.css"
 import { type Dispatch, type SetStateAction, useState, useCallback, useEffect } from "react";
 import { withUrlBase } from "~/utils/url-base";
+import { getHttpErrorMessage, readJsonObjectOrEmpty } from "~/utils/http-response";
 
 type RcloneSettingsProps = {
     config: Record<string, string>
@@ -10,9 +11,11 @@ type RcloneSettingsProps = {
 
 export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
     const [connectionState, setConnectionState] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+    const [connectionError, setConnectionError] = useState<string | null>(null);
 
     useEffect(() => {
         setConnectionState('idle');
+        setConnectionError(null);
     }, [config["rclone.host"], config["rclone.user"], config["rclone.pass"]]);
 
     const testConnection = useCallback(async () => {
@@ -22,6 +25,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
         }
 
         setConnectionState('testing');
+        setConnectionError(null);
 
         try {
             const formData = new FormData();
@@ -34,15 +38,24 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
                 body: formData
             });
 
-            const result = await response.json();
+            if (!response.ok) {
+                setConnectionState('error');
+                setConnectionError(`Rclone connection failed: ${await getHttpErrorMessage(response)}`);
+                return;
+            }
+
+            const result = await readJsonObjectOrEmpty(response);
 
             if (result.status && result.connected) {
                 setConnectionState('success');
+                setConnectionError(null);
             } else {
                 setConnectionState('error');
+                setConnectionError("Rclone connection failed.");
             }
         } catch (error) {
             setConnectionState('error');
+            setConnectionError(`Rclone connection failed: ${error instanceof Error ? error.message : "unknown error"}.`);
         }
     }, [config]);
 
@@ -97,6 +110,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
                 <Form.Text id="rclone-host-help" muted>
                     The host address of the rclone RC API.
                 </Form.Text>
+                {connectionError && <div className={styles.alert} role="alert">{connectionError}</div>}
             </Form.Group>
             <hr />
             <Form.Group>
@@ -131,8 +145,20 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
 }
 
 export function isRcloneSettingsUpdated(config: Record<string, string>, newConfig: Record<string, string>) {
-    return config["rclone.rc-enabled"] !== newConfig["rclone.rc-enabled"]
-        || config["rclone.host"] !== newConfig["rclone.host"]
-        || config["rclone.user"] !== newConfig["rclone.user"]
-        || config["rclone.pass"] !== newConfig["rclone.pass"];
+    return normalizeBoolean(config["rclone.rc-enabled"]) !== normalizeBoolean(newConfig["rclone.rc-enabled"])
+        || normalizeEndpoint(config["rclone.host"]) !== normalizeEndpoint(newConfig["rclone.host"])
+        || normalizeOptionalCredential(config["rclone.user"]) !== normalizeOptionalCredential(newConfig["rclone.user"])
+        || normalizeOptionalCredential(config["rclone.pass"]) !== normalizeOptionalCredential(newConfig["rclone.pass"]);
+}
+
+function normalizeEndpoint(value: string | undefined): string {
+    return (value ?? "").trim().replace(/\/+$/, "");
+}
+
+function normalizeBoolean(value: string | undefined): string {
+    return (value ?? "").toLowerCase();
+}
+
+function normalizeOptionalCredential(value: string | undefined): string {
+    return (value ?? "").trim() === "" ? "" : value ?? "";
 }

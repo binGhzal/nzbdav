@@ -1,5 +1,5 @@
-import { useCallback, useMemo } from "react";
-import type { HistorySlot, QueueSlot, QueueStatusFilter } from "~/clients/backend-client.server";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import type { HistorySlot, QueueSlot, QueueSortField, QueueStatusFilter } from "~/clients/backend-client.server";
 import type { PresentationHistorySlot, PresentationQueueSlot, UploadingFile } from "../route";
 
 export type QueueEvents = {
@@ -27,21 +27,46 @@ export function useQueueEvents(
     pageNumber: number,
     pageSize: number,
     queueStatusFilter: QueueStatusFilter,
+    queueSort: QueueSortField,
     onQueueNeedsRefresh?: () => void
 ) {
+    const pendingPercentageUpdatesRef = useRef<Map<string, string>>(new Map());
+    const percentageFlushTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+    const flushPercentageUpdates = useCallback(() => {
+        percentageFlushTimerRef.current = undefined;
+        if (pendingPercentageUpdatesRef.current.size === 0) return;
+
+        const updates = pendingPercentageUpdatesRef.current;
+        pendingPercentageUpdatesRef.current = new Map();
+        setQueueSlots(slots => applyQueueSlotPercentageChanges(slots, updates));
+    }, [setQueueSlots]);
+
+    useEffect(() => () => {
+        if (percentageFlushTimerRef.current !== undefined)
+            clearTimeout(percentageFlushTimerRef.current);
+        percentageFlushTimerRef.current = undefined;
+        pendingPercentageUpdatesRef.current.clear();
+    }, []);
+
     const onAddQueueSlot = useCallback((queueSlot: QueueSlot) => {
         uploadQueueRef.current = uploadQueueRef.current.filter(x => x.queueSlot.status === "uploading" || x.queueSlot.filename !== queueSlot.filename);
         setUploadingFiles(files => files.filter(f => f.queueSlot.filename !== queueSlot.filename));
-        if (!matchesQueueStatus(queueSlot, queueStatusFilter)) {
-            return;
-        }
 
-        setTotalQueueCount(count => count + 1);
-        if (pageNumber === 1) {
-            setQueueSlots(slots => sortQueueSlots([...slots, queueSlot]).slice(0, pageSize));
-        }
-        onQueueNeedsRefresh?.();
-    }, [pageNumber, pageSize, queueStatusFilter, setQueueSlots, setTotalQueueCount, onQueueNeedsRefresh]);
+        setQueueSlots(slots => {
+            const result = applyQueueSlotAdd(slots, queueSlot, {
+                pageNumber,
+                pageSize,
+                queueStatusFilter,
+                queueSort,
+            });
+            if (result.totalCountDelta !== 0)
+                setTotalQueueCount(count => Math.max(0, count + result.totalCountDelta));
+            if (result.needsRefresh)
+                onQueueNeedsRefresh?.();
+            return result.slots;
+        });
+    }, [pageNumber, pageSize, queueStatusFilter, queueSort, setQueueSlots, setTotalQueueCount, onQueueNeedsRefresh]);
 
     const onSelectQueueSlots = useCallback((ids: Set<string>, isSelected: boolean) => {
         setUploadingFiles(files => files.map(x => ids.has(x.queueSlot.nzo_id) ? { ...x, queueSlot: { ...x.queueSlot, isSelected } } : x));
@@ -56,56 +81,52 @@ export function useQueueEvents(
         const uploadingIds = new Set(uploadQueueRef.current
             .filter(x => x.queueSlot.status === "uploading")
             .map(x => x.queueSlot.nzo_id));
-        const queuedIds = new Set([...ids].filter(id => !uploadingIds.has(id)));
-        var visibleQueuedCount = 0;
         setQueueSlots(slots => {
-            visibleQueuedCount = slots.filter(x => queuedIds.has(x.nzo_id)).length;
-            return slots.filter(x => !ids.has(x.nzo_id));
+            const result = applyQueueSlotRemoval(slots, ids, uploadingIds);
+            if (result.removedVisibleQueuedCount > 0) {
+                setTotalQueueCount(count => Math.max(0, count - result.removedVisibleQueuedCount));
+            }
+            if (result.needsRefresh) {
+                onQueueNeedsRefresh?.();
+            }
+            return result.slots;
         });
         uploadQueueRef.current = uploadQueueRef.current.filter(x => x.queueSlot.status === "uploading" || !ids.has(x.queueSlot.nzo_id));
         setUploadingFiles(files => files.filter(x => x.queueSlot.status === "uploading" || !ids.has(x.queueSlot.nzo_id)));
-        if (visibleQueuedCount > 0) {
-            setTotalQueueCount(count => Math.max(0, count - visibleQueuedCount));
-        }
-        if (queuedIds.size > 0) {
-            onQueueNeedsRefresh?.();
-        }
     }, [setQueueSlots, setTotalQueueCount, onQueueNeedsRefresh]);
 
     const onChangeQueueSlotPriority = useCallback((id: string, priority: string) => {
-        setQueueSlots(slots => sortQueueSlots(
-            slots
-                .map(x => x.nzo_id === id ? { ...x, priority } : x)
-                .filter(x => matchesQueueStatus(x, queueStatusFilter))
-        ));
-        onQueueNeedsRefresh?.();
-    }, [queueStatusFilter, setQueueSlots, onQueueNeedsRefresh]);
+        setQueueSlots(slots => {
+            const result = applyQueueSlotPriorityChange(slots, id, priority, queueStatusFilter, queueSort);
+            if (result.removedVisibleSlot)
+                setTotalQueueCount(count => Math.max(0, count - 1));
+            if (result.removedVisibleSlot || result.needsRefresh)
+                onQueueNeedsRefresh?.();
+            return result.slots;
+        });
+    }, [queueStatusFilter, queueSort, setQueueSlots, setTotalQueueCount, onQueueNeedsRefresh]);
 
     const onChangeQueueSlotStatus = useCallback((message: string) => {
-        const [nzo_id, status] = message.split('|');
         setQueueSlots(slots => {
-            var didRemoveVisibleSlot = false;
-            const nextSlots = slots
-                .map(x => x.nzo_id === nzo_id ? { ...x, status } : x)
-                .filter(x => {
-                    const shouldKeep = matchesQueueStatus(x, queueStatusFilter);
-                    if (!shouldKeep && x.nzo_id === nzo_id) {
-                        didRemoveVisibleSlot = true;
-                    }
-                    return shouldKeep;
-                });
-            if (didRemoveVisibleSlot) {
-                setTotalQueueCount(count => Math.max(0, count - 1));
+            const result = applyQueueSlotStatusChange(slots, message, queueStatusFilter, queueSort);
+            if (result.removedVisibleSlot || result.needsRefresh) {
+                if (result.removedVisibleSlot)
+                    setTotalQueueCount(count => Math.max(0, count - 1));
+                onQueueNeedsRefresh?.();
             }
-            return nextSlots;
+            return result.slots;
         });
-        onQueueNeedsRefresh?.();
-    }, [queueStatusFilter, setQueueSlots, setTotalQueueCount, onQueueNeedsRefresh]);
+    }, [queueStatusFilter, queueSort, setQueueSlots, setTotalQueueCount, onQueueNeedsRefresh]);
 
     const onChangeQueueSlotPercentage = useCallback((message: string) => {
-        const [nzo_id, true_percentage] = message.split('|');
-        setQueueSlots(slots => slots.map(x => x.nzo_id === nzo_id ? { ...x, true_percentage } : x));
-    }, [setQueueSlots]);
+        const parsed = parseQueueSlotPercentageMessage(message);
+        if (!parsed) return;
+
+        pendingPercentageUpdatesRef.current.set(parsed.nzo_id, parsed.true_percentage);
+        if (percentageFlushTimerRef.current !== undefined) return;
+
+        percentageFlushTimerRef.current = setTimeout(flushPercentageUpdates, 50);
+    }, [flushPercentageUpdates]);
 
     return memoize({
         onAddQueueSlot,
@@ -122,14 +143,17 @@ export function useHistoryEvents(
     setHistorySlots: (value: React.SetStateAction<PresentationHistorySlot[]>) => void,
     setTotalHistoryCount: (value: React.SetStateAction<number>) => void,
     pageNumber: number,
-    pageSize: number
+    pageSize: number,
+    onHistoryNeedsRefresh?: () => void
 ) {
     const onAddHistorySlot = useCallback((historySlot: HistorySlot) => {
         setTotalHistoryCount(count => count + 1);
         if (pageNumber === 1) {
             setHistorySlots(slots => [historySlot, ...slots].slice(0, pageSize));
+        } else {
+            onHistoryNeedsRefresh?.();
         }
-    }, [pageNumber, pageSize, setHistorySlots, setTotalHistoryCount]);
+    }, [pageNumber, pageSize, setHistorySlots, setTotalHistoryCount, onHistoryNeedsRefresh]);
 
     const onSelectHistorySlots = useCallback((ids: Set<string>, isSelected: boolean) => {
         setHistorySlots(slots => slots.map(x => ids.has(x.nzo_id) ? { ...x, isSelected } : x));
@@ -141,8 +165,14 @@ export function useHistoryEvents(
 
     const onRemoveHistorySlots = useCallback((ids: Set<string>) => {
         setTotalHistoryCount(count => Math.max(0, count - ids.size));
-        setHistorySlots(slots => slots.filter(x => !ids.has(x.nzo_id)));
-    }, [setHistorySlots, setTotalHistoryCount]);
+        setHistorySlots(slots => {
+            const nextSlots = slots.filter(x => !ids.has(x.nzo_id));
+            if (nextSlots.length !== slots.length || pageNumber > 1) {
+                onHistoryNeedsRefresh?.();
+            }
+            return nextSlots;
+        });
+    }, [pageNumber, setHistorySlots, setTotalHistoryCount, onHistoryNeedsRefresh]);
 
     return memoize({
         onAddHistorySlot,
@@ -186,6 +216,205 @@ function getArrPriorityScore(slot: PresentationQueueSlot): number {
     return slot.arr_priority?.apply_to_scheduling ? slot.arr_priority.score : 0;
 }
 
+export type QueueSlotAddOptions = {
+    pageNumber: number;
+    pageSize: number;
+    queueStatusFilter: QueueStatusFilter;
+    queueSort: QueueSortField;
+};
+
+export type QueueSlotAddResult = {
+    slots: PresentationQueueSlot[];
+    totalCountDelta: number;
+    needsRefresh: boolean;
+};
+
+export function applyQueueSlotAdd(
+    slots: PresentationQueueSlot[],
+    queueSlot: QueueSlot,
+    options: QueueSlotAddOptions
+): QueueSlotAddResult {
+    if (!matchesQueueStatus(queueSlot, options.queueStatusFilter)) {
+        return { slots, totalCountDelta: 0, needsRefresh: false };
+    }
+
+    const existingIndex = slots.findIndex(slot => slot.nzo_id === queueSlot.nzo_id);
+    const totalCountDelta = existingIndex >= 0 ? 0 : 1;
+    if (existingIndex >= 0) {
+        const nextSlots = slots.slice();
+        nextSlots[existingIndex] = queueSlot;
+        return {
+            slots: options.queueSort === "priority"
+                ? sortQueueSlots(nextSlots).slice(0, options.pageSize)
+                : nextSlots,
+            totalCountDelta,
+            needsRefresh: false,
+        };
+    }
+
+    if (options.pageNumber !== 1) {
+        return { slots, totalCountDelta, needsRefresh: true };
+    }
+
+    const nextSlots = [...slots, queueSlot];
+    return {
+        slots: sortQueueSlots(nextSlots).slice(0, options.pageSize),
+        totalCountDelta,
+        needsRefresh: options.queueSort !== "priority",
+    };
+}
+
+export type QueueSlotStatusChangeResult = {
+    slots: PresentationQueueSlot[];
+    removedVisibleSlot: boolean;
+    changedVisibleSlot: boolean;
+    needsRefresh: boolean;
+};
+
+export type QueueSlotPriorityChangeResult = {
+    slots: PresentationQueueSlot[];
+    removedVisibleSlot: boolean;
+    changedVisibleSlot: boolean;
+    needsRefresh: boolean;
+};
+
+export type QueueSlotRemovalResult = {
+    slots: PresentationQueueSlot[];
+    queuedIds: Set<string>;
+    removedVisibleQueuedCount: number;
+    needsRefresh: boolean;
+};
+
+export function applyQueueSlotRemoval(
+    slots: PresentationQueueSlot[],
+    ids: Set<string>,
+    uploadingIds: Set<string>
+): QueueSlotRemovalResult {
+    const queuedIds = new Set([...ids].filter(id => !uploadingIds.has(id)));
+    let removedVisibleQueuedCount = 0;
+    const nextSlots = slots.filter(slot => {
+        if (!ids.has(slot.nzo_id)) return true;
+        if (queuedIds.has(slot.nzo_id)) removedVisibleQueuedCount++;
+        return false;
+    });
+
+    return {
+        slots: nextSlots,
+        queuedIds,
+        removedVisibleQueuedCount,
+        needsRefresh: queuedIds.size > 0,
+    };
+}
+
+export function applyQueueSlotPriorityChange(
+    slots: PresentationQueueSlot[],
+    id: string,
+    priority: string,
+    queueStatusFilter: QueueStatusFilter,
+    queueSort: QueueSortField
+): QueueSlotPriorityChangeResult {
+    if (!id || priority === undefined) {
+        return { slots, removedVisibleSlot: false, changedVisibleSlot: false, needsRefresh: false };
+    }
+
+    const index = slots.findIndex(slot => slot.nzo_id === id);
+    if (index < 0) {
+        return { slots, removedVisibleSlot: false, changedVisibleSlot: false, needsRefresh: true };
+    }
+
+    const slot = slots[index];
+    const updatedSlot = slot.priority === priority ? slot : { ...slot, priority };
+    const shouldKeep = matchesQueueStatus(updatedSlot, queueStatusFilter);
+    if (!shouldKeep) {
+        const nextSlots = slots.slice(0, index).concat(slots.slice(index + 1));
+        return { slots: nextSlots, removedVisibleSlot: true, changedVisibleSlot: true, needsRefresh: false };
+    }
+
+    if (updatedSlot === slot) {
+        return { slots, removedVisibleSlot: false, changedVisibleSlot: false, needsRefresh: false };
+    }
+
+    const nextSlots = slots.slice();
+    nextSlots[index] = updatedSlot;
+    return {
+        slots: queueSort === "priority" ? sortQueueSlots(nextSlots) : nextSlots,
+        removedVisibleSlot: false,
+        changedVisibleSlot: true,
+        needsRefresh: false
+    };
+}
+
+export function applyQueueSlotStatusChange(
+    slots: PresentationQueueSlot[],
+    message: string,
+    queueStatusFilter: QueueStatusFilter,
+    queueSort: QueueSortField = "priority"
+): QueueSlotStatusChangeResult {
+    const [nzo_id, status] = message.split('|');
+    if (!nzo_id || status === undefined) {
+        return { slots, removedVisibleSlot: false, changedVisibleSlot: false, needsRefresh: false };
+    }
+
+    const index = slots.findIndex(slot => slot.nzo_id === nzo_id);
+    const needsRefresh = index < 0
+        && queueStatusFilter !== "all"
+        && matchesQueueStatus({ status, priority: "Normal" }, queueStatusFilter);
+
+    if (index < 0) {
+        return { slots, removedVisibleSlot: false, changedVisibleSlot: false, needsRefresh };
+    }
+
+    const slot = slots[index];
+    const updatedSlot = slot.status === status ? slot : { ...slot, status };
+    const shouldKeep = matchesQueueStatus(updatedSlot, queueStatusFilter);
+    if (!shouldKeep) {
+        const nextSlots = slots.slice(0, index).concat(slots.slice(index + 1));
+        return { slots: nextSlots, removedVisibleSlot: true, changedVisibleSlot: true, needsRefresh: false };
+    }
+
+    if (updatedSlot === slot) {
+        return { slots, removedVisibleSlot: false, changedVisibleSlot: false, needsRefresh: false };
+    }
+
+    const nextSlots = slots.slice();
+    nextSlots[index] = updatedSlot;
+    return {
+        slots: nextSlots,
+        removedVisibleSlot: false,
+        changedVisibleSlot: true,
+        needsRefresh: queueSort === "status",
+    };
+}
+
+export function applyQueueSlotPercentageChange(
+    slots: PresentationQueueSlot[],
+    message: string
+): PresentationQueueSlot[] {
+    const parsed = parseQueueSlotPercentageMessage(message);
+    if (!parsed) return slots;
+
+    return applyQueueSlotPercentageChanges(slots, new Map([[parsed.nzo_id, parsed.true_percentage]]));
+}
+
+export function applyQueueSlotPercentageChanges(
+    slots: PresentationQueueSlot[],
+    updates: ReadonlyMap<string, string>
+): PresentationQueueSlot[] {
+    if (updates.size === 0) return slots;
+
+    let nextSlots: PresentationQueueSlot[] | undefined;
+    for (let index = 0; index < slots.length; index++) {
+        const slot = slots[index];
+        const true_percentage = updates.get(slot.nzo_id);
+        if (true_percentage === undefined || slot.true_percentage === true_percentage) continue;
+
+        nextSlots ??= slots.slice();
+        nextSlots[index] = { ...slot, true_percentage };
+    }
+
+    return nextSlots ?? slots;
+}
+
 function matchesQueueStatus(slot: Pick<QueueSlot, "status" | "priority">, filter: QueueStatusFilter): boolean {
     if (filter === "all") return true;
 
@@ -198,4 +427,10 @@ function matchesQueueStatus(slot: Pick<QueueSlot, "status" | "priority">, filter
     if (filter === "moving") return status === "moving";
     if (filter === "queued") return status === "queued" && priority !== "paused";
     return true;
+}
+
+function parseQueueSlotPercentageMessage(message: string): { nzo_id: string, true_percentage: string } | null {
+    const [nzo_id, true_percentage] = message.split('|');
+    if (!nzo_id || true_percentage === undefined) return null;
+    return { nzo_id, true_percentage };
 }

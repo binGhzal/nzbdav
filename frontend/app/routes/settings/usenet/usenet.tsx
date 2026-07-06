@@ -1,10 +1,12 @@
 import styles from "./usenet.module.css"
 import { type Dispatch, type SetStateAction, useState, useCallback, useEffect, useMemo } from "react";
 import { Button } from "react-bootstrap";
-import { receiveMessage } from "~/utils/websocket-util";
+import { createReconnectingWebSocket } from "~/utils/websocket-util";
 import { getWebsocketUrl, withUrlBase } from "~/utils/url-base";
+import { getHttpErrorMessage, readJsonObjectOrEmpty } from "~/utils/http-response";
 
 const usenetConnectionsTopic = {'cxs': 'state'};
+const REDACTED_CONFIG_SECRET = "__NZBDAV_REDACTED__";
 
 type UsenetSettingsProps = {
     config: Record<string, string>
@@ -106,31 +108,28 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
         const parts = (message || "0|0|0|0|1|0").split("|");
         const [index, live, idle, _0, _1, _2] = parts.map((x: any) => Number(x));
         if (showModal) return;
+        if (!Number.isInteger(index) || index < 0) return;
+        if (!Number.isFinite(live) || !Number.isFinite(idle)) return;
+        if (live < 0 || idle < 0 || idle > live) return;
         if (index >= providerConfig.Providers.length) return;
+        const max = Math.max(1, providerConfig.Providers[index]?.MaxConnections || 1);
+        const liveCount = Math.min(live, max);
+        const activeCount = Math.min(live - idle, max);
         setConnections(prev => ({...prev, [index]: {
-            active: live - idle,
-            live: live,
-            max: providerConfig.Providers[index]?.MaxConnections || 1
+            active: activeCount,
+            live: liveCount,
+            max
         }}));
-    }, [setConnections]);
+    }, [providerConfig, showModal, setConnections]);
 
     // effects
     useEffect(() => {
-        let ws: WebSocket;
-        let disposed = false;
-        function connect() {
-            ws = new WebSocket(getWebsocketUrl());
-            ws.onmessage = receiveMessage((_, message) => handleConnectionsMessage(message));
-            ws.onopen = () => ws.send(JSON.stringify(usenetConnectionsTopic));
-            ws.onerror = () => { ws.close() };
-            ws.onclose = onClose;
-            return () => { disposed = true; ws.close(); }
-        }
-        function onClose(e: CloseEvent) {
-            !disposed && setTimeout(() => connect(), 1000);
-            setConnections({});
-        }
-        return connect();
+        return createReconnectingWebSocket({
+            createSocket: () => new WebSocket(getWebsocketUrl()),
+            onMessage: (_, message) => handleConnectionsMessage(message),
+            onOpen: socket => socket.send(JSON.stringify(usenetConnectionsTopic)),
+            onClose: () => setConnections({}),
+        });
     }, [setConnections, handleConnectionsMessage]);
 
     // view
@@ -315,7 +314,7 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
     const [maxConnections, setMaxConnections] = useState(provider?.MaxConnections?.toString() || "");
     const [priority, setPriority] = useState((provider?.Priority ?? 100).toString());
     const [type, setType] = useState<ProviderType>(provider?.Type ?? ProviderType.Pooled);
-    const [statPipeliningEnabled, setStatPipeliningEnabled] = useState(provider?.StatPipeliningEnabled ?? false);
+    const [statPipeliningEnabled, setStatPipeliningEnabled] = useState(getProviderStatPipeliningEnabled(provider));
     const [isTestingConnection, setIsTestingConnection] = useState(false);
     const [connectionTested, setConnectionTested] = useState(false);
     const [testError, setTestError] = useState<string | null>(null);
@@ -326,7 +325,7 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
     // test/opt-in, since both were validated against the previous host/credentials.
     const invalidateConnectionTests = () => {
         setConnectionTested(false);
-        setStatPipeliningEnabled(false);
+        setStatPipeliningEnabled(true);
         setPipeliningTestResult(null);
     };
 
@@ -341,7 +340,7 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
             setMaxConnections(provider?.MaxConnections?.toString() || "");
             setPriority((provider?.Priority ?? 100).toString());
             setType(provider?.Type ?? ProviderType.Pooled);
-            setStatPipeliningEnabled(provider?.StatPipeliningEnabled ?? false);
+            setStatPipeliningEnabled(getProviderStatPipeliningEnabled(provider));
             setConnectionTested(false);
             setTestError(null);
             setIsTestingPipelining(false);
@@ -382,7 +381,7 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
             });
 
             if (response.ok) {
-                const data = await response.json();
+                const data = await readJsonObjectOrEmpty(response);
                 if (data.connected) {
                     setConnectionTested(true);
                     setTestError(null);
@@ -390,7 +389,7 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
                     setTestError("Connection test failed");
                 }
             } else {
-                setTestError("Failed to test connection");
+                setTestError(`Connection test failed: ${await getHttpErrorMessage(response)}`);
             }
         } catch (error) {
             setTestError("Network error: " + (error instanceof Error ? error.message : "Unknown error"));
@@ -418,7 +417,7 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
             });
 
             if (response.ok) {
-                const data = await response.json();
+                const data = await readJsonObjectOrEmpty(response);
                 if (data.supported) {
                     // Auto-enable on a successful probe; the user can still untick it manually.
                     setStatPipeliningEnabled(true);
@@ -467,7 +466,15 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
         && isPositiveInteger(maxConnections)
         && isNonNegativeInteger(priority);
 
-    const canSave = isFormValid && (connectionTested || type == ProviderType.Disabled);
+    const canSaveWithExistingRedactedSecret = isExistingRedactedProviderSecretUnchanged(
+        provider,
+        host,
+        port,
+        useSsl,
+        user,
+        pass);
+    const canSave = isFormValid
+        && (connectionTested || type == ProviderType.Disabled || canSaveWithExistingRedactedSecret);
 
     if (!show) return null;
 
@@ -650,14 +657,17 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
                             </div>
                             <div style={{ marginTop: '8px', opacity: 0.7, fontSize: '0.85em' }}>
                                 {pipeliningMasterEnabled
-                                    ? "Pipelining sends many STAT checks at once for much faster health checks. Test that this provider handles it correctly before enabling."
+                                    ? "Pipelining sends many STAT checks at once for much faster health checks. Leave it enabled unless this provider fails the support test."
                                     : "To tick “Enable STAT pipelining for this provider”, first turn on the NNTP pipelining master switch on the SABnzbd tab. It’s disabled globally right now."}
                             </div>
                         </div>
                     </div>
 
                     {testError && (
-                        <div className={`${styles.alert} ${styles["alert-danger"]}`} style={{ marginTop: '16px' }}>
+                        <div
+                            className={`${styles.alert} ${styles["alert-danger"]}`}
+                            role="alert"
+                            style={{ marginTop: '16px' }}>
                             {testError}
                         </div>
                     )}
@@ -693,6 +703,27 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
             </div>
         </div>
     );
+}
+
+function getProviderStatPipeliningEnabled(provider: ConnectionDetails | null) {
+    return provider?.StatPipeliningEnabled ?? true;
+}
+
+function isExistingRedactedProviderSecretUnchanged(
+    provider: ConnectionDetails | null,
+    host: string,
+    port: string,
+    useSsl: boolean,
+    user: string,
+    pass: string
+) {
+    if (!provider) return false;
+    if (provider.Pass !== REDACTED_CONFIG_SECRET || pass !== REDACTED_CONFIG_SECRET) return false;
+
+    return provider.Host.trim() === host.trim()
+        && provider.Port.toString() === port.trim()
+        && provider.User === user
+        && provider.UseSsl === getEffectiveUseSsl(port, useSsl);
 }
 
 export function isUsenetSettingsUpdated(config: Record<string, string>, newConfig: Record<string, string>) {

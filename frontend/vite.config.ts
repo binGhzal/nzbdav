@@ -1,6 +1,9 @@
 import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
+
+const appDirectory = fileURLToPath(new URL("./app", import.meta.url));
 
 // Mirror of normalizeBasename in react-router.config.ts. Produces:
 //   - `viteBase`: Vite's `base` option form, "/" or "/path/" (trailing slash required).
@@ -22,10 +25,20 @@ export default defineConfig(({ isSsrBuild }) => {
       allowedHosts: [".net"],
     },
     resolve: {
-      tsconfigPaths: true,
+      alias: [
+        { find: /^~\//, replacement: `${appDirectory}/` },
+      ],
     },
     build: {
       rollupOptions: isSsrBuild ? { input: "./server/app.ts" } : undefined,
+    },
+    css: {
+      preprocessorOptions: {
+        scss: {
+          quietDeps: true,
+          silenceDeprecations: ["import", "global-builtin", "color-functions", "if-function"],
+        },
+      },
     },
     define: {
       __URL_BASE__: JSON.stringify(token),

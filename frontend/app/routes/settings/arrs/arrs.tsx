@@ -2,6 +2,7 @@ import { Button, Form, Card, InputGroup, Spinner } from "react-bootstrap";
 import styles from "./arrs.module.css"
 import { type Dispatch, type SetStateAction, useState, useCallback, useEffect } from "react";
 import { withUrlBase } from "~/utils/url-base";
+import { getHttpErrorMessage, readJsonObjectOrEmpty } from "~/utils/http-response";
 import {
     parseArrConfig,
     serializeArrConfig,
@@ -429,9 +430,11 @@ interface InstanceFormProps {
 
 function InstanceForm({ instance, index, type, onUpdate, onRemove }: InstanceFormProps) {
     const [connectionState, setConnectionState] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+    const [connectionError, setConnectionError] = useState<string | null>(null);
 
     useEffect(() => {
         setConnectionState('idle');
+        setConnectionError(null);
     }, [instance.Host, instance.ApiKey]);
 
     const testConnection = useCallback(async (host: string, apiKey: string) => {
@@ -440,6 +443,7 @@ function InstanceForm({ instance, index, type, onUpdate, onRemove }: InstanceFor
         }
 
         setConnectionState('testing');
+        setConnectionError(null);
 
         try {
             const formData = new FormData();
@@ -451,17 +455,26 @@ function InstanceForm({ instance, index, type, onUpdate, onRemove }: InstanceFor
                 body: formData
             });
 
-            const result = await response.json();
+            if (!response.ok) {
+                setConnectionState('error');
+                setConnectionError(`${formatArrType(type)} connection failed: ${await getHttpErrorMessage(response)}`);
+                return;
+            }
+
+            const result = await readJsonObjectOrEmpty(response);
 
             if (result.status && result.connected) {
                 setConnectionState('success');
+                setConnectionError(null);
             } else {
                 setConnectionState('error');
+                setConnectionError(`${formatArrType(type)} connection failed.`);
             }
         } catch (error) {
             setConnectionState('error');
+            setConnectionError(`${formatArrType(type)} connection failed: ${error instanceof Error ? error.message : "unknown error"}.`);
         }
-    }, []);
+    }, [type]);
 
     return (
         <Card className={styles.instanceCard}>
@@ -512,9 +525,14 @@ function InstanceForm({ instance, index, type, onUpdate, onRemove }: InstanceFor
                         value={instance.ApiKey}
                         onChange={e => onUpdate(index, 'ApiKey', e.target.value)} />
                 </Form.Group>
+                {connectionError && <div className={styles.alert} role="alert">{connectionError}</div>}
             </Card.Body>
         </Card>
     );
+}
+
+function formatArrType(type: InstanceFormProps["type"]): string {
+    return type.charAt(0).toUpperCase() + type.slice(1);
 }
 
 export function isArrsSettingsUpdated(config: Record<string, string>, newConfig: Record<string, string>) {

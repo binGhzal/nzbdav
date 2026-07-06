@@ -1,7 +1,7 @@
 import { Form } from "react-bootstrap";
 import styles from "./migrate-database-files-to-blobstore.module.css";
 import { useEffect, useState } from "react";
-import { receiveMessage } from "~/utils/websocket-util";
+import { createReconnectingWebSocket } from "~/utils/websocket-util";
 import { getWebsocketUrl } from "~/utils/url-base";
 
 const TaskTopic = { 'uftbmp': 'state' };
@@ -17,17 +17,18 @@ export function MigrateDatabaseFilesToBlobstore({ savedConfig }: ConvertStrmToSy
 
     // effects
     useEffect(() => {
-        let ws: WebSocket;
-        let disposed = false;
-        function connect() {
-            ws = new WebSocket(getWebsocketUrl());
-            ws.onmessage = receiveMessage((_, message) => setProgress(message));
-            ws.onopen = () => { setConnected(true); ws.send(JSON.stringify(TaskTopic)); }
-            ws.onclose = () => { !disposed && setTimeout(() => connect(), 1000); setProgress(null) };
-            ws.onerror = () => { ws.close() };
-            return () => { disposed = true; ws.close(); }
-        }
-        return connect();
+        return createReconnectingWebSocket({
+            createSocket: () => new WebSocket(getWebsocketUrl()),
+            onMessage: (_, message) => setProgress(message),
+            onOpen: socket => {
+                setConnected(true);
+                socket.send(JSON.stringify(TaskTopic));
+            },
+            onClose: () => {
+                setConnected(false);
+                setProgress(null);
+            },
+        });
     }, [setProgress, setConnected]);
 
     return (

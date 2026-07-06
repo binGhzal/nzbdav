@@ -19,20 +19,36 @@ public class RecreateStrmFilesTask(
         Report("Collecting all strm file candidates...");
 
         var files = dbClient.Ctx.Items
+            .AsNoTracking()
             .Where(x => x.Type != DavItem.ItemType.Directory)
-            .AsAsyncEnumerable()
-            .Where(x => FilenameUtil.IsVideoFile(x.Name));
-        var fileCount = await files.CountAsync();
+            .WhereVideoFiles()
+            .AsAsyncEnumerable();
         var progress = 0;
 
-        await foreach (var file in files)
+        await foreach (var file in files.WithCancellation(CancellationToken).ConfigureAwait(false))
         {
-            ReportDebounced($"Creating strm file {++progress} / {fileCount}.");
-            await StrmFileUtil.CreateStrmFileAsync(configManager, file);
+            ReportDebounced($"Creating strm file {progress + 1}.");
+            try
+            {
+                await StrmFileUtil.CreateStrmFileAsync(configManager, file).ConfigureAwait(false);
+                progress++;
+            }
+            catch (Exception e) when (IsPerFileFilesystemException(e))
+            {
+                Log.Warning(e, "Skipping strm file recreation for DAV item {DavItemId} at {Path}.", file.Id, file.Path);
+            }
         }
 
-        Report($"Done. Created {fileCount} strm files.");
+        Report($"Done. Created {progress} strm files.");
     }
+
+    private static bool IsPerFileFilesystemException(Exception exception) =>
+        exception is FileNotFoundException
+            or DirectoryNotFoundException
+            or IOException
+            or UnauthorizedAccessException
+            or NotSupportedException
+            or ArgumentException;
 
     protected override async Task ExecuteInternal()
     {

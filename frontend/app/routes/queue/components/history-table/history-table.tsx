@@ -12,6 +12,7 @@ import { PageSection } from "../page-section/page-section"
 import { DropdownOptions } from "~/routes/explore/dropdown-options/dropdown-options"
 import { ExportNzb, Remove } from "~/routes/explore/item-menu/item-menu"
 import { Pagination } from "../pagination/pagination"
+import { getHttpErrorMessage, readJsonObjectOrEmpty } from "~/utils/http-response"
 
 export type HistoryTableProps = {
     historySlots: PresentationHistorySlot[],
@@ -71,14 +72,14 @@ export function HistoryTable({
                 body: JSON.stringify({ nzo_ids: Array.from(nzo_ids) }),
             });
             if (response.ok) {
-                const data = await response.json();
+                const data = await readJsonObjectOrEmpty(response);
                 if (data.status === true) {
                     onRemoved(nzo_ids);
                     return;
                 }
-                setOperationError(data.error ?? "Failed to remove history items.");
+                setOperationError(typeof data.error === "string" ? data.error : "Failed to remove history items.");
             } else {
-                setOperationError(`Failed to remove history items (${response.status}).`);
+                setOperationError(`Failed to remove history items: ${await getHttpErrorMessage(response)}`);
             }
         } catch (error) {
             setOperationError(`Failed to remove history items: ${error instanceof Error ? error.message : "unknown error"}.`);
@@ -139,6 +140,7 @@ type HistoryRowProps = {
 export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onRemoved }: HistoryRowProps) {
     // state
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
+    const [operationError, setOperationError] = useState<string | null>(null);
 
     // events
     const onRemove = useCallback(() => {
@@ -151,6 +153,7 @@ export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onR
 
     const onConfirmRemoval = useCallback(async (deleteCompletedFiles?: boolean) => {
         setIsConfirmingRemoval(false);
+        setOperationError(null);
         onIsRemovingChanged(slot.nzo_id, true);
         try {
             const url = withUrlBase('/api?mode=history&name=delete')
@@ -158,15 +161,20 @@ export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onR
                 + `&del_completed_files=${deleteCompletedFiles ? 1 : 0}`;
             const response = await fetch(url);
             if (response.ok) {
-                const data = await response.json();
+                const data = await readJsonObjectOrEmpty(response);
                 if (data.status === true) {
                     onRemoved(slot.nzo_id);
                     return;
                 }
+                setOperationError(typeof data.error === "string" ? data.error : "Failed to remove history item.");
+            } else {
+                setOperationError(`Failed to remove history item: ${await getHttpErrorMessage(response)}`);
             }
-        } catch { }
+        } catch (error) {
+            setOperationError(`Failed to remove history item: ${error instanceof Error ? error.message : "unknown error"}.`);
+        }
         onIsRemovingChanged(slot.nzo_id, false);
-    }, [slot.nzo_id, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
+    }, [slot.nzo_id, setIsConfirmingRemoval, setOperationError, onIsRemovingChanged, onRemoved]);
 
     // view
     return (
@@ -182,6 +190,13 @@ export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onR
                 actions={<Actions slot={slot} onRemove={onRemove} />}
                 onRowSelectionChanged={isSelected => onIsSelectedChanged(slot.nzo_id, isSelected)}
             />
+            {operationError &&
+                <tr>
+                    <td colSpan={5}>
+                        <div className={styles.alert} role="alert">{operationError}</div>
+                    </td>
+                </tr>
+            }
             <ConfirmModal
                 show={isConfirmingRemoval}
                 title="Remove From History?"

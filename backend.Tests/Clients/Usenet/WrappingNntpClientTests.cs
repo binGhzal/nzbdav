@@ -22,6 +22,21 @@ public sealed class WrappingNntpClientTests
     }
 
     [Fact]
+    public void ReplaceUnderlyingClient_DoesNotThrowWhenOldClientDisposeFails()
+    {
+        var newClientDisposed = false;
+        var oldClient = new FakeNntpClient(onDispose: () => throw new InvalidOperationException("dispose failed"));
+        var newClient = new FakeNntpClient(onDispose: () => newClientDisposed = true);
+        using var wrapper = new TestWrappingNntpClient(oldClient);
+
+        var exception = Record.Exception(() => wrapper.Replace(newClient, TimeSpan.Zero));
+
+        Assert.Null(exception);
+        wrapper.Dispose();
+        Assert.True(newClientDisposed);
+    }
+
+    [Fact]
     public async Task CheckAllSegmentsAsyncUsesCurrentInstanceCheckSegmentsAsync()
     {
         using var wrapper = new RecordingWrappingNntpClient(new FakeNntpClient());

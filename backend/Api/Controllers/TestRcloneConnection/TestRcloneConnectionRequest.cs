@@ -7,6 +7,7 @@ public class TestRcloneConnectionRequest
     public string Host { get; init; }
     public string? User { get; init; }
     public string? Pass { get; init; }
+    public CancellationToken CancellationToken { get; init; }
 
     public TestRcloneConnectionRequest(HttpContext context)
     {
@@ -15,5 +16,6 @@ public class TestRcloneConnectionRequest
 
         User = context.Request.Form["user"].FirstOrDefault();
         Pass = context.Request.Form["pass"].FirstOrDefault();
+        CancellationToken = context.RequestAborted;
     }
 }

@@ -1,8 +1,9 @@
 import { Alert, Button, Form } from "react-bootstrap";
 import styles from "./strm-to-symlinks.module.css";
 import { useCallback, useEffect, useState } from "react";
-import { receiveMessage } from "~/utils/websocket-util";
+import { createReconnectingWebSocket } from "~/utils/websocket-util";
 import { getWebsocketUrl, withUrlBase } from "~/utils/url-base";
+import { startMaintenanceTask } from "../start-maintenance-task";
 
 const cleanupTaskTopic = { 'st2sy': 'state' };
 
@@ -15,6 +16,7 @@ export function ConvertStrmToSymlinks({ savedConfig }: ConvertStrmToSymlinksProp
     const [connected, setConnected] = useState<boolean>(false);
     const [progress, setProgress] = useState<string | null>(null);
     const [isFetching, setIsFetching] = useState<boolean>(false);
+    const [requestError, setRequestError] = useState<string | null>(null);
 
     // derived variables
     const libraryDir = savedConfig["media.library-dir"];
@@ -27,25 +29,29 @@ export function ConvertStrmToSymlinks({ savedConfig }: ConvertStrmToSymlinksProp
 
     // effects
     useEffect(() => {
-        let ws: WebSocket;
-        let disposed = false;
-        function connect() {
-            ws = new WebSocket(getWebsocketUrl());
-            ws.onmessage = receiveMessage((_, message) => setProgress(message));
-            ws.onopen = () => { setConnected(true); ws.send(JSON.stringify(cleanupTaskTopic)); }
-            ws.onclose = () => { !disposed && setTimeout(() => connect(), 1000); setProgress(null) };
-            ws.onerror = () => { ws.close() };
-            return () => { disposed = true; ws.close(); }
-        }
-        return connect();
+        return createReconnectingWebSocket({
+            createSocket: () => new WebSocket(getWebsocketUrl()),
+            onMessage: (_, message) => setProgress(message),
+            onOpen: socket => {
+                setConnected(true);
+                socket.send(JSON.stringify(cleanupTaskTopic));
+            },
+            onClose: () => {
+                setConnected(false);
+                setProgress(null);
+            },
+        });
     }, [setProgress, setConnected]);
 
     // events
     const onRun = useCallback(async () => {
         setIsFetching(true);
-        await fetch(withUrlBase("/api/convert-strm-to-symlinks"));
-        setIsFetching(false);
-    }, [setIsFetching]);
+        try {
+            await startMaintenanceTask("/api/convert-strm-to-symlinks", "convert STRM files to symlinks", setRequestError);
+        } finally {
+            setIsFetching(false);
+        }
+    }, [setIsFetching, setRequestError]);
 
     return (
         <>
@@ -71,6 +77,11 @@ export function ConvertStrmToSymlinks({ savedConfig }: ConvertStrmToSymlinksProp
                             Strm files will be deleted from `{libraryDir}` and will not be recoverable without a backup.
                         </li>
                     </ul>
+                </Alert>
+            }
+            {requestError &&
+                <Alert className={styles.alert} variant="danger">
+                    {requestError}
                 </Alert>
             }
             <div className={styles.task}>

@@ -1,5 +1,8 @@
+using System.Data.Common;
 using backend.Tests.Services;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using NzbWebDAV.Clients.Rclone;
 using NzbWebDAV.Clients.Rclone.Models;
 using NzbWebDAV.Config;
@@ -86,6 +89,138 @@ public sealed class RcloneInvalidationTests
     }
 
     [Fact]
+    public async Task EnqueueRcloneVfsForgetPaths_DoesNotCreateDuplicatePendingRows()
+    {
+        EnableRcloneRemoteControl();
+
+        try
+        {
+            await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+            var now = DateTimeOffset.UtcNow;
+            dbContext.RcloneInvalidationItems.Add(new RcloneInvalidationItem
+            {
+                Id = Guid.NewGuid(),
+                Path = "/nzbs",
+                CreatedAt = now.AddMinutes(-10),
+                NextAttemptAt = now.AddMinutes(5),
+                Attempts = 2,
+                LastError = "previous failure"
+            });
+            await dbContext.SaveChangesAsync();
+
+            dbContext.EnqueueRcloneVfsForgetPaths(["/nzbs", "/nzbs"]);
+            await dbContext.SaveChangesAsync();
+
+            var item = Assert.Single(await dbContext.RcloneInvalidationItems.ToListAsync());
+            Assert.Equal("/nzbs", item.Path);
+            Assert.Equal(2, item.Attempts);
+            Assert.Equal("previous failure", item.LastError);
+            Assert.True(item.NextAttemptAt <= DateTimeOffset.UtcNow.AddSeconds(1));
+        }
+        finally
+        {
+            DisableRcloneRemoteControl();
+        }
+    }
+
+    [Fact]
+    public async Task EnqueueRcloneVfsForgetPaths_ToleratesExistingDuplicatePendingRows()
+    {
+        EnableRcloneRemoteControl();
+
+        try
+        {
+            await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+            var now = DateTimeOffset.UtcNow;
+            dbContext.RcloneInvalidationItems.AddRange(
+                new RcloneInvalidationItem
+                {
+                    Id = Guid.NewGuid(),
+                    Path = "/content/movies",
+                    CreatedAt = now.AddMinutes(-20),
+                    NextAttemptAt = now.AddMinutes(5)
+                },
+                new RcloneInvalidationItem
+                {
+                    Id = Guid.NewGuid(),
+                    Path = "/content/movies",
+                    CreatedAt = now.AddMinutes(-10),
+                    NextAttemptAt = now.AddMinutes(10),
+                    Attempts = 1
+                });
+            await dbContext.SaveChangesAsync();
+
+            dbContext.EnqueueRcloneVfsForgetPaths(["/content/movies"]);
+            await dbContext.SaveChangesAsync();
+
+            var items = await dbContext.RcloneInvalidationItems.ToListAsync();
+            Assert.Equal(2, items.Count);
+            Assert.All(items, item =>
+            {
+                Assert.Equal("/content/movies", item.Path);
+                Assert.True(item.NextAttemptAt <= DateTimeOffset.UtcNow.AddSeconds(1));
+            });
+        }
+        finally
+        {
+            DisableRcloneRemoteControl();
+        }
+    }
+
+    [Fact]
+    public async Task EnqueueRcloneVfsForgetPaths_DeduplicatesRepeatedCallsBeforeSave()
+    {
+        EnableRcloneRemoteControl();
+
+        try
+        {
+            await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+
+            dbContext.EnqueueRcloneVfsForgetPaths(["/content/tv"]);
+            dbContext.EnqueueRcloneVfsForgetPaths(["/content/tv"]);
+            await dbContext.SaveChangesAsync();
+
+            var item = Assert.Single(await dbContext.RcloneInvalidationItems.ToListAsync());
+            Assert.Equal("/content/tv", item.Path);
+        }
+        finally
+        {
+            DisableRcloneRemoteControl();
+        }
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_SkipsItemsWithoutParentDirectoryWhenEnqueuingInvalidations()
+    {
+        EnableRcloneRemoteControl();
+
+        try
+        {
+            await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+            var id = Guid.NewGuid();
+            dbContext.Items.Add(new DavItem
+            {
+                Id = id,
+                IdPrefix = id.GetFiveLengthPrefix(),
+                CreatedAt = DateTime.UtcNow,
+                ParentId = null,
+                Name = "synthetic-root",
+                Type = DavItem.ItemType.Directory,
+                SubType = DavItem.ItemSubType.Directory,
+                Path = "/"
+            });
+
+            await dbContext.SaveChangesAsync();
+
+            Assert.DoesNotContain(await dbContext.RcloneInvalidationItems.ToListAsync(), x => string.IsNullOrWhiteSpace(x.Path));
+        }
+        finally
+        {
+            DisableRcloneRemoteControl();
+        }
+    }
+
+    [Fact]
     public async Task GetRcloneInvalidationStatsAsync_SummarizesReadyAndFailedInvalidations()
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
@@ -124,6 +259,54 @@ public sealed class RcloneInvalidationTests
         var stats = await dbClient.GetRcloneInvalidationStatsAsync(now);
 
         Assert.Equal(3, stats.Pending);
+        Assert.Equal(1, stats.Ready);
+        Assert.Equal(2, stats.Failed);
+        Assert.Equal(4, stats.MaxAttempts);
+        Assert.Equal("latest failure", stats.LastError);
+    }
+
+    [Fact]
+    public async Task GetRcloneInvalidationStatsAsync_UsesTwoQueries()
+    {
+        var interceptor = new CountingCommandInterceptor(commandText =>
+            commandText.Contains("RcloneInvalidationItems", StringComparison.OrdinalIgnoreCase)
+            && commandText.Contains("SELECT", StringComparison.OrdinalIgnoreCase));
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .AddInterceptors(interceptor)
+            .Options;
+        await using var dbContext = new DavDatabaseContext(options);
+        await dbContext.Database.EnsureCreatedAsync();
+        var now = DateTimeOffset.UtcNow;
+        dbContext.RcloneInvalidationItems.AddRange(
+            new RcloneInvalidationItem
+            {
+                Id = Guid.NewGuid(),
+                Path = "/ready",
+                CreatedAt = now.AddMinutes(-3),
+                NextAttemptAt = now.AddMinutes(-1),
+                Attempts = 1,
+                LastError = "temporary failure"
+            },
+            new RcloneInvalidationItem
+            {
+                Id = Guid.NewGuid(),
+                Path = "/failed",
+                CreatedAt = now.AddMinutes(-1),
+                NextAttemptAt = now.AddMinutes(1),
+                Attempts = 4,
+                LastError = "latest failure"
+            }
+        );
+        await dbContext.SaveChangesAsync();
+        interceptor.Reset();
+
+        var stats = await new DavDatabaseClient(dbContext).GetRcloneInvalidationStatsAsync(now);
+
+        Assert.Equal(2, interceptor.Count);
+        Assert.Equal(2, stats.Pending);
         Assert.Equal(1, stats.Ready);
         Assert.Equal(2, stats.Failed);
         Assert.Equal(4, stats.MaxAttempts);
@@ -213,6 +396,32 @@ public sealed class RcloneInvalidationTests
         Assert.Empty(forgotten);
     }
 
+    [Fact]
+    public void InitializeIgnoresChangesFromPreviousConfigManagers()
+    {
+        var oldConfigManager = new ConfigManager();
+        oldConfigManager.UpdateValues([
+            new ConfigItem { ConfigName = "rclone.rc-enabled", ConfigValue = "true" },
+            new ConfigItem { ConfigName = "rclone.host", ConfigValue = "http://old-rclone:5572" }
+        ]);
+        RcloneClient.Initialize(oldConfigManager);
+
+        var currentConfigManager = new ConfigManager();
+        currentConfigManager.UpdateValues([
+            new ConfigItem { ConfigName = "rclone.rc-enabled", ConfigValue = "false" },
+            new ConfigItem { ConfigName = "rclone.host", ConfigValue = "http://current-rclone:5572" }
+        ]);
+        RcloneClient.Initialize(currentConfigManager);
+
+        oldConfigManager.UpdateValues([
+            new ConfigItem { ConfigName = "rclone.rc-enabled", ConfigValue = "true" },
+            new ConfigItem { ConfigName = "rclone.host", ConfigValue = "http://stale-rclone:5572" }
+        ]);
+
+        Assert.False(RcloneClient.IsRemoteControlEnabled);
+        Assert.Equal("http://current-rclone:5572", RcloneClient.Host);
+    }
+
     private static void EnableRcloneRemoteControl()
     {
         var configManager = new ConfigManager();
@@ -226,5 +435,46 @@ public sealed class RcloneInvalidationTests
     private static void DisableRcloneRemoteControl()
     {
         RcloneClient.Initialize(new ConfigManager());
+    }
+
+    private sealed class CountingCommandInterceptor(Func<string, bool> predicate) : DbCommandInterceptor
+    {
+        private int _count;
+
+        public int Count => Volatile.Read(ref _count);
+
+        public void Reset()
+        {
+            Volatile.Write(ref _count, 0);
+        }
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting
+        (
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result
+        )
+        {
+            CountIfMatched(command);
+            return base.ReaderExecuting(command, eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync
+        (
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default
+        )
+        {
+            CountIfMatched(command);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private void CountIfMatched(DbCommand command)
+        {
+            if (predicate(command.CommandText))
+                Interlocked.Increment(ref _count);
+        }
     }
 }

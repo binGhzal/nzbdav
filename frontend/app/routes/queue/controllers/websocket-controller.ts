@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from "react";
 import type { HistoryEvents, QueueEvents } from "./events-controller";
-import { receiveMessage } from "~/utils/websocket-util";
+import { createReconnectingWebSocket } from "~/utils/websocket-util";
 import { getWebsocketUrl } from "~/utils/url-base";
 import type { HistorySlot, QueueSlot } from "~/clients/backend-client.server";
 
@@ -49,31 +49,11 @@ export function initializeQueueHistoryWebsocket(
     ]);
 
     useEffect(() => {
-        let ws: WebSocket;
-        let disposed = false;
-        let reconnectDelayMs = 1000;
-        let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-        function connect() {
-            ws = new WebSocket(getWebsocketUrl());
-            ws.onmessage = receiveMessage(onWebsocketMessage);
-            ws.onopen = () => {
-                reconnectDelayMs = 1000;
-                ws.send(JSON.stringify(topicSubscriptions));
-            }
-            ws.onclose = () => {
-                if (disposed) return;
-                reconnectTimer = setTimeout(() => connect(), reconnectDelayMs);
-                reconnectDelayMs = Math.min(reconnectDelayMs * 2, 30000);
-            };
-            ws.onerror = () => { ws.close() };
-            return () => {
-                disposed = true;
-                if (reconnectTimer) clearTimeout(reconnectTimer);
-                ws.close();
-            }
-        }
-
-        return connect();
+        return createReconnectingWebSocket({
+            createSocket: () => new WebSocket(getWebsocketUrl()),
+            onMessage: onWebsocketMessage,
+            onOpen: socket => socket.send(JSON.stringify(topicSubscriptions)),
+        });
     }, [onWebsocketMessage]);
 }
 

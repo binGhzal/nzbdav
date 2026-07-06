@@ -30,7 +30,7 @@ const defaultConfig = {
     "api.user-agent": "",
     "usenet.providers": "",
     "usenet.max-download-connections": "15",
-    "usenet.adaptive-connections-enabled": "true",
+    "usenet.adaptive-connections-enabled": "false",
     "usenet.max-streaming-connections": "0",
     "usenet.max-total-streaming-connections": "0",
     "usenet.streaming-priority": "80",
@@ -249,22 +249,93 @@ function getSettingsTab(value: string | null): string {
     return value && tabs.has(value) ? value : "usenet";
 }
 
-function getChangedConfig(
+export function getChangedConfig(
     config: Record<string, string>,
     newConfig: Record<string, string>
 ): Record<string, string> {
     let changedConfig: Record<string, string> = {};
     let configKeys = Object.keys(defaultConfig);
     for (const configKey of configKeys) {
-        if (config[configKey] !== newConfig[configKey]) {
+        if (!areSettingsValuesEquivalent(configKey, config[configKey], newConfig[configKey])) {
             changedConfig[configKey] = newConfig[configKey];
         }
     }
     return changedConfig;
 }
 
+function areSettingsValuesEquivalent(configKey: string, currentValue: string | undefined, nextValue: string | undefined): boolean {
+    if (currentValue === nextValue) return true;
+
+    if (configKey === "rclone.rc-enabled") {
+        return normalizeBoolean(currentValue) === normalizeBoolean(nextValue);
+    }
+
+    if (configKey === "rclone.host") {
+        return normalizeEndpoint(currentValue) === normalizeEndpoint(nextValue);
+    }
+
+    if (configKey === "rclone.user" || configKey === "rclone.pass") {
+        return normalizeOptionalCredential(currentValue) === normalizeOptionalCredential(nextValue);
+    }
+
+    if (configKey === "rclone.mount-dir") {
+        return normalizeMountDirectory(currentValue) === normalizeMountDirectory(nextValue);
+    }
+
+    return false;
+}
+
+function normalizeEndpoint(value: string | undefined): string {
+    return (value ?? "").trim().replace(/\/+$/, "");
+}
+
+function normalizeBoolean(value: string | undefined): string {
+    return (value ?? "").toLowerCase();
+}
+
+function normalizeOptionalCredential(value: string | undefined): string {
+    return (value ?? "").trim() === "" ? "" : value ?? "";
+}
+
+function normalizeMountDirectory(value: string | undefined): string {
+    return (value ?? "").trim().replace(/\/+$/, "");
+}
+
+type NavigationLocation = {
+    pathname: string,
+    search: string,
+};
+
+export function shouldBlockSettingsNavigation(
+    isConfigUpdated: boolean,
+    currentLocation: NavigationLocation,
+    nextLocation: NavigationLocation
+): boolean {
+    if (!isConfigUpdated) return false;
+    return !isSettingsTabOnlyNavigation(currentLocation, nextLocation);
+}
+
+function isSettingsTabOnlyNavigation(
+    currentLocation: NavigationLocation,
+    nextLocation: NavigationLocation
+): boolean {
+    if (currentLocation.pathname !== nextLocation.pathname) return false;
+    return normalizeSearchWithoutTab(currentLocation.search) === normalizeSearchWithoutTab(nextLocation.search);
+}
+
+function normalizeSearchWithoutTab(search: string): string {
+    const params = new URLSearchParams(search);
+    params.delete("tab");
+    return [...params.entries()]
+        .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+            leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue))
+        .map(([key, value]) => `${key}=${value}`)
+        .join("&");
+}
+
 function useNavigationBlocker(isConfigUpdated: boolean) {
-    const blocker = useBlocker(isConfigUpdated);
+    const blocker = useBlocker(({ currentLocation, nextLocation }) =>
+        shouldBlockSettingsNavigation(isConfigUpdated, currentLocation, nextLocation));
 
     const onConfirmNavigation = useCallback(() => {
         if (blocker.state === "blocked") {

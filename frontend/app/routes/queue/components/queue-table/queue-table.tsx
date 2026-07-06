@@ -13,6 +13,7 @@ import { WideViewport } from "../wide-viewport/wide-viewport"
 import { ThinViewport } from "../thin-viewport/thin-viewport"
 import { Pagination } from "../pagination/pagination"
 import type { QueueSortField, QueueSortOrder, QueueStatusFilter } from "~/clients/backend-client.server"
+import { getHttpErrorMessage, readJsonObjectOrEmpty } from "~/utils/http-response"
 
 export type QueueTableProps = {
     queueSlots: PresentationQueueSlot[],
@@ -112,19 +113,13 @@ export function QueueTable({
     const onConfirmRemoval = useCallback(async () => {
         if (!pendingRemoval) return;
 
-        // immediately remove uploading items
-        const uploading_nzo_ids = new Set<string>(queueSlots
-            .filter(x => x.isUploading && pendingRemoval.nzoIds.has(x.nzo_id))
-            .map(x => x.nzo_id));
-        onRemoved(uploading_nzo_ids);
-
-        // call backend to remove queued items
-        const queued_nzo_ids = new Set<string>(queueSlots
-            .filter(x => !x.isUploading && pendingRemoval.nzoIds.has(x.nzo_id))
-            .map(x => x.nzo_id));
+        const { uploadingIds, queuedIds } = getQueueRemovalIds(queueSlots, pendingRemoval.nzoIds);
         setPendingRemoval(null);
         setOperationError(null);
-        onIsRemovingChanged(queued_nzo_ids, true);
+        onRemoved(uploadingIds);
+        if (queuedIds.size === 0) return;
+
+        onIsRemovingChanged(queuedIds, true);
         try {
             const url = withUrlBase(`/api?mode=queue&name=delete`);
             const response = await fetch(url, {
@@ -132,22 +127,22 @@ export function QueueTable({
                 headers: {
                     'Content-Type': 'application/json;charset=UTF-8',
                 },
-                body: JSON.stringify({ nzo_ids: Array.from(queued_nzo_ids) }),
+                body: JSON.stringify({ nzo_ids: Array.from(queuedIds) }),
             });
             if (response.ok) {
-                const data = await response.json();
+                const data = await readJsonObjectOrEmpty(response);
                 if (data.status === true) {
-                    onRemoved(queued_nzo_ids);
+                    onRemoved(queuedIds);
                     return;
                 }
-                setOperationError(data.error ?? "Failed to remove queue items.");
+                setOperationError(typeof data.error === "string" ? data.error : "Failed to remove queue items.");
             } else {
-                setOperationError(`Failed to remove queue items (${response.status}).`);
+                setOperationError(`Failed to remove queue items: ${await getHttpErrorMessage(response)}`);
             }
         } catch (error) {
             setOperationError(`Failed to remove queue items: ${error instanceof Error ? error.message : "unknown error"}.`);
         }
-        onIsRemovingChanged(queued_nzo_ids, false);
+        onIsRemovingChanged(queuedIds, false);
     }, [pendingRemoval, queueSlots, setPendingRemoval, setOperationError, onIsRemovingChanged, onRemoved]);
 
     const onPauseResumeQueue = useCallback(async () => {
@@ -158,15 +153,15 @@ export function QueueTable({
             const mode = nextPausedState ? "pause" : "resume";
             const response = await fetch(withUrlBase(`/api?mode=${mode}`));
             if (response.ok) {
-                const data = await response.json();
+                const data = await readJsonObjectOrEmpty(response);
                 if (data.status === true) {
                     onPauseQueueChanged(nextPausedState);
                     setIsPausingQueue(false);
                     return;
                 }
-                setOperationError(data.error ?? `Failed to ${nextPausedState ? "pause" : "resume"} queue.`);
+                setOperationError(typeof data.error === "string" ? data.error : `Failed to ${nextPausedState ? "pause" : "resume"} queue.`);
             } else {
-                setOperationError(`Failed to ${nextPausedState ? "pause" : "resume"} queue (${response.status}).`);
+                setOperationError(`Failed to ${nextPausedState ? "pause" : "resume"} queue: ${await getHttpErrorMessage(response)}`);
             }
         } catch (error) {
             setOperationError(`Failed to ${nextPausedState ? "pause" : "resume"} queue: ${error instanceof Error ? error.message : "unknown error"}.`);
@@ -259,6 +254,19 @@ export function QueueTable({
     );
 }
 
+export function getQueueRemovalIds(queueSlots: PresentationQueueSlot[], selectedIds: Set<string>) {
+    const uploadingIds = new Set<string>();
+    const queuedIds = new Set<string>();
+
+    for (const slot of queueSlots) {
+        if (!selectedIds.has(slot.nzo_id)) continue;
+        if (slot.isUploading) uploadingIds.add(slot.nzo_id);
+        else queuedIds.add(slot.nzo_id);
+    }
+
+    return { uploadingIds, queuedIds };
+}
+
 function QueueFilters({
     value,
     onChange,
@@ -319,6 +327,7 @@ export const QueueRow = memo(({
     // state
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
     const [isChangingPriority, setIsChangingPriority] = useState(false);
+    const [operationError, setOperationError] = useState<string | null>(null);
     const isActivelyUploading = slot.isUploading && slot.status == "uploading";
 
     // events
@@ -339,25 +348,32 @@ export const QueueRow = memo(({
     const onConfirmRemoval = useCallback(async () => {
         if (slot.isUploading) return;
         setIsConfirmingRemoval(false);
+        setOperationError(null);
         onIsRemovingChanged(slot.nzo_id, true);
         try {
             const url = withUrlBase('/api?mode=queue&name=delete')
                 + `&value=${encodeURIComponent(slot.nzo_id)}`;
             const response = await fetch(url);
             if (response.ok) {
-                const data = await response.json();
+                const data = await readJsonObjectOrEmpty(response);
                 if (data.status === true) {
                     onRemoved(slot.nzo_id);
                     return;
                 }
+                setOperationError(typeof data.error === "string" ? data.error : "Failed to remove queue item.");
+            } else {
+                setOperationError(`Failed to remove queue item: ${await getHttpErrorMessage(response)}`);
             }
-        } catch { }
+        } catch (error) {
+            setOperationError(`Failed to remove queue item: ${error instanceof Error ? error.message : "unknown error"}.`);
+        }
         onIsRemovingChanged(slot.nzo_id, false);
-    }, [slot.nzo_id, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
+    }, [slot.nzo_id, setIsConfirmingRemoval, setOperationError, onIsRemovingChanged, onRemoved]);
 
     const onChangePriority = useCallback(async (priority: string) => {
         if (slot.isUploading || priority === slot.priority) return;
 
+        setOperationError(null);
         setIsChangingPriority(true);
         try {
             const url = withUrlBase('/api?mode=queue&name=priority')
@@ -365,16 +381,21 @@ export const QueueRow = memo(({
                 + `&value2=${encodeURIComponent(priorityValues[priority] ?? "0")}`;
             const response = await fetch(url);
             if (response.ok) {
-                const data = await response.json();
+                const data = await readJsonObjectOrEmpty(response);
                 if (data.status === true) {
                     onPriorityChanged(slot.nzo_id, priority);
                     setIsChangingPriority(false);
                     return;
                 }
+                setOperationError(typeof data.error === "string" ? data.error : "Failed to change queue item priority.");
+            } else {
+                setOperationError(`Failed to change queue item priority: ${await getHttpErrorMessage(response)}`);
             }
-        } catch { }
+        } catch (error) {
+            setOperationError(`Failed to change queue item priority: ${error instanceof Error ? error.message : "unknown error"}.`);
+        }
         setIsChangingPriority(false);
-    }, [slot.isUploading, slot.priority, slot.nzo_id, onPriorityChanged, setIsChangingPriority]);
+    }, [slot.isUploading, slot.priority, slot.nzo_id, onPriorityChanged, setIsChangingPriority, setOperationError]);
 
     // view
     const priority = priorityOptions.includes(slot.priority) ? slot.priority : "Normal";
@@ -418,6 +439,13 @@ export const QueueRow = memo(({
                 onRowSelectionChanged={isSelected => onIsSelectedChanged(slot.nzo_id, isSelected)}
                 error={slot.error}
             />
+            {operationError &&
+                <tr>
+                    <td colSpan={5}>
+                        <div className={styles.alert} role="alert">{operationError}</div>
+                    </td>
+                </tr>
+            }
             <ConfirmModal
                 show={isConfirmingRemoval}
                 title="Remove From Queue?"

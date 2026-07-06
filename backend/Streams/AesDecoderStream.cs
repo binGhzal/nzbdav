@@ -76,7 +76,9 @@ namespace NzbWebDAV.Streams
             }
         }
 
-        public override void Flush() => throw new NotImplementedException();
+        public override void Flush()
+        {
+        }
 
         public override long Position
         {
@@ -219,8 +221,11 @@ namespace NzbWebDAV.Streams
             return totalCopied;
         }
 
-        public override void SetLength(long value) => throw new NotImplementedException();
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotImplementedException();
+        public override void SetLength(long value) =>
+            throw new NotSupportedException("AES decoder stream is read-only.");
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException("AES decoder stream is read-only.");
 
         public override long Seek(long offset, SeekOrigin origin)
         {

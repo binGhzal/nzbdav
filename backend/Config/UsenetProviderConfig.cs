@@ -24,10 +24,14 @@ public class UsenetProviderConfig
         public required int MaxConnections { get; set; }
         public int Priority { get; set; } = 100;
 
-        // Whether STAT existence checks may be pipelined for this provider. Not "required" so
-        // that provider configs saved before this feature existed deserialize to false (i.e.
-        // linear STAT) and only opt in once the user has tested + enabled pipelining.
-        public bool StatPipeliningEnabled { get; set; } = false;
+        // Whether STAT existence checks may be pipelined for this provider. Null means the
+        // provider config predates this setting or left it unspecified; use the fast default.
+        public bool? StatPipeliningEnabled { get; set; }
+
+        public bool IsStatPipeliningEnabled()
+        {
+            return StatPipeliningEnabled ?? true;
+        }
 
         public bool GetEffectiveUseSsl()
         {

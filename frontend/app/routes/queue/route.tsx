@@ -4,13 +4,14 @@ import styles from "./route.module.css"
 import { backendClient, type HistorySlot, type QueueSlot, type QueueSortField, type QueueSortOrder, type QueueStatusFilter } from "~/clients/backend-client.server";
 import { HistoryTable } from "./components/history-table/history-table";
 import { QueueTable } from "./components/queue-table/queue-table";
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useHistoryEvents, useQueueEvents } from "./controllers/events-controller";
 import { initializeQueueHistoryWebsocket } from "./controllers/websocket-controller";
 import { initializeUploadController } from "./controllers/nzb-upload-controller";
 import { useQueueDropzone } from "./controllers/dropzone-controller";
+import { createQueueRefreshScheduler, type QueueRefreshScheduler } from "./controllers/queue-refresh-controller";
 
-const pageSizeOptions = [25, 50, 100, 200];
+const pageSizeOptions = [25, 50, 100, 200, 500, 1000];
 const defaultPageSize = 50;
 export async function loader({ request }: Route.LoaderArgs) {
     const url = new URL(request.url);
@@ -75,14 +76,20 @@ export default function Queue(props: Route.ComponentProps) {
     const uploadQueueRef = useRef<UploadingFile[]>([]);
     const manualCategoryRef = useRef<string>(props.loaderData.manualCategory);
     const isUploadingRef = useRef(false);
-    const combinedQueueSlots = [
-        ...(props.loaderData.queueStatus === "all" ? uploadingFiles.map(file => file.queueSlot) : []),
-        ...queueSlots
-    ];
+    const combinedQueueSlots = useMemo(() => {
+        if (props.loaderData.queueStatus !== "all" || uploadingFiles.length === 0)
+            return queueSlots;
+
+        return [
+            ...uploadingFiles.map(file => file.queueSlot),
+            ...queueSlots
+        ];
+    }, [props.loaderData.queueStatus, uploadingFiles, queueSlots]);
     const navigate = useNavigate();
     const location = useLocation();
     const revalidator = useRevalidator();
-    const queueRefreshTimeoutRef = useRef<number | undefined>(undefined);
+    const revalidatorRef = useRef(revalidator);
+    const queueRefreshSchedulerRef = useRef<QueueRefreshScheduler | undefined>(undefined);
 
     useEffect(() => {
         setQueueSlots(props.loaderData.queueSlots);
@@ -143,12 +150,23 @@ export default function Queue(props: Route.ComponentProps) {
         });
     }, [props.loaderData.queueSort, props.loaderData.queueOrder, updateSearchParams]);
 
-    const requestQueueRefresh = useCallback(() => {
-        window.clearTimeout(queueRefreshTimeoutRef.current);
-        queueRefreshTimeoutRef.current = window.setTimeout(() => revalidator.revalidate(), 350);
-    }, [revalidator]);
+    useEffect(() => {
+        revalidatorRef.current = revalidator;
+        queueRefreshSchedulerRef.current?.onStateChange();
+    }, [revalidator, revalidator.state]);
 
-    useEffect(() => () => window.clearTimeout(queueRefreshTimeoutRef.current), []);
+    const requestQueueRefresh = useCallback(() => {
+        if (!queueRefreshSchedulerRef.current) {
+            queueRefreshSchedulerRef.current = createQueueRefreshScheduler({
+                getState: () => revalidatorRef.current.state,
+                revalidate: () => revalidatorRef.current.revalidate(),
+            });
+        }
+
+        queueRefreshSchedulerRef.current.request();
+    }, []);
+
+    useEffect(() => () => queueRefreshSchedulerRef.current?.dispose(), []);
 
     // queue/history events
     const queueEvents = useQueueEvents(
@@ -159,12 +177,14 @@ export default function Queue(props: Route.ComponentProps) {
         props.loaderData.queuePage,
         props.loaderData.pageSize,
         props.loaderData.queueStatus,
+        props.loaderData.queueSort,
         requestQueueRefresh);
     const historyEvents = useHistoryEvents(
         setHistorySlots,
         setTotalHistoryCount,
         props.loaderData.historyPage,
-        props.loaderData.pageSize);
+        props.loaderData.pageSize,
+        requestQueueRefresh);
 
     // websocket
     initializeQueueHistoryWebsocket(queueEvents, historyEvents);

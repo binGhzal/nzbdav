@@ -14,68 +14,75 @@ public class ArrClient(string host, string apiKey)
     private string ApiKey { get; } = apiKey;
     protected virtual string BasePath => "/api/v3";
 
-    public Task<ArrApiInfoResponse> GetApiInfo() =>
-        GetRoot<ArrApiInfoResponse>($"/api");
+    public Task<ArrApiInfoResponse> GetApiInfo(CancellationToken ct = default) =>
+        GetRoot<ArrApiInfoResponse>($"/api", ct);
 
-    public virtual Task<bool> RemoveAndSearch(string symlinkOrStrmPath) =>
+    public virtual Task<bool> RemoveAndSearch(string symlinkOrStrmPath, CancellationToken ct = default) =>
         throw new InvalidOperationException();
 
-    public Task<List<ArrRootFolder>> GetRootFolders() =>
-        Get<List<ArrRootFolder>>($"/rootfolder");
+    public Task<List<ArrRootFolder>> GetRootFolders(CancellationToken ct = default) =>
+        Get<List<ArrRootFolder>>($"/rootfolder", ct);
 
-    public Task<List<ArrDownloadClient>> GetDownloadClientsAsync() =>
-        Get<List<ArrDownloadClient>>($"/downloadClient");
+    public Task<List<ArrDownloadClient>> GetDownloadClientsAsync(CancellationToken ct = default) =>
+        Get<List<ArrDownloadClient>>($"/downloadClient", ct);
 
-    public Task<ArrCommand> RefreshMonitoredDownloads() =>
-        CommandAsync(new { name = "RefreshMonitoredDownloads" });
+    public Task<ArrCommand> RefreshMonitoredDownloads(CancellationToken ct = default) =>
+        CommandAsync(new { name = "RefreshMonitoredDownloads" }, ct);
 
-    public Task<ArrQueueStatus> GetQueueStatusAsync() =>
-        Get<ArrQueueStatus>($"/queue/status");
+    public Task<ArrQueueStatus> GetQueueStatusAsync(CancellationToken ct = default) =>
+        Get<ArrQueueStatus>($"/queue/status", ct);
 
-    public Task<ArrQueue<ArrQueueRecord>> GetQueueAsync() =>
-        Get<ArrQueue<ArrQueueRecord>>($"/queue?protocol=usenet&pageSize=5000");
+    public Task<ArrQueue<ArrQueueRecord>> GetQueueAsync(CancellationToken ct = default) =>
+        Get<ArrQueue<ArrQueueRecord>>($"/queue?protocol=usenet&pageSize=5000", ct);
 
-    public async Task<int> GetQueueCountAsync() =>
-        (await Get<ArrQueue<ArrQueueRecord>>($"/queue?pageSize=1")).TotalRecords;
+    public async Task<int> GetQueueCountAsync(CancellationToken ct = default) =>
+        (await Get<ArrQueue<ArrQueueRecord>>($"/queue?pageSize=1", ct).ConfigureAwait(false)).TotalRecords;
 
-    public Task<HttpStatusCode> DeleteQueueRecord(int id, DeleteQueueRecordRequest request) =>
-        Delete($"/queue/{id}", request.GetQueryParams());
+    public Task<HttpStatusCode> DeleteQueueRecord(int id, DeleteQueueRecordRequest request, CancellationToken ct = default) =>
+        Delete($"/queue/{id}", request.GetQueryParams(), ct);
 
-    public Task<HttpStatusCode> DeleteQueueRecord(int id, ArrConfig.QueueAction request) =>
+    public Task<HttpStatusCode> DeleteQueueRecord(int id, ArrConfig.QueueAction request, CancellationToken ct = default) =>
         request is not ArrConfig.QueueAction.DoNothing
-            ? Delete($"/queue/{id}", new DeleteQueueRecordRequest(request).GetQueryParams())
+            ? Delete($"/queue/{id}", new DeleteQueueRecordRequest(request).GetQueryParams(), ct)
             : Task.FromResult(HttpStatusCode.OK);
 
-    public Task<ArrCommand> CommandAsync(object command) =>
-        Post<ArrCommand>($"/command", command);
+    public Task<ArrCommand> CommandAsync(object command, CancellationToken ct = default) =>
+        Post<ArrCommand>($"/command", command, ct);
 
-    protected Task<T> Get<T>(string path) =>
-        GetRoot<T>($"{BasePath}{path}");
+    protected Task<T> Get<T>(string path, CancellationToken ct = default) =>
+        GetRoot<T>($"{BasePath}{path}", ct);
 
-    protected async Task<T> GetRoot<T>(string rootPath)
+    protected async Task<T> GetRoot<T>(string rootPath, CancellationToken ct = default)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, $"{Host}{rootPath}");
-        using var response = await SendAsync(request);
+        using var response = await SendAsync(request, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        return await JsonSerializer.DeserializeAsync<T>(stream) ?? throw new NullReferenceException();
+        await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false)
+               ?? throw new NullReferenceException();
     }
 
-    protected async Task<T> Post<T>(string path, object body)
+    protected async Task<T> Post<T>(string path, object body, CancellationToken ct = default)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, GetRequestUri(path));
         var jsonBody = JsonSerializer.Serialize(body);
         request.Content = new StringContent(jsonBody, new MediaTypeHeaderValue("application/json"));
-        using var response = await SendAsync(request);
+        using var response = await SendAsync(request, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        return await JsonSerializer.DeserializeAsync<T>(stream) ?? throw new NullReferenceException();
+        await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false)
+               ?? throw new NullReferenceException();
     }
 
-    protected async Task<HttpStatusCode> Delete(string path, Dictionary<string, string>? queryParams = null)
+    protected async Task<HttpStatusCode> Delete
+    (
+        string path,
+        Dictionary<string, string>? queryParams = null,
+        CancellationToken ct = default
+    )
     {
         var request = new HttpRequestMessage(HttpMethod.Delete, GetRequestUri(path, queryParams));
-        using var response = await SendAsync(request);
+        using var response = await SendAsync(request, ct).ConfigureAwait(false);
         return response.StatusCode;
     }
 
@@ -89,9 +96,9 @@ public class ArrClient(string host, string apiKey)
         return resource;
     }
 
-    private Task<HttpResponseMessage> SendAsync(HttpRequestMessage request)
+    private Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         request.Headers.Add("X-Api-Key", ApiKey);
-        return HttpClient.SendAsync(request);
+        return HttpClient.SendAsync(request, ct);
     }
 }

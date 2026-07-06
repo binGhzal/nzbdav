@@ -1,5 +1,4 @@
-﻿using System.Text.Json;
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
@@ -27,11 +26,7 @@ public class RemoveFromQueueRequest()
 
     private static IEnumerable<Guid> NzoIdsFromQueryParam(HttpContext httpContext)
     {
-        return httpContext.GetQueryParamValues("value")
-            .SelectMany(x => x.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            .Select(TryParseGuid)
-            .Where(x => x.HasValue)
-            .Select(x => x!.Value);
+        return SabPagination.ParseValueIdList(httpContext, "all");
     }
 
     private static bool IsRemoveAll(HttpContext httpContext)
@@ -43,21 +38,10 @@ public class RemoveFromQueueRequest()
 
     private static async Task<List<Guid>> NzoIdsFromRequestBody(HttpContext httpContext, CancellationToken ct)
     {
-        try
-        {
-            await using var stream = httpContext.Request.Body;
-            var deserialized = await JsonSerializer.DeserializeAsync<RequestBody>(stream, cancellationToken: ct).ConfigureAwait(false);
-            return deserialized?.NzoIds.Concat(deserialized.CamelCaseNzoIds).ToList() ?? [];
-        }
-        catch
-        {
-            return [];
-        }
-    }
-
-    private static Guid? TryParseGuid(string value)
-    {
-        return Guid.TryParse(value, out var guid) ? guid : null;
+        var deserialized = await SabPagination
+            .ReadOptionalJsonBody<RequestBody>(httpContext, ct)
+            .ConfigureAwait(false);
+        return deserialized?.NzoIds.Concat(deserialized.CamelCaseNzoIds).ToList() ?? [];
     }
 
     private class RequestBody

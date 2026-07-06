@@ -1,4 +1,5 @@
-﻿using System.Security.Cryptography;
+﻿using System.Buffers;
+using System.Security.Cryptography;
 using System.Text;
 using NzbWebDAV.Models;
 using SharpCompress.Common.Rar.Headers;
@@ -112,31 +113,35 @@ public static class RarHeaderExtensions
             rawPassword[i + rawLength] = salt[i];
         }
 
-        var msgDigest = SHA1.Create();
         const int noOfRounds = (1 << 18);
         const int iblock = 3;
-
+        var blockLength = rawPassword.Length + iblock;
+        var dataLength = blockLength * noOfRounds;
+        var data = ArrayPool<byte>.Shared.Rent(dataLength);
         byte[] digest;
-        var data = new byte[(rawPassword.Length + iblock) * noOfRounds];
-
-        //TODO slow code below, find ways to optimize
-        for (var i = 0; i < noOfRounds; i++)
+        try
         {
-            rawPassword.CopyTo(data, i * (rawPassword.Length + iblock));
-
-            data[(i * (rawPassword.Length + iblock)) + rawPassword.Length + 0] = (byte)i;
-            data[(i * (rawPassword.Length + iblock)) + rawPassword.Length + 1] = (byte)(i >> 8);
-            data[(i * (rawPassword.Length + iblock)) + rawPassword.Length + 2] = (byte)(i >> 16);
-
-            if (i % (noOfRounds / sizeInitV) == 0)
+            for (var i = 0; i < noOfRounds; i++)
             {
-                digest = msgDigest.ComputeHash(data, 0, (i + 1) * (rawPassword.Length + iblock));
-                aesIV[i / (noOfRounds / sizeInitV)] = digest[19];
-            }
-        }
+                var offset = i * blockLength;
+                rawPassword.CopyTo(data, offset);
+                data[offset + rawPassword.Length + 0] = (byte)i;
+                data[offset + rawPassword.Length + 1] = (byte)(i >> 8);
+                data[offset + rawPassword.Length + 2] = (byte)(i >> 16);
 
-        digest = msgDigest.ComputeHash(data);
-        //slow code ends
+                if (i % (noOfRounds / sizeInitV) == 0)
+                {
+                    digest = SHA1.HashData(data.AsSpan(0, (i + 1) * blockLength));
+                    aesIV[i / (noOfRounds / sizeInitV)] = digest[19];
+                }
+            }
+
+            digest = SHA1.HashData(data.AsSpan(0, dataLength));
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(data, clearArray: true);
+        }
 
         var aesKey = new byte[sizeInitV];
         for (var i = 0; i < 4; i++)

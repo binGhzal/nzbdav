@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using NzbWebDAV.Database.Models;
 
@@ -123,6 +124,45 @@ public class GetQueueResponse : SabBaseResponse
             };
         }
 
+        public static QueueSlot FromPostDownloadWorker
+        (
+            Guid nzoId,
+            string fileName,
+            string category,
+            long totalSegmentBytes,
+            string priority,
+            string status,
+            int index = 0
+        )
+        {
+            return new QueueSlot
+            {
+                Index = index,
+                NzoId = nzoId.ToString(),
+                Priority = priority,
+                Filename = fileName,
+                Category = category,
+                Percentage = "100",
+                TruePercentage = "100",
+                Status = status,
+                TimeLeft = TimeSpan.Zero,
+                SizeInMB = FormatSizeMB(totalSegmentBytes),
+                SizeLeftInMB = "0.00",
+                ArrPriority = null,
+            };
+        }
+
+        public static QueueSlot FromPostDownloadVerify
+        (
+            Guid nzoId,
+            string fileName,
+            string category,
+            long totalSegmentBytes,
+            string priority,
+            int index = 0
+        ) =>
+            FromPostDownloadWorker(nzoId, fileName, category, totalSegmentBytes, priority, "Verifying", index);
+
         public static string FormatSizeMB(long bytes)
         {
             var megabytes = bytes / (1024.0 * 1024.0);
@@ -176,8 +216,27 @@ public class GetQueueResponse : SabBaseResponse
 
     public class SabnzbdQueueTimeConverter : JsonConverter<TimeSpan>
     {
-        public override TimeSpan Read(ref Utf8JsonReader r, Type t, JsonSerializerOptions o) =>
-            throw new NotImplementedException();
+        public override TimeSpan Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt64(out var seconds))
+                return TimeSpan.FromSeconds(Math.Max(0, seconds));
+
+            if (reader.TokenType != JsonTokenType.String)
+                throw new JsonException($"Expected SAB queue time value to be a string or number, got {reader.TokenType}.");
+
+            var raw = reader.GetString();
+            if (string.IsNullOrWhiteSpace(raw)) return TimeSpan.Zero;
+
+            var value = raw.Trim();
+            var formats = new[] { @"d\:h\:m\:s", @"h\:m\:s", @"m\:s", @"c" };
+            if (TimeSpan.TryParseExact(value, formats, CultureInfo.InvariantCulture, out var parsed))
+                return parsed < TimeSpan.Zero ? TimeSpan.Zero : parsed;
+
+            if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var numericSeconds))
+                return TimeSpan.FromSeconds(Math.Max(0, numericSeconds));
+
+            throw new JsonException($"Could not parse SAB queue time value '{value}'.");
+        }
 
         public override void Write(Utf8JsonWriter writer, TimeSpan value, JsonSerializerOptions options) =>
             writer.WriteStringValue(value.ToString(@"d\:h\:m\:s"));

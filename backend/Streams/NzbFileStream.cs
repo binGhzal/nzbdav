@@ -20,13 +20,16 @@ public class NzbFileStream(
 {
     // Extra segments fetched past the requested end to cover seek imprecision.
     private const int RangePrefetchOvershootSegments = 4;
+    private readonly string[] _fileSegmentIds = NormalizeSegmentIds(fileSegmentIds);
+    private readonly bool _hasRequiredSegmentMetadata = fileSize <= 0 || NormalizeSegmentIds(fileSegmentIds).Length > 0;
+    private readonly long _readLimitExclusive = Math.Clamp(requestedEndByte.HasValue ? requestedEndByte.Value + 1 : fileSize, 0, fileSize);
 
     private long _position;
     private bool _disposed;
     private bool _checkedCachedMissingSegments;
     private Stream? _innerStream;
     private readonly IFileRangeReader? _rangeReader = CreateRangeReader(
-        fileSegmentIds,
+        NormalizeSegmentIds(fileSegmentIds),
         fileSize,
         usenetClient,
         articleBufferSize,
@@ -49,7 +52,9 @@ public class NzbFileStream(
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
-        if (_position >= fileSize) return 0;
+        EnsureRequiredSegmentMetadata();
+        if (buffer.Length == 0) return 0;
+        if (_position >= _readLimitExclusive) return 0;
         EnsureNoKnownMissingSegments();
         if (_rangeReader != null)
         {
@@ -63,7 +68,13 @@ public class NzbFileStream(
         }
 
         _innerStream ??= await GetFileStream(_position, cancellationToken).ConfigureAwait(false);
-        var read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        var directBytesToRead = (int)Math.Min(buffer.Length, _readLimitExclusive - _position);
+        var read = await _innerStream.ReadAsync(buffer[..directBytesToRead], cancellationToken).ConfigureAwait(false);
+        if (read == 0)
+        {
+            throw new IOException($"Nzb file stream ended before declared file length at offset {_position}.");
+        }
+
         _position += read;
         return read;
     }
@@ -73,6 +84,8 @@ public class NzbFileStream(
         var absoluteOffset = origin == SeekOrigin.Begin ? offset
             : origin == SeekOrigin.Current ? _position + offset
             : throw new InvalidOperationException("SeekOrigin must be Begin or Current.");
+        if (absoluteOffset < 0)
+            throw new ArgumentOutOfRangeException(nameof(offset), "Cannot seek before the beginning of the stream.");
         if (_position == absoluteOffset) return _position;
         _position = absoluteOffset;
         if (_rangeReader == null)
@@ -88,11 +101,11 @@ public class NzbFileStream(
     {
         return await InterpolationSearch.Find(
             byteOffset,
-            new LongRange(0, fileSegmentIds.Length),
+            new LongRange(0, _fileSegmentIds.Length),
             new LongRange(0, fileSize),
             async (guess) =>
             {
-                var header = await usenetClient.GetYencHeadersAsync(fileSegmentIds[guess], ct).ConfigureAwait(false);
+                var header = await usenetClient.GetYencHeadersAsync(_fileSegmentIds[guess], ct).ConfigureAwait(false);
                 return new LongRange(header.PartOffset, header.PartOffset + header.PartSize);
             },
             ct
@@ -101,18 +114,32 @@ public class NzbFileStream(
 
     private async Task<Stream> GetFileStream(long rangeStart, CancellationToken cancellationToken)
     {
-        if (rangeStart == 0) return GetMultiSegmentStream(0, cancellationToken);
+        EnsureRequiredSegmentMetadata();
+        if (rangeStart == 0)
+        {
+            var initialEndSegmentCount = await ComputeEndSegmentCountAsync(
+                    0,
+                    _fileSegmentIds.Length,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return GetMultiSegmentStream(0, initialEndSegmentCount, cancellationToken);
+        }
+
         var foundSegment = await SeekSegment(rangeStart, cancellationToken).ConfigureAwait(false);
-        var stream = GetMultiSegmentStream(foundSegment.FoundIndex, cancellationToken);
+        var endSegmentCount = await ComputeEndSegmentCountAsync(
+                foundSegment.FoundIndex,
+                _fileSegmentIds.Length - foundSegment.FoundIndex,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var stream = GetMultiSegmentStream(foundSegment.FoundIndex, endSegmentCount, cancellationToken);
         await stream.DiscardBytesAsync(rangeStart - foundSegment.FoundByteRange.StartInclusive, cancellationToken)
             .ConfigureAwait(false);
         return stream;
     }
 
-    private Stream GetMultiSegmentStream(int firstSegmentIndex, CancellationToken cancellationToken)
+    private Stream GetMultiSegmentStream(int firstSegmentIndex, int? endSegmentCount, CancellationToken cancellationToken)
     {
-        var segmentIds = fileSegmentIds.AsMemory()[firstSegmentIndex..];
-        var endSegmentCount = ComputeEndSegmentCount(firstSegmentIndex, segmentIds.Length);
+        var segmentIds = _fileSegmentIds.AsMemory()[firstSegmentIndex..];
         if (endSegmentCount.HasValue)
         {
             Log.Debug(
@@ -125,18 +152,19 @@ public class NzbFileStream(
     }
 
     // Returns segment count covering requestedEndByte, or null when no cap is needed.
-    private int? ComputeEndSegmentCount(int firstSegmentIndex, int remainingSegmentCount)
+    private async Task<int?> ComputeEndSegmentCountAsync(
+        int firstSegmentIndex,
+        int remainingSegmentCount,
+        CancellationToken ct)
     {
         if (!requestedEndByte.HasValue) return null;
-        if (fileSegmentIds.Length == 0 || remainingSegmentCount <= 0) return null;
+        if (_fileSegmentIds.Length == 0 || remainingSegmentCount <= 0) return null;
 
         var endByte = Math.Clamp(requestedEndByte.Value, 0, fileSize - 1);
-        var avgSegmentSize = (double)fileSize / fileSegmentIds.Length;
-        if (avgSegmentSize <= 0) return null;
+        if (endByte >= fileSize - 1) return null;
 
-        var absoluteEndIndex = Math.Clamp(
-            (int)(endByte / avgSegmentSize), 0, fileSegmentIds.Length - 1);
-        var withOvershoot = absoluteEndIndex + RangePrefetchOvershootSegments;
+        var endSegment = await SeekSegment(endByte, ct).ConfigureAwait(false);
+        var withOvershoot = endSegment.FoundIndex + RangePrefetchOvershootSegments;
         var relativeCount = withOvershoot - firstSegmentIndex + 1;
         if (relativeCount <= 0) return 0;
         if (relativeCount >= remainingSegmentCount) return null;
@@ -183,7 +211,21 @@ public class NzbFileStream(
     private void EnsureNoKnownMissingSegments()
     {
         if (_checkedCachedMissingSegments) return;
-        HealthCheckService.CheckCachedMissingSegmentIds(fileSegmentIds);
+        HealthCheckService.CheckCachedMissingSegmentIds(_fileSegmentIds);
         _checkedCachedMissingSegments = true;
+    }
+
+    private void EnsureRequiredSegmentMetadata()
+    {
+        if (_hasRequiredSegmentMetadata) return;
+
+        throw new InvalidDataException("Cannot stream a non-empty file because segment metadata is missing.");
+    }
+
+    private static string[] NormalizeSegmentIds(IEnumerable<string>? segmentIds)
+    {
+        return segmentIds?
+            .Where(segmentId => !string.IsNullOrWhiteSpace(segmentId))
+            .ToArray() ?? [];
     }
 }

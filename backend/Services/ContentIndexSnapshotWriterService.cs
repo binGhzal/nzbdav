@@ -16,21 +16,36 @@ public sealed class ContentIndexSnapshotWriterService : BackgroundService
         SingleWriter = false
     });
 
+    private static readonly object RequestStateLock = new();
+    private static bool _wakeSignalQueued;
     private static long _pendingRequestCount;
+    private static Func<long, CancellationToken, Task> WriteSnapshotCore = WriteSnapshotCoreAsync;
 
     public static void RequestSnapshot()
     {
-        Interlocked.Increment(ref _pendingRequestCount);
-        Requests.Writer.TryWrite(0);
+        lock (RequestStateLock)
+        {
+            _pendingRequestCount++;
+            QueueWakeSignalUnderLock();
+        }
     }
 
     public static async Task FlushNowAsync(CancellationToken cancellationToken)
     {
-        var requestCount = Interlocked.Exchange(ref _pendingRequestCount, 0);
-        DrainRequests();
+        var requestCount = TakePendingRequestsForFlush();
         if (requestCount <= 0) return;
 
-        await WriteSnapshotAsync(requestCount, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var persisted = await TryWriteSnapshotAsync(requestCount, cancellationToken).ConfigureAwait(false);
+            if (!persisted)
+                RestorePendingRequests(requestCount);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            RestorePendingRequests(requestCount);
+            throw;
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -88,26 +103,75 @@ public sealed class ContentIndexSnapshotWriterService : BackgroundService
 
     private static void DrainRequests()
     {
+        lock (RequestStateLock)
+        {
+            DrainRequestsUnderLock();
+            _wakeSignalQueued = false;
+        }
+    }
+
+    private static void RestorePendingRequests(long requestCount)
+    {
+        if (requestCount <= 0) return;
+        lock (RequestStateLock)
+        {
+            _pendingRequestCount += requestCount;
+            QueueWakeSignalUnderLock();
+        }
+    }
+
+    private static long TakePendingRequestsForFlush()
+    {
+        lock (RequestStateLock)
+        {
+            var requestCount = _pendingRequestCount;
+            _pendingRequestCount = 0;
+            DrainRequestsUnderLock();
+            _wakeSignalQueued = false;
+            return requestCount;
+        }
+    }
+
+    private static void DrainRequestsUnderLock()
+    {
         while (Requests.Reader.TryRead(out _))
         {
         }
     }
 
-    private static async Task WriteSnapshotAsync(long requestCount, CancellationToken cancellationToken)
+    private static void QueueWakeSignalUnderLock()
+    {
+        if (_wakeSignalQueued) return;
+        if (Requests.Writer.TryWrite(0))
+            _wakeSignalQueued = true;
+    }
+
+    private static async Task<bool> TryWriteSnapshotAsync(long requestCount, CancellationToken cancellationToken)
     {
         try
         {
-            var sw = Stopwatch.StartNew();
-            await using var dbContext = new DavDatabaseContext();
-            await ContentIndexSnapshotStore.WriteAsync(dbContext, cancellationToken).ConfigureAwait(false);
-            Log.Information(
-                "Persisted /content recovery snapshot in {ElapsedMs} ms after coalescing {RequestCount} content-index change(s).",
-                sw.ElapsedMilliseconds,
-                requestCount);
+            await WriteSnapshotCore(requestCount, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to persist /content recovery snapshot.");
+            return false;
         }
+    }
+
+    private static async Task WriteSnapshotCoreAsync(long requestCount, CancellationToken cancellationToken)
+    {
+        var sw = Stopwatch.StartNew();
+        await using var dbContext = new DavDatabaseContext();
+        await ContentIndexSnapshotStore.WriteAsync(dbContext, cancellationToken).ConfigureAwait(false);
+        Log.Information(
+            "Persisted /content recovery snapshot in {ElapsedMs} ms after coalescing {RequestCount} content-index change(s).",
+            sw.ElapsedMilliseconds,
+            requestCount);
     }
 }

@@ -100,6 +100,8 @@ public sealed class DavDatabaseContext : DbContext
     public List<DavRarFile> BlobRarFiles = [];
     public List<DavMultipartFile> BlobMultipartFiles = [];
 
+    public bool SuppressRcloneInvalidations { get; set; }
+
     // tables
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -456,6 +458,10 @@ public sealed class DavDatabaseContext : DbContext
             e.HasIndex(i => new { i.CreatedAt })
                 .IsUnique(false);
 
+            e.HasIndex(i => new { i.DavItemId, i.CreatedAt, i.Id })
+                .IsDescending(false, true, true)
+                .IsUnique(false);
+
             e.HasIndex(h => h.DavItemId)
                 .HasFilter("\"RepairStatus\" = 3")
                 .IsUnique(false);
@@ -571,6 +577,15 @@ public sealed class DavDatabaseContext : DbContext
                 .IsUnique();
 
             e.HasIndex(i => new { i.Kind, i.Status, i.AvailableAt, i.LeaseExpiresAt, i.Priority, i.CreatedAt })
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.Kind, i.Status, i.Priority, i.AvailableAt, i.CreatedAt })
+                .IsDescending(false, false, true, false, false)
+                .HasDatabaseName("IX_WorkerJobs_Kind_Status_Priority_AvailableAt_CreatedAt")
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.Kind, i.Status, i.LeaseExpiresAt })
+                .HasDatabaseName("IX_WorkerJobs_Kind_Status_LeaseExpiresAt")
                 .IsUnique(false);
         });
 
@@ -1156,7 +1171,8 @@ public sealed class DavDatabaseContext : DbContext
 
             // save db changes
             var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();
-            EnqueueRcloneVfsForget(addedOrRemovedDavItems);
+            if (!SuppressRcloneInvalidations)
+                EnqueueRcloneVfsForget(addedOrRemovedDavItems);
             var result = await base.SaveChangesAsync(cancellationToken);
 
             // clear pending blob writes
@@ -1194,13 +1210,17 @@ public sealed class DavDatabaseContext : DbContext
     {
         var contentDirs = addedOrRemoved
             .Select(x => x.Path)
-            .Select(x => Path.GetDirectoryName(x)!)
+            .Select(Path.GetDirectoryName)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
             .ToList();
 
         var idDirs = addedOrRemoved
             .Where(x => x.Type == DavItem.ItemType.UsenetFile)
             .Select(x => DatabaseStoreSymlinkFile.GetTargetPath(x.Id))
-            .Select(x => Path.GetDirectoryName(x)!)
+            .Select(Path.GetDirectoryName)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
             .ToList();
 
         var completedSymlinkDirs = contentDirs
@@ -1217,6 +1237,7 @@ public sealed class DavDatabaseContext : DbContext
 
     public void EnqueueRcloneVfsForget(List<DavItem> addedOrRemovedDavItems)
     {
+        if (SuppressRcloneInvalidations) return;
         if (!ShouldQueueRcloneInvalidations()) return;
         if (addedOrRemovedDavItems.Count == 0) return;
 
@@ -1226,8 +1247,10 @@ public sealed class DavDatabaseContext : DbContext
 
     public void EnqueueRcloneVfsForgetPaths(IEnumerable<string> paths)
     {
+        if (SuppressRcloneInvalidations) return;
         if (!ShouldQueueRcloneInvalidations()) return;
 
+        var now = DateTimeOffset.UtcNow;
         var pathList = paths
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => x.Trim())
@@ -1236,14 +1259,41 @@ public sealed class DavDatabaseContext : DbContext
 
         if (pathList.Count == 0) return;
 
-        var now = DateTimeOffset.UtcNow;
-        RcloneInvalidationItems.AddRange(pathList.Select(path => new RcloneInvalidationItem
+        var pathSet = pathList.ToHashSet(StringComparer.Ordinal);
+        var existingItems = RcloneInvalidationItems.Local
+            .Where(x => pathSet.Contains(x.Path) && Entry(x).State != EntityState.Deleted)
+            .Concat(RcloneInvalidationItems
+                .Where(x => pathList.Contains(x.Path))
+                .ToList())
+            .GroupBy(x => x.Id)
+            .Select(x => x.First())
+            .ToList();
+        var existingPaths = existingItems
+            .Select(x => x.Path)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var existingItem in existingItems)
         {
-            Id = Guid.NewGuid(),
-            Path = path,
-            CreatedAt = now,
-            NextAttemptAt = now
-        }));
+            if (existingItem.NextAttemptAt > now)
+                existingItem.NextAttemptAt = now;
+        }
+
+        var newItems = new List<RcloneInvalidationItem>();
+        foreach (var path in pathList)
+        {
+            if (existingPaths.Contains(path))
+                continue;
+
+            newItems.Add(new RcloneInvalidationItem
+            {
+                Id = Guid.NewGuid(),
+                Path = path,
+                CreatedAt = now,
+                NextAttemptAt = now
+            });
+        }
+
+        RcloneInvalidationItems.AddRange(newItems);
     }
 
     public static async Task EnqueueRcloneVfsForgetAsync

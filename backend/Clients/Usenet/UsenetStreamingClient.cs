@@ -10,6 +10,8 @@ namespace NzbWebDAV.Clients.Usenet;
 
 public class UsenetStreamingClient : WrappingNntpClient
 {
+    private const int MaxConcurrentPipelinedStatBatches = 64;
+
     private readonly ConfigManager _configManager;
 
     public UsenetStreamingClient(ConfigManager configManager, WebsocketManager websocketManager)
@@ -45,42 +47,33 @@ public class UsenetStreamingClient : WrappingNntpClient
         CancellationToken cancellationToken
     )
     {
-        // Stay on the original one-at-a-time path unless pipelining is switched on AND at least one
-        // provider has actually opted in -- so enabling the master switch alone changes nothing until
-        // a provider is tested and enabled.
+        // When pipelining is disabled or ineffective, run individual STAT checks concurrently
+        // through the same priority/connection gates instead of serializing a whole batch on one
+        // borrowed connection.
         var depth = _configManager.GetNntpPipeliningDepth();
         var anyProviderPipelined = _configManager.GetUsenetProviderConfig()
-            .Providers.Any(p => p.StatPipeliningEnabled);
+            .Providers.Any(p => p.IsStatPipeliningEnabled());
         if (!_configManager.GetNntpPipeliningEnabled() || depth <= 1 || !anyProviderPipelined)
         {
-            return await base.CheckSegmentsAsync(segmentIds, concurrency, progress, cancellationToken)
+            return await CheckSegmentsConcurrentlyAsync(segmentIds, concurrency, progress, cancellationToken)
                 .ConfigureAwait(false);
         }
 
-        var segmentList = segmentIds.ToList();
-        var results = new SegmentCheckResult[segmentList.Count];
+        // Check the segments in pipelined batches of `depth`. Keep simultaneous batches bounded so a
+        // post-download verify can still be fast without stampeding every provider connection at once.
+        return await CheckSegmentsPipelinedAsync(
+                segmentIds,
+                batchSize: depth,
+                maxConcurrentBatches: GetPipelinedStatBatchConcurrency(concurrency),
+                progress,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
 
-        // Check the segments in pipelined batches of `depth`, running up to `concurrency` batches at
-        // once so every pooled connection stays busy. Depth is the user-facing lever: a deeper
-        // pipeline hides more round-trip latency; if a provider handles deep batches poorly, lower it.
-        var batches = segmentList
-            .Select((segmentId, index) => new IndexedSegment(index, segmentId))
-            .Chunk(depth);
-        var tasks = batches
-            .Select(batch => CheckPipelinedBatchAsync(batch, cancellationToken))
-            .WithConcurrencyAsync(Math.Max(1, concurrency), cancellationToken);
-
-        var processed = 0;
-        await foreach (var task in tasks.ConfigureAwait(false))
-        {
-            foreach (var result in task)
-            {
-                results[result.Index] = result.Result;
-                progress?.Report(++processed);
-            }
-        }
-
-        return SegmentCheckBatch.FromResults(results);
+    public static int GetPipelinedStatBatchConcurrency(int requestedConcurrency)
+    {
+        var runtimeLimit = Math.Clamp(Environment.ProcessorCount * 4, 8, MaxConcurrentPipelinedStatBatches);
+        return Math.Clamp(requestedConcurrency, 1, runtimeLimit);
     }
 
     public override async Task<NzbFileStream> GetFileStream(NzbFile nzbFile, int articleBufferSize, CancellationToken ct)
@@ -106,42 +99,6 @@ public class UsenetStreamingClient : WrappingNntpClient
             requestedEndByte,
             _configManager.GetSparseSegmentCacheOptions());
     }
-
-    private async Task<IReadOnlyList<IndexedSegmentCheckResult>> CheckPipelinedBatchAsync
-    (
-        IReadOnlyList<IndexedSegment> batch,
-        CancellationToken cancellationToken
-    )
-    {
-        try
-        {
-            var batchSegmentIds = batch.Select(x => x.SegmentId).ToArray();
-            var statResults = await StatPipelinedAsync(batchSegmentIds, cancellationToken).ConfigureAwait(false);
-            return batch
-                .Select((segment, i) => new IndexedSegmentCheckResult(
-                    segment.Index,
-                    CreateSegmentCheckResult(segment.SegmentId, statResults[i])
-                ))
-                .ToArray();
-        }
-        catch (Exception e) when (!e.IsCancellationException())
-        {
-            return batch
-                .Select(segment => new IndexedSegmentCheckResult(
-                    segment.Index,
-                    new SegmentCheckResult(
-                        segment.SegmentId,
-                        SegmentCheckState.ProviderError,
-                        Provider: null,
-                        Error: e.Message)
-                ))
-                .ToArray();
-        }
-    }
-
-    private readonly record struct IndexedSegment(int Index, string SegmentId);
-
-    private readonly record struct IndexedSegmentCheckResult(int Index, SegmentCheckResult Result);
 
     private static DownloadingNntpClient CreateDownloadingNntpClient
     (
@@ -192,7 +149,7 @@ public class UsenetStreamingClient : WrappingNntpClient
             circuitBreaker,
             connectionDetails.Host,
             connectionDetails.Priority,
-            connectionDetails.StatPipeliningEnabled);
+            connectionDetails.IsStatPipeliningEnabled());
     }
 
     private static ConnectionPool<INntpClient> CreateNewConnectionPool

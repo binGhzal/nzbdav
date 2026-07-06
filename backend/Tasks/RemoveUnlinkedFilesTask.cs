@@ -17,9 +17,18 @@ public class RemoveUnlinkedFilesTask(
     bool isDryRun
 ) : BaseTask(websocketManager, WebsocketTopic.CleanupTaskProgress)
 {
+    private static readonly object AuditReportLock = new();
     private static List<string> _allRemovedPaths = [];
 
     private record UnlinkedItemInfo(string Id, int Type, string Path);
+    private record ParsedUnlinkedItemInfo(string RawId, Guid Id, int Type, string Path);
+    private record ParsedUnlinkedItemBatch(
+        List<ParsedUnlinkedItemInfo> ValidItems,
+        List<UnlinkedItemInfo> MalformedItems)
+    {
+        public int Count => ValidItems.Count + MalformedItems.Count;
+        public IEnumerable<string> Paths => ValidItems.Select(x => x.Path).Concat(MalformedItems.Select(x => x.Path));
+    }
 
     protected override async Task ExecuteInternal()
     {
@@ -36,6 +45,8 @@ public class RemoveUnlinkedFilesTask(
 
     private async Task RemoveUnlinkedFiles()
     {
+        ClearAuditReport();
+
         // get linked file paths
         Report("Scanning all linked files...");
         var startTime = DateTime.Now;
@@ -55,13 +66,13 @@ public class RemoveUnlinkedFilesTask(
         if (isDryRun)
         {
             await DryRunIdentifyUnlinkedFiles(startTime);
-            Report($"Done. Identified {_allRemovedPaths.Count} unlinked files.");
+            Report($"Done. Identified {GetAuditReportPathCount()} unlinked files.");
         }
         else
         {
             await RemoveUnlinkedItems(startTime, unlinkedItems);
             await RemoveEmptyDirectories(startTime);
-            Report($"Done. Removed {_allRemovedPaths.Count} unlinked files.");
+            Report($"Done. Removed {GetAuditReportPathCount()} unlinked files.");
         }
     }
 
@@ -148,7 +159,6 @@ public class RemoveUnlinkedFilesTask(
     private async Task RemoveUnlinkedItems(DateTime createdBefore, int totalCount)
     {
         Report("Removing unlinked items...");
-        _allRemovedPaths.Clear();
         await using var dbContext = new DavDatabaseContext();
         var removed = 0;
 
@@ -173,22 +183,31 @@ public class RemoveUnlinkedFilesTask(
             if (itemsToDelete.Count == 0)
                 break;
 
+            var itemsToDeleteBatch = ParseUnlinkedItems(itemsToDelete);
+            if (itemsToDeleteBatch.Count == 0)
+            {
+                Report($"Removing unlinked items...\nSkipped {itemsToDelete.Count} malformed item IDs.");
+                break;
+            }
+
             // Delete the items.
-            await DeleteDavItemsAsync(dbContext, itemsToDelete.Select(x => x.Id).ToArray());
+            await DeleteDavItemsAsync(dbContext, itemsToDeleteBatch);
 
             // Queue rclone vfs/forget for deleted items
-            dbContext.EnqueueRcloneVfsForget(itemsToDelete.Select(x => new DavItem
+            dbContext.EnqueueRcloneVfsForget(itemsToDeleteBatch.ValidItems.Select(x => new DavItem
             {
-                Id = Guid.Parse(x.Id),
+                Id = x.Id,
                 Type = (DavItem.ItemType)x.Type,
                 Path = x.Path
             }).ToList());
+            dbContext.EnqueueRcloneVfsForgetPaths(GetParentDirectories(itemsToDeleteBatch.MalformedItems.Select(x => x.Path)));
             ContentIndexSnapshotWriterService.RequestSnapshot();
-            await dbContext.SaveChangesAsync();
+            await dbContext.SaveChangesAsync(CancellationToken).ConfigureAwait(false);
+            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken).ConfigureAwait(false);
 
             // Track removed paths
-            _allRemovedPaths.AddRange(itemsToDelete.Select(x => x.Path));
-            removed += itemsToDelete.Count;
+            AddAuditReportPaths(itemsToDeleteBatch.Paths);
+            removed += itemsToDeleteBatch.Count;
 
             Report($"Removing unlinked items...\nRemoved {removed}/{totalCount}...");
         }
@@ -223,20 +242,29 @@ public class RemoveUnlinkedFilesTask(
             if (emptyDirs.Count == 0)
                 break;
 
+            var emptyDirBatch = ParseUnlinkedItems(emptyDirs);
+            if (emptyDirBatch.Count == 0)
+            {
+                Report($"Removing empty directories...\nSkipped {emptyDirs.Count} malformed item IDs.");
+                break;
+            }
+
             // Delete the empty directories.
-            await DeleteDavItemsAsync(dbContext, emptyDirs.Select(x => x.Id).ToArray());
+            await DeleteDavItemsAsync(dbContext, emptyDirBatch);
 
             // Queue rclone vfs/forget for deleted directories
-            dbContext.EnqueueRcloneVfsForget(emptyDirs.Select(x => new DavItem
+            dbContext.EnqueueRcloneVfsForget(emptyDirBatch.ValidItems.Select(x => new DavItem
             {
-                Id = Guid.Parse(x.Id),
+                Id = x.Id,
                 Type = (DavItem.ItemType)x.Type,
                 Path = x.Path
             }).ToList());
+            dbContext.EnqueueRcloneVfsForgetPaths(GetParentDirectories(emptyDirBatch.MalformedItems.Select(x => x.Path)));
             ContentIndexSnapshotWriterService.RequestSnapshot();
-            await dbContext.SaveChangesAsync();
+            await dbContext.SaveChangesAsync(CancellationToken).ConfigureAwait(false);
+            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken).ConfigureAwait(false);
 
-            removed += emptyDirs.Count;
+            removed += emptyDirBatch.Count;
             Report($"Removing empty directories...\nRemoved {removed}...");
         }
     }
@@ -257,15 +285,61 @@ public class RemoveUnlinkedFilesTask(
                 createdBefore.ToString("yyyy-MM-dd HH:mm:ss"))
             .ToListAsync();
 
-        _allRemovedPaths = unlinkedFiles.Select(x => x.Path).ToList();
+        ReplaceAuditReport(unlinkedFiles.Select(x => x.Path));
     }
 
-    private static Task DeleteDavItemsAsync(DavDatabaseContext dbContext, IReadOnlyList<string> ids)
+    private static ParsedUnlinkedItemBatch ParseUnlinkedItems(IReadOnlyList<UnlinkedItemInfo> items)
     {
-        var davItemIds = ids.Select(Guid.Parse).ToArray();
-        return dbContext.Items
-            .Where(x => davItemIds.Contains(x.Id))
-            .ExecuteDeleteAsync();
+        var validItems = new List<ParsedUnlinkedItemInfo>(items.Count);
+        var malformedItems = new List<UnlinkedItemInfo>();
+        foreach (var item in items)
+        {
+            if (Guid.TryParse(item.Id, out var id))
+            {
+                validItems.Add(new ParsedUnlinkedItemInfo(item.Id, id, item.Type, item.Path));
+                continue;
+            }
+
+            Log.Warning(
+                "Removing cleanup candidate with malformed DavItem Id {Id} at {Path}",
+                item.Id,
+                item.Path);
+            malformedItems.Add(item);
+        }
+
+        return new ParsedUnlinkedItemBatch(validItems, malformedItems);
+    }
+
+    private static Task DeleteDavItemsAsync
+    (
+        DavDatabaseContext dbContext,
+        ParsedUnlinkedItemBatch batch
+    )
+    {
+        if (DavDatabaseContext.IsPostgres)
+        {
+            var ids = batch.ValidItems.Select(x => x.Id).ToArray();
+            return dbContext.Items
+                .Where(x => ids.Contains(x.Id))
+                .ExecuteDeleteAsync();
+        }
+
+        var parameters = batch.ValidItems
+            .Select(x => x.RawId)
+            .Concat(batch.MalformedItems.Select(x => x.Id))
+            .Select(x => (object)x)
+            .ToArray();
+        var placeholders = string.Join(",", parameters.Select((_, index) => $"{{{index}}}"));
+        var sql = $"""DELETE FROM "DavItems" WHERE "Id" IN ({placeholders})""";
+        return dbContext.Database.ExecuteSqlRawAsync(sql, parameters);
+    }
+
+    private static IEnumerable<string> GetParentDirectories(IEnumerable<string> paths)
+    {
+        return paths
+            .Select(Path.GetDirectoryName)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!);
     }
 
     protected override void Report(string message)
@@ -276,8 +350,49 @@ public class RemoveUnlinkedFilesTask(
 
     public static string GetAuditReport()
     {
-        return _allRemovedPaths.Count > 0
-            ? string.Join("\n", _allRemovedPaths)
+        var paths = GetAuditReportSnapshot();
+        return paths.Count > 0
+            ? string.Join("\n", paths)
             : "This list is Empty.\nYou must first run the task.";
+    }
+
+    private static void ClearAuditReport()
+    {
+        lock (AuditReportLock)
+        {
+            _allRemovedPaths.Clear();
+        }
+    }
+
+    private static void AddAuditReportPaths(IEnumerable<string> paths)
+    {
+        lock (AuditReportLock)
+        {
+            _allRemovedPaths.AddRange(paths);
+        }
+    }
+
+    private static void ReplaceAuditReport(IEnumerable<string> paths)
+    {
+        lock (AuditReportLock)
+        {
+            _allRemovedPaths = paths.ToList();
+        }
+    }
+
+    private static List<string> GetAuditReportSnapshot()
+    {
+        lock (AuditReportLock)
+        {
+            return _allRemovedPaths.ToList();
+        }
+    }
+
+    private static int GetAuditReportPathCount()
+    {
+        lock (AuditReportLock)
+        {
+            return _allRemovedPaths.Count;
+        }
     }
 }

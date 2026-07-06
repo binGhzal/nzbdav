@@ -1,4 +1,5 @@
 ﻿using System.Text.RegularExpressions;
+using System.Globalization;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
@@ -146,7 +147,10 @@ public class SevenZipProcessor : BaseProcessor
     private static int GetPartNumber(string filename)
     {
         var match = Regex.Match(filename, @"\.7z(\.(\d+))?$", RegexOptions.IgnoreCase);
-        return string.IsNullOrEmpty(match.Groups[2].Value) ? -1 : int.Parse(match.Groups[2].Value);
+        if (string.IsNullOrEmpty(match.Groups[2].Value)) return -1;
+        return int.TryParse(match.Groups[2].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var partNumber)
+            ? partNumber
+            : int.MaxValue;
     }
 
     private DavMultipartFile.Meta GetDavMultipartFileMeta

@@ -8,9 +8,24 @@ using Serilog;
 
 namespace NzbWebDAV.Services;
 
-public sealed class ContentIndexRecoveryService(ConfigManager configManager) : IHostedService
+public sealed class ContentIndexRecoveryService : BackgroundService
 {
-    public async Task StartAsync(CancellationToken cancellationToken)
+    private static readonly TimeSpan StartupRecoveryDelay = TimeSpan.FromSeconds(2);
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            await Task.Delay(StartupRecoveryDelay, stoppingToken).ConfigureAwait(false);
+            await RecoverAsync(stoppingToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Normal shutdown before or during best-effort recovery.
+        }
+    }
+
+    public async Task RecoverAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -22,7 +37,7 @@ public sealed class ContentIndexRecoveryService(ConfigManager configManager) : I
             if (snapshot == null || snapshot.Items.Count == 0) return;
 
             await using var dbContext = new DavDatabaseContext();
-            var plan = await BuildRecoveryPlanAsync(dbContext, snapshot, configManager, cancellationToken).ConfigureAwait(false);
+            var plan = await BuildRecoveryPlanAsync(dbContext, snapshot, cancellationToken).ConfigureAwait(false);
             if (!plan.NeedsRecovery) return;
 
             Log.Warning(
@@ -35,22 +50,20 @@ public sealed class ContentIndexRecoveryService(ConfigManager configManager) : I
 
             await RestoreAsync(dbContext, snapshot, plan, cancellationToken).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to restore /content items from persisted snapshot.");
         }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
-    {
-        return Task.CompletedTask;
-    }
-
     internal static async Task<RecoveryPlan> BuildRecoveryPlanAsync
     (
         DavDatabaseContext dbContext,
         ContentIndexSnapshotStore.ContentIndexSnapshot snapshot,
-        ConfigManager configManager,
         CancellationToken cancellationToken
     )
     {
@@ -77,12 +90,6 @@ public sealed class ContentIndexRecoveryService(ConfigManager configManager) : I
             if (item.ParentId == null || item.ParentId == DavItem.ContentFolder.Id) continue;
             if (currentItemsById.ContainsKey(item.ParentId.Value)) continue;
             AddItemAndAncestors(item.ParentId.Value, snapshotItemsById, missingItemIds);
-        }
-
-        foreach (var linkedItemId in GetLinkedItemIds(configManager))
-        {
-            if (currentItemsById.ContainsKey(linkedItemId)) continue;
-            AddItemAndAncestors(linkedItemId, snapshotItemsById, missingItemIds);
         }
 
         var effectiveItemsById = snapshot.Items
@@ -242,26 +249,6 @@ public sealed class ContentIndexRecoveryService(ConfigManager configManager) : I
         }
     }
 
-    private static IEnumerable<Guid> GetLinkedItemIds(ConfigManager configManager)
-    {
-        var libraryDir = configManager.GetLibraryDir();
-        if (string.IsNullOrWhiteSpace(libraryDir) || !Directory.Exists(libraryDir))
-            return [];
-
-        try
-        {
-            return OrganizedLinksUtil.GetLibraryDavItemLinks(configManager)
-                .Select(x => x.DavItemId)
-                .Distinct()
-                .ToArray();
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to inspect library links while evaluating /content recovery.");
-            return [];
-        }
-    }
-
     private static DavItem Clone(DavItem item)
     {
         return new DavItem
@@ -273,10 +260,14 @@ public sealed class ContentIndexRecoveryService(ConfigManager configManager) : I
             Name = item.Name,
             FileSize = item.FileSize,
             Type = item.Type,
+            SubType = item.SubType,
             Path = item.Path,
             ReleaseDate = item.ReleaseDate,
             LastHealthCheck = item.LastHealthCheck,
             NextHealthCheck = item.NextHealthCheck,
+            HistoryItemId = item.HistoryItemId,
+            FileBlobId = item.FileBlobId,
+            NzbBlobId = item.NzbBlobId,
         };
     }
 

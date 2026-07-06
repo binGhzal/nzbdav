@@ -4,11 +4,12 @@ import { backendClient } from "~/clients/backend-client.server";
 import { HealthTable } from "./components/health-table/health-table";
 import { HealthStats } from "./components/health-stats/health-stats";
 import { useCallback, useEffect, useState } from "react";
-import { receiveMessage } from "~/utils/websocket-util";
+import { createReconnectingWebSocket } from "~/utils/websocket-util";
 import { Alert } from "react-bootstrap";
-import { getWebsocketUrl, withUrlBase } from "~/utils/url-base";
+import { getWebsocketUrl } from "~/utils/url-base";
 import { useNavigation } from "react-router";
 import { OperationsStatus } from "./components/operations-status/operations-status";
+import { useHealthQueueTopUp } from "./health-queue-top-up";
 
 const topicNames = {
     healthItemStatus: 'hs',
@@ -64,6 +65,14 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export async function action({ request }: Route.ActionArgs) {
+    try {
+        return await performHealthAction(request);
+    } catch (error) {
+        return Response.json({ error: getErrorMessage(error) }, { status: 502 });
+    }
+}
+
+async function performHealthAction(request: Request) {
     const formData = await request.formData();
     const intent = formData.get("intent")?.toString();
 
@@ -74,7 +83,7 @@ export async function action({ request }: Route.ActionArgs) {
 
     if (intent === "cancel") {
         const runId = formData.get("runId")?.toString();
-        if (!runId) throw new Error("Repair run id is required.");
+        if (!runId) return badRequest("Repair run id is required.");
         await backendClient.cancelRepairRun(runId);
         return { ok: true };
     }
@@ -86,7 +95,7 @@ export async function action({ request }: Route.ActionArgs) {
 
     if (intent === "retry-arr-nudge") {
         const id = formData.get("id")?.toString();
-        if (!id) throw new Error("ARR search nudge id is required.");
+        if (!id) return badRequest("ARR search nudge id is required.");
         await backendClient.retryArrSearchNudge(id);
         return { ok: true };
     }
@@ -122,12 +131,12 @@ export async function action({ request }: Route.ActionArgs) {
 
     if (intent === "delete-arr-correlation") {
         const id = formData.get("id")?.toString();
-        if (!id) throw new Error("ARR correlation id is required.");
+        if (!id) return badRequest("ARR correlation id is required.");
         await backendClient.deleteArrCorrelation(id);
         return { ok: true };
     }
 
-    throw new Error("Unsupported repair action.");
+    return badRequest("Unsupported repair action.");
 }
 
 export default function Health({ loaderData }: Route.ComponentProps) {
@@ -140,18 +149,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     const isActionSubmitting = navigation.state !== "idle" && navigation.formMethod?.toLowerCase() === "post";
 
     // effects
-    useEffect(() => {
-        if (queueItems.length >= 15) return;
-        const refetchData = async () => {
-            var response = await fetch(withUrlBase('/api/get-health-check-queue?pageSize=30'));
-            if (response.ok) {
-                const healthCheckQueue = await response.json();
-                setQueueItems(healthCheckQueue.items);
-                setUncheckedCount(healthCheckQueue.uncheckedCount);
-            }
-        };
-        refetchData();
-    }, [queueItems, setQueueItems])
+    useHealthQueueTopUp(queueItems, setQueueItems, setUncheckedCount);
 
     // events
     const onHealthItemStatus = useCallback(async (message: string) => {
@@ -216,28 +214,16 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     ]);
 
     useEffect(() => {
-        let ws: WebSocket;
-        let disposed = false;
-        function connect() {
-            ws = new WebSocket(getWebsocketUrl());
-            ws.onmessage = receiveMessage(onWebsocketMessage);
-            ws.onopen = () => {
+        return createReconnectingWebSocket({
+            createSocket: () => new WebSocket(getWebsocketUrl()),
+            onMessage: onWebsocketMessage,
+            onOpen: socket => {
                 setWebsocketState("connected");
-                ws.send(JSON.stringify(topicSubscriptions));
-            }
-            ws.onclose = () => {
-                if (disposed) return;
-                setWebsocketState("disconnected");
-                setTimeout(() => connect(), 1000);
-            };
-            ws.onerror = () => {
-                setWebsocketState("disconnected");
-                ws.close()
-            };
-            return () => { disposed = true; ws.close(); }
-        }
-
-        return connect();
+                socket.send(JSON.stringify(topicSubscriptions));
+            },
+            onClose: () => setWebsocketState("disconnected"),
+            onError: () => setWebsocketState("disconnected"),
+        });
     }, [onWebsocketMessage]);
 
     return (
@@ -293,6 +279,14 @@ function numberOrUndefined(value: string | undefined) {
     if (!value || !value.trim()) return undefined;
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function badRequest(error: string) {
+    return Response.json({ error }, { status: 400 });
+}
+
+function getErrorMessage(error: unknown) {
+    return error instanceof Error ? error.message : String(error);
 }
 
 async function loadOptional<T>(load: () => Promise<T>): Promise<{ data: T | null; error: string | null }> {

@@ -34,14 +34,31 @@ public partial class DavRarFile
 
     public DavMultipartFile.Meta ToDavMultipartFileMeta()
     {
+        if (RarParts is null)
+            throw new InvalidDataException("Invalid RAR file metadata: RAR parts are missing.");
+
         return new DavMultipartFile.Meta
         {
-            FileParts = RarParts.Select(x => new DavMultipartFile.FilePart()
-            {
-                SegmentIds = x.SegmentIds,
-                SegmentIdByteRange = LongRange.FromStartAndSize(0, x.PartSize),
-                FilePartByteRange = LongRange.FromStartAndSize(x.Offset, x.ByteCount),
-            }).ToArray()
+            FileParts = RarParts.Select((x, index) =>
+                {
+                    if (x is null)
+                        throw new InvalidDataException($"Invalid RAR file metadata: RAR part {index} is missing.");
+
+                    return new DavMultipartFile.FilePart()
+                    {
+                        SegmentIds = NormalizeSegmentIds(x.SegmentIds),
+                        SegmentIdByteRange = LongRange.FromStartAndSize(0, x.PartSize),
+                        FilePartByteRange = LongRange.FromStartAndSize(x.Offset, x.ByteCount),
+                    };
+                })
+                .ToArray()
         };
+    }
+
+    private static string[] NormalizeSegmentIds(IEnumerable<string>? segmentIds)
+    {
+        return segmentIds?
+            .Where(segmentId => !string.IsNullOrWhiteSpace(segmentId))
+            .ToArray() ?? [];
     }
 }
