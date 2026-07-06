@@ -74,6 +74,8 @@
 * allow high operator overrides for queue and streaming connection settings without silently clamping them to old WebUI limits.
 * treat NNTP ports `563` and `443` as TLS ports even when imported provider JSON forgot `UseSsl=true`.
 * add an explicit duplicate-reject SAB add mode for validated ARR duplicate loops while preserving diagnostic/report-only defaults.
+* avoid recreating or restarting rclone mounts when the generated rclone config is unchanged.
+* harden recovery paths that surfaced repeated file errors during content-index and blob migration cleanup.
 
 ### Infrastructure
 
@@ -86,6 +88,7 @@
 * publish immutable `sha-<commit>` GHCR tags alongside beta/latest release tags.
 * require npm/NuGet vulnerability scans, Docker image build, migration failure smoke, Playwright smoke, and whitespace checks before release images.
 * require changelog updates on main pushes that publish pre-release images.
+* document the production rclone, file-recovery, and verification-lane remediation in the pre-release changelog.
 * update CI setup actions to current Node runtime majors.
 * add a PostgreSQL migration smoke test against `postgres:16-alpine`.
 * harden Playwright smoke tests for shared mock backend state, slower CI hydration, and stable queue filter/page-size route coverage.
