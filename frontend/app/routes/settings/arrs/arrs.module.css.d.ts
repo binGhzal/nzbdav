@@ -10,6 +10,7 @@ declare const styles: {
   readonly error: string;
   readonly removeButton: string;
   readonly alertMessage: string;
+  readonly alert: string;
   readonly listItem: string;
   readonly statusMessage: string;
   readonly testButton: string;

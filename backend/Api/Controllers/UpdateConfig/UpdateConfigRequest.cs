@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Utils;
 
@@ -19,7 +20,9 @@ public class UpdateConfigRequest
             .Select(x => x.ConfigName != "webdav.pass" ? x : new ConfigItem()
             {
                 ConfigName = x.ConfigName,
-                ConfigValue = PasswordUtil.Hash(x.ConfigValue)
+                ConfigValue = ConfigSecretRedactor.IsRedactedSecret(x.ConfigValue)
+                    ? x.ConfigValue
+                    : PasswordUtil.Hash(x.ConfigValue)
             })
             .ToList();
     }

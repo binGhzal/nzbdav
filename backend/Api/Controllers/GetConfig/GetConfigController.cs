@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 
 namespace NzbWebDAV.Api.Controllers.GetConfig;
@@ -11,8 +12,12 @@ public class GetConfigController(DavDatabaseClient dbClient) : BaseApiController
     private async Task<GetConfigResponse> GetConfig(GetConfigRequest request)
     {
         var configItems = await dbClient.Ctx.ConfigItems
+            .AsNoTracking()
             .Where(x => request.ConfigKeys.Contains(x.ConfigName))
             .ToListAsync(HttpContext.RequestAborted).ConfigureAwait(false);
+
+        if (!request.IncludeSecrets)
+            configItems = configItems.Select(ConfigSecretRedactor.RedactForDisplay).ToList();
 
         var response = new GetConfigResponse { ConfigItems = configItems };
         return response;

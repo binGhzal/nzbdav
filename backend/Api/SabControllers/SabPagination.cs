@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Extensions;
+using System.Text.Json;
 
 namespace NzbWebDAV.Api.SabControllers;
 
@@ -43,5 +45,43 @@ public static class SabPagination
     public static List<Guid> ParseNzoIdList(string? value)
     {
         return ParseNzoIdSet(value).ToList();
+    }
+
+    public static IEnumerable<Guid> ParseValueIdList(HttpContext context, params string[] allowedCommandValues)
+    {
+        var allowedCommands = allowedCommandValues
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var value in context.GetQueryParamValues("value")
+                     .SelectMany(x => x.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))
+        {
+            if (allowedCommands.Contains(value))
+                continue;
+            if (!Guid.TryParse(value, out var guid))
+                throw new BadHttpRequestException("Invalid value parameter");
+            yield return guid;
+        }
+    }
+
+    public static async Task<T?> ReadOptionalJsonBody<T>(HttpContext context, CancellationToken ct)
+    {
+        if (!HasRequestBody(context)) return default;
+
+        try
+        {
+            return await JsonSerializer
+                .DeserializeAsync<T>(context.Request.Body, cancellationToken: ct)
+                .ConfigureAwait(false);
+        }
+        catch (JsonException e)
+        {
+            throw new BadHttpRequestException("Invalid request body", e);
+        }
+    }
+
+    private static bool HasRequestBody(HttpContext context)
+    {
+        if (context.Request.ContentLength is > 0) return true;
+        if (context.Request.Body.CanSeek) return context.Request.Body.Length > context.Request.Body.Position;
+        return false;
     }
 }

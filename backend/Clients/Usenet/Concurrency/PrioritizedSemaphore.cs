@@ -17,6 +17,7 @@ namespace NzbWebDAV.Clients.Usenet.Concurrency;
 public class PrioritizedSemaphore : IDisposable
 {
     private readonly LinkedList<TaskCompletionSource<bool>> _highPriorityWaiters = [];
+    private readonly LinkedList<TaskCompletionSource<bool>> _normalPriorityWaiters = [];
     private readonly LinkedList<TaskCompletionSource<bool>> _lowPriorityWaiters = [];
     private SemaphorePriorityOdds _priorityOdds;
     private int _maxAllowed;
@@ -24,6 +25,7 @@ public class PrioritizedSemaphore : IDisposable
     private bool _disposed = false;
     private readonly Lock _lock = new();
     private int _accumulatedOdds;
+    private int _normalLowAccumulatedOdds;
 
     public PrioritizedSemaphore(int initialAllowed, int maxAllowed, SemaphorePriorityOdds? priorityOdds = null)
     {
@@ -49,7 +51,12 @@ public class PrioritizedSemaphore : IDisposable
             }
 
             var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var queue = priority == SemaphorePriority.High ? _highPriorityWaiters : _lowPriorityWaiters;
+            var queue = priority switch
+            {
+                SemaphorePriority.High => _highPriorityWaiters,
+                SemaphorePriority.Normal => _normalPriorityWaiters,
+                _ => _lowPriorityWaiters
+            };
             var node = queue.AddLast(tcs);
 
             if (cancellationToken.CanBeCanceled)
@@ -81,6 +88,21 @@ public class PrioritizedSemaphore : IDisposable
         }
     }
 
+    public bool TryWait()
+    {
+        lock (_lock)
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(AsyncSemaphore));
+
+            if (_enteredCount >= _maxAllowed)
+                return false;
+
+            _enteredCount++;
+            return true;
+        }
+    }
+
     public void Release()
     {
         TaskCompletionSource<bool>? toRelease;
@@ -98,31 +120,9 @@ public class PrioritizedSemaphore : IDisposable
                 // lowered through the UpdateMaxAllowed method.
                 toRelease = null;
             }
-            else if (_highPriorityWaiters.Count == 0)
-            {
-                // if there are no high-priority waiters,
-                // then release a low-priority waiter.
-                toRelease = Release(_lowPriorityWaiters);
-            }
-            else if (_lowPriorityWaiters.Count == 0)
-            {
-                // if there are no low-priority waiters,
-                // then release a high-priority waiter.
-                toRelease = Release(_highPriorityWaiters);
-            }
             else
             {
-                // if there are both high-priority waiters and low-priority waiters,
-                // then roll the dice to determine which to release, based on the given odds.
-                _accumulatedOdds += _priorityOdds.LowPriorityOdds;
-                var (one, two) = (_highPriorityWaiters, _lowPriorityWaiters);
-                if (_accumulatedOdds >= 100)
-                {
-                    (one, two) = (two, one);
-                    _accumulatedOdds -= 100;
-                }
-
-                toRelease = Release(one) ?? Release(two);
+                toRelease = SelectWaiterToRelease();
             }
 
             if (toRelease == null)
@@ -142,6 +142,31 @@ public class PrioritizedSemaphore : IDisposable
         toRelease.TrySetResult(true);
     }
 
+    private TaskCompletionSource<bool>? SelectWaiterToRelease()
+    {
+        if (_highPriorityWaiters.Count == 0)
+        {
+            // If there are no foreground stream waiters, alternate between verify/repair
+            // and bulk download waiters. This keeps completed downloads moving through
+            // verification without starving the main queue.
+            return ReleaseNormalOrLowWaiter();
+        }
+
+        if (_normalPriorityWaiters.Count == 0 && _lowPriorityWaiters.Count == 0)
+            return Release(_highPriorityWaiters);
+
+        // if there are both high-priority waiters and non-foreground waiters,
+        // then roll the dice to determine which to release, based on the given odds.
+        _accumulatedOdds += _priorityOdds.LowPriorityOdds;
+        if (_accumulatedOdds >= 100)
+        {
+            _accumulatedOdds -= 100;
+            return ReleaseNormalOrLowWaiter() ?? Release(_highPriorityWaiters);
+        }
+
+        return Release(_highPriorityWaiters) ?? ReleaseNormalOrLowWaiter();
+    }
+
     private static TaskCompletionSource<bool>? Release(LinkedList<TaskCompletionSource<bool>> queue)
     {
         while (queue.Count > 0)
@@ -159,12 +184,46 @@ public class PrioritizedSemaphore : IDisposable
         return null;
     }
 
+    private TaskCompletionSource<bool>? ReleaseNormalOrLowWaiter()
+    {
+        if (_normalPriorityWaiters.Count == 0)
+            return Release(_lowPriorityWaiters);
+        if (_lowPriorityWaiters.Count == 0)
+            return Release(_normalPriorityWaiters);
+
+        _normalLowAccumulatedOdds += 50;
+        if (_normalLowAccumulatedOdds >= 100)
+        {
+            _normalLowAccumulatedOdds -= 100;
+            return Release(_lowPriorityWaiters) ?? Release(_normalPriorityWaiters);
+        }
+
+        return Release(_normalPriorityWaiters) ?? Release(_lowPriorityWaiters);
+    }
+
     public void UpdateMaxAllowed(int newMaxAllowed)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(newMaxAllowed);
+
+        List<TaskCompletionSource<bool>> waitersToRelease = [];
         lock (_lock)
         {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(AsyncSemaphore));
+
             _maxAllowed = newMaxAllowed;
+            while (_enteredCount < _maxAllowed)
+            {
+                var waiter = SelectWaiterToRelease();
+                if (waiter == null) break;
+
+                _enteredCount++;
+                waitersToRelease.Add(waiter);
+            }
         }
+
+        foreach (var waiter in waitersToRelease)
+            waiter.TrySetResult(true);
     }
 
     public void UpdatePriorityOdds(SemaphorePriorityOdds newPriorityOdds)
@@ -182,8 +241,12 @@ public class PrioritizedSemaphore : IDisposable
         {
             if (_disposed) return;
             _disposed = true;
-            waitersToCancel = _highPriorityWaiters.Concat(_lowPriorityWaiters).ToList();
+            waitersToCancel = _highPriorityWaiters
+                .Concat(_normalPriorityWaiters)
+                .Concat(_lowPriorityWaiters)
+                .ToList();
             _highPriorityWaiters.Clear();
+            _normalPriorityWaiters.Clear();
             _lowPriorityWaiters.Clear();
         }
 

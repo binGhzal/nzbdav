@@ -32,4 +32,27 @@ public class NzbDocumentTests
         Assert.Equal(["segment-a", "segment-b"], NzbSegmentIdSet.Decode(segmentIds[0]));
         Assert.Equal(["segment-c"], NzbSegmentIdSet.Decode(segmentIds[1]));
     }
+
+    [Fact]
+    public async Task OutOfOrderNumberedSegmentsAreReturnedInSegmentNumberOrder()
+    {
+        const string xml = """
+                           <?xml version="1.0" encoding="utf-8"?>
+                           <nzb>
+                             <file subject="example.mkv">
+                               <segments>
+                                 <segment bytes="20" number="2">segment-b</segment>
+                                 <segment bytes="10" number="1">segment-a</segment>
+                               </segments>
+                             </file>
+                           </nzb>
+                           """;
+
+        await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml));
+        var document = await NzbDocument.LoadAsync(stream);
+        var file = Assert.Single(document.Files);
+
+        Assert.Equal(["segment-a", "segment-b"], file.GetSegmentIds());
+        Assert.Equal(30, file.GetTotalYencodedSize());
+    }
 }

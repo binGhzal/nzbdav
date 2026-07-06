@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Buffers;
+using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NWebDav.Server.Stores;
@@ -7,62 +8,97 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Par2Recovery;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
+using NzbWebDAV.WebDav.Base;
 
 namespace NzbWebDAV.Api.Controllers.GetWebdavItem;
 
 [ApiController]
 [Route("view/{*path}")]
-public class GetWebdavItemController(DatabaseStore store, ConfigManager configManager) : ControllerBase
+public class GetWebdavItemController(IStore store, ConfigManager configManager) : ControllerBase
 {
+    public const int ResponseCopyBufferSize = 64 * 1024;
+
     private async Task<Stream> GetWebdavItem(GetWebdavItemRequest request)
     {
-        var item = await store.GetItemAsync(request.Item, HttpContext.RequestAborted).ConfigureAwait(false);
+        var item = await store.GetItemAsync(CreateStoreUri(request.Item), HttpContext.RequestAborted)
+            .ConfigureAwait(false);
         if (item is null) throw new BadHttpRequestException("The file does not exist.");
         if (item is IStoreCollection) throw new BadHttpRequestException("The file does not exist.");
 
-        // disable compression to keep Content-Length intact for clients that need seeking
+        // disable compression so ranged streaming responses are not transformed
         Response.Headers["Content-Encoding"] = "identity";
-
-        // handle par2 preview
-        if (Path.GetExtension(item.Name).ToLower() == ".par2" && configManager.IsPreviewPar2FilesEnabled())
-            return await GetPar2PreviewStream(item).ConfigureAwait(false);
-
-        if (request.RangeEnd is not null)
-            HttpContext.Items["RequestedRangeEnd"] = request.RangeEnd.Value;
-
-        // get the file stream and set the file-size in header
-        var stream = await item.GetReadableStreamAsync(HttpContext.RequestAborted).ConfigureAwait(false);
-        var fileSize = stream.Length;
+        var isHeadRequest = HttpContext.Request.Method == HttpMethods.Head;
 
         // set the content-type and content-disposition headers
         Response.Headers["Content-Type"] = GetContentType(item.Name);
         Response.Headers["Content-Disposition"] = GetContentDisposition(item.Name, request.ShouldDownload);
 
-        // disable compression to keep Content-Length intact for clients that need seeking
+        // disable compression so ranged streaming responses are not transformed
         Response.Headers["Content-Encoding"] = "identity";
         Response.Headers["Accept-Ranges"] = "bytes";
 
-        if (request.RangeStart is not null)
+        if (isHeadRequest && item is BaseStoreItem storeItem)
         {
-            // compute
-            var end = request.RangeEnd ?? (fileSize - 1);
-            var chunkSize = 1 + end - request.RangeStart!.Value;
+            SetHeadResponseHeaders(request, storeItem.FileSize);
+            return Stream.Null;
+        }
+
+        // handle par2 preview
+        if (Path.GetExtension(item.Name).ToLower() == ".par2" && configManager.IsPreviewPar2FilesEnabled())
+            return await GetPar2PreviewStream(item).ConfigureAwait(false);
+
+        // get the file stream and set the file-size in header
+        var stream = await item.GetReadableStreamAsync(HttpContext.RequestAborted).ConfigureAwait(false);
+        var fileSize = stream.Length;
+
+        if (request.Range is not null)
+        {
+            if (!request.Range.TryResolve(fileSize, out var range))
+            {
+                await stream.DisposeAsync().ConfigureAwait(false);
+                Response.Headers["Content-Range"] = $"bytes */{fileSize}";
+                Response.StatusCode = StatusCodes.Status416RangeNotSatisfiable;
+                return Stream.Null;
+            }
+
+            HttpContext.Items["RequestedRangeEnd"] = range.End;
 
             // seek
-            stream.Seek(request.RangeStart.Value, SeekOrigin.Begin);
-            if (request.RangeEnd is not null) stream = stream.LimitLength(chunkSize);
+            stream.Seek(range.Start, SeekOrigin.Begin);
+            stream = stream.LimitLength(range.Length);
 
             // set response headers
-            Response.Headers["Content-Range"] = $"bytes {request.RangeStart}-{end}/{fileSize}";
-            Response.Headers["Content-Length"] = chunkSize.ToString();
+            Response.Headers["Content-Range"] = $"bytes {range.Start}-{range.End}/{fileSize}";
+            if (isHeadRequest) Response.Headers["Content-Length"] = range.Length.ToString();
             Response.StatusCode = 206;
         }
         else
         {
-            Response.Headers["Content-Length"] = fileSize.ToString();
+            if (isHeadRequest) Response.Headers["Content-Length"] = fileSize.ToString();
         }
 
         return stream;
+    }
+
+    private void SetHeadResponseHeaders(GetWebdavItemRequest request, long fileSize)
+    {
+        if (request.Range is not null)
+        {
+            if (!request.Range.TryResolve(fileSize, out var range))
+            {
+                Response.Headers["Content-Range"] = $"bytes */{fileSize}";
+                Response.StatusCode = StatusCodes.Status416RangeNotSatisfiable;
+                return;
+            }
+
+            HttpContext.Items["RequestedRangeEnd"] = range.End;
+            Response.Headers["Content-Range"] = $"bytes {range.Start}-{range.End}/{fileSize}";
+            Response.Headers["Content-Length"] = range.Length.ToString();
+            Response.StatusCode = StatusCodes.Status206PartialContent;
+            return;
+        }
+
+        Response.Headers["Content-Length"] = fileSize.ToString();
     }
 
     [HttpGet]
@@ -73,7 +109,8 @@ public class GetWebdavItemController(DatabaseStore store, ConfigManager configMa
             HttpContext.Items["configManager"] = configManager;
             var request = new GetWebdavItemRequest(HttpContext);
             await using var response = await GetWebdavItem(request);
-            await response.CopyToAsync(Response.Body, bufferSize: 1024, HttpContext.RequestAborted);
+            await CopyResponseBodyAsync(response, Response.Body, HttpContext.RequestAborted)
+                .ConfigureAwait(false);
         }
         catch (UnauthorizedAccessException)
         {
@@ -94,6 +131,40 @@ public class GetWebdavItemController(DatabaseStore store, ConfigManager configMa
         catch (UnauthorizedAccessException)
         {
             Response.StatusCode = 401;
+        }
+    }
+
+    private static Uri CreateStoreUri(string itemPath)
+    {
+        var escapedPath = string.Join(
+            '/',
+            itemPath
+                .TrimStart('/')
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                .Select(Uri.EscapeDataString));
+        return new Uri($"http://localhost/{escapedPath}");
+    }
+
+    private static async Task CopyResponseBodyAsync(Stream source, Stream destination, CancellationToken ct)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(ResponseCopyBufferSize);
+        try
+        {
+            while (true)
+            {
+                var bytesRead = await source
+                    .ReadAsync(buffer.AsMemory(0, ResponseCopyBufferSize), ct)
+                    .ConfigureAwait(false);
+                if (bytesRead == 0) return;
+
+                await destination
+                    .WriteAsync(buffer.AsMemory(0, bytesRead), ct)
+                    .ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 

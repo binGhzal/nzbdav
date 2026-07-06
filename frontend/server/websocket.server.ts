@@ -1,11 +1,14 @@
-import WebSocket, { WebSocketServer } from 'ws';
+import WebSocket, { type WebSocketServer } from 'ws';
 import { isAuthenticated } from "../app/auth/authentication.server";
 import type { IncomingMessage } from 'http';
+import { createReconnectBackoff, parseTopicMessage } from "../app/utils/websocket-util";
+
+type FrontendTopicSubscription = Record<string, string>;
 
 function initializeWebsocketServer(wss: WebSocketServer) {
     // keep track of socket subscriptions
     const clients = new Set<WebSocket>();
-    const websockets = new Map<WebSocket, any>();
+    const websockets = new Map<WebSocket, FrontendTopicSubscription>();
     const subscriptions = new Map<string, Set<WebSocket>>();
     const lastMessage = new Map<string, string>();
     const backendWebsocket = initializeWebsocketClient(
@@ -29,14 +32,15 @@ function initializeWebsocketServer(wss: WebSocketServer) {
             // handle topic subscription
             ws.onmessage = (event: WebSocket.MessageEvent) => {
                 try {
-                    var topics = JSON.parse(event.data.toString());
+                    const topics = parseFrontendTopicSubscription(event.data.toString());
+                    removeSocketSubscriptions(ws, websockets.get(ws), subscriptions);
                     websockets.set(ws, topics);
-                    for (const topic in topics) {
-                        var topicSubscriptions = subscriptions.get(topic);
+                    for (const [topic, mode] of Object.entries(topics)) {
+                        const topicSubscriptions = subscriptions.get(topic);
                         if (topicSubscriptions) topicSubscriptions.add(ws);
                         else subscriptions.set(topic, new Set<WebSocket>([ws]));
-                        if (topics[topic] === 'state') {
-                            var messageToSend = lastMessage.get(topic);
+                        if (mode === 'state') {
+                            const messageToSend = lastMessage.get(topic);
                             if (messageToSend) ws.send(messageToSend);
                         }
                     }
@@ -48,14 +52,8 @@ function initializeWebsocketServer(wss: WebSocketServer) {
             // unsubscribe from topics
             ws.onclose = () => {
                 clients.delete(ws);
-                var topics = websockets.get(ws);
-                if (topics) {
-                    websockets.delete(ws);
-                    for (const topic in topics) {
-                        var topicSubscriptions = subscriptions.get(topic);
-                        if (topicSubscriptions) topicSubscriptions.delete(ws);
-                    }
-                }
+                removeSocketSubscriptions(ws, websockets.get(ws), subscriptions);
+                websockets.delete(ws);
                 backendWebsocket.disconnectIfIdle();
             };
         } catch (error) {
@@ -66,15 +64,47 @@ function initializeWebsocketServer(wss: WebSocketServer) {
     });
 }
 
+function parseFrontendTopicSubscription(rawMessage: string): FrontendTopicSubscription {
+    const topics = JSON.parse(rawMessage);
+    if (!topics || typeof topics !== "object" || Array.isArray(topics)) {
+        throw new Error("Expected websocket topic subscription object");
+    }
+
+    const normalized: FrontendTopicSubscription = {};
+    for (const [topic, mode] of Object.entries(topics)) {
+        if (!topic || typeof mode !== "string") {
+            throw new Error("Expected websocket topic modes to be strings");
+        }
+        normalized[topic] = mode;
+    }
+    return normalized;
+}
+
+function removeSocketSubscriptions(
+    ws: WebSocket,
+    topics: FrontendTopicSubscription | undefined,
+    subscriptions: Map<string, Set<WebSocket>>
+) {
+    if (!topics) return;
+
+    for (const topic of Object.keys(topics)) {
+        const topicSubscriptions = subscriptions.get(topic);
+        if (!topicSubscriptions) continue;
+
+        topicSubscriptions.delete(ws);
+        if (topicSubscriptions.size === 0) subscriptions.delete(topic);
+    }
+}
+
 export function initializeWebsocketClient(
     subscriptions: Map<string, Set<WebSocket>>,
     lastMessage: Map<string, string>,
     shouldStayConnected: () => boolean
 ) {
-    let reconnectRetryDelay = 1000;
     let reconnectTimeout: NodeJS.Timeout | null = null;
     let socket: WebSocket | null = null;
     const url = getBackendWebsocketUrl();
+    const reconnectBackoff = createReconnectBackoff();
 
     function connect() {
         if (!shouldStayConnected()) return;
@@ -84,24 +114,31 @@ export function initializeWebsocketClient(
         socket = newSocket;
 
         newSocket.on('error', (error: Error) => {
+            if (!isCurrentSocket(newSocket)) return;
             console.error('WebSocket error:', error.message);
         });
 
         newSocket.onopen = () => {
+            if (!isCurrentSocket(newSocket)) return;
             console.info("WebSocket connected");
             if (reconnectTimeout) {
                 clearTimeout(reconnectTimeout);
                 reconnectTimeout = null;
             }
+            reconnectBackoff.reset();
 
             newSocket.send(Buffer.from(process.env.FRONTEND_BACKEND_API_KEY!, "utf-8"), { binary: false });
         };
 
         newSocket.onmessage = (event: WebSocket.MessageEvent) => {
+            if (!isCurrentSocket(newSocket)) return;
             var rawMessage = event.data.toString();
-            var topicMessage = JSON.parse(rawMessage);
-            var [topic, message] = [topicMessage.Topic, topicMessage.Message];
-            if (!topic || !message) return;
+            var topicMessage = parseTopicMessage(rawMessage);
+            if (!topicMessage) {
+                console.warn("Ignored invalid backend websocket payload");
+                return;
+            }
+            var { topic } = topicMessage;
             lastMessage.set(topic, rawMessage);
             var subscribed = subscriptions.get(topic) || [];
             subscribed.forEach(client => {
@@ -112,10 +149,15 @@ export function initializeWebsocketClient(
         };
 
         newSocket.onclose = (event: WebSocket.CloseEvent) => {
+            if (!isCurrentSocket(newSocket)) return;
             console.info(`WebSocket closed (code: ${event.code}, reason: ${event.reason})`);
-            if (socket === newSocket) socket = null;
+            socket = null;
             if (shouldStayConnected()) scheduleReconnect();
         };
+    }
+
+    function isCurrentSocket(candidate: WebSocket) {
+        return socket === candidate;
     }
 
     function scheduleReconnect() {
@@ -125,7 +167,7 @@ export function initializeWebsocketClient(
         reconnectTimeout = setTimeout(() => {
             console.info(`WebSocket reconnecting...`);
             connect();
-        }, reconnectRetryDelay);
+        }, reconnectBackoff.nextDelayMs());
     }
 
     function disconnectIfIdle() {

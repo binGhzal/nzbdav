@@ -17,12 +17,14 @@ nuget
 .env
 .env.*
 !.env.example
+.nzbdav-rclone-state.json
 
 #######################
 # benchmark artifacts #
 #######################
 
 artifacts/benchmarks/
+artifacts/arr-validation/
 
 ##############
 # IDE config #

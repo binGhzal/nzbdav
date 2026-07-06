@@ -13,54 +13,41 @@ public static class SegmentSliceUtil
     {
         if (partSize <= 0 || filePartByteRange.Count <= 0) return [];
 
-        var segments = nzbFile.GetLogicalSegmentInfos().ToArray();
-        if (segments.Length == 0) return [];
-        if (segments.Any(x => x.Bytes <= 0)) return [];
-        if (segments.Sum(x => x.Bytes) != partSize) return [];
+        var segments = nzbFile.GetLogicalSegmentInfos();
+        if (segments.Count == 0) return [];
 
-        var segmentRanges = CreateSegmentRanges(segments, partSize);
-        return segmentRanges
-            .Select(segment => CreateSlice(segment, filePartByteRange))
-            .Where(slice => slice != null)
-            .Select(slice => slice!)
-            .ToArray();
-    }
-
-    private static SegmentRange[] CreateSegmentRanges(
-        IReadOnlyList<NzbFile.LogicalSegmentInfo> segments,
-        long partSize)
-    {
-        var ranges = new SegmentRange[segments.Count];
+        var slices = new List<DavMultipartFile.SegmentSlice>();
         long offset = 0;
-        for (var i = 0; i < segments.Count; i++)
+        foreach (var segment in segments)
         {
-            ranges[i] = new SegmentRange(
-                segments[i].SegmentId,
-                LongRange.FromStartAndSize(offset, segments[i].Bytes));
-            offset += segments[i].Bytes;
+            if (segment.Bytes <= 0) return [];
+            var segmentRange = LongRange.FromStartAndSize(offset, segment.Bytes);
+            var slice = CreateSlice(segment.SegmentId, segmentRange, filePartByteRange);
+            if (slice is not null)
+                slices.Add(slice);
+            offset += segment.Bytes;
         }
 
-        return ranges;
+        return offset == partSize ? slices.ToArray() : [];
     }
 
     private static DavMultipartFile.SegmentSlice? CreateSlice(
-        SegmentRange segment,
+        string segmentId,
+        LongRange segmentByteRange,
         LongRange filePartByteRange)
     {
-        var overlapStart = Math.Max(segment.ByteRange.StartInclusive, filePartByteRange.StartInclusive);
-        var overlapEnd = Math.Min(segment.ByteRange.EndExclusive, filePartByteRange.EndExclusive);
+        var overlapStart = Math.Max(segmentByteRange.StartInclusive, filePartByteRange.StartInclusive);
+        var overlapEnd = Math.Min(segmentByteRange.EndExclusive, filePartByteRange.EndExclusive);
         if (overlapStart >= overlapEnd) return null;
 
         var overlapLength = overlapEnd - overlapStart;
-        var segmentOffset = overlapStart - segment.ByteRange.StartInclusive;
+        var segmentOffset = overlapStart - segmentByteRange.StartInclusive;
         var filePartOffset = overlapStart - filePartByteRange.StartInclusive;
         return new DavMultipartFile.SegmentSlice
         {
-            SegmentId = segment.SegmentId,
+            SegmentId = segmentId,
             SegmentByteRange = LongRange.FromStartAndSize(segmentOffset, overlapLength),
             FilePartByteRange = LongRange.FromStartAndSize(filePartOffset, overlapLength)
         };
     }
-
-    private sealed record SegmentRange(string SegmentId, LongRange ByteRange);
 }

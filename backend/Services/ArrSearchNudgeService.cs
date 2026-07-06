@@ -7,6 +7,7 @@ using NzbWebDAV.Clients.RadarrSonarr.SonarrModels;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Utils;
 using Serilog;
 
 namespace NzbWebDAV.Services;
@@ -23,9 +24,9 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
                 if (options.Enabled)
                     await RunOnceAsync(stoppingToken).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is OperationCanceledException && stoppingToken.IsCancellationRequested)
+            catch (Exception ex) when (BackgroundServiceCancellationUtil.IsExpectedCancellation(ex, stoppingToken))
             {
-                throw;
+                return;
             }
             catch (Exception ex)
             {
@@ -247,9 +248,9 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
             var command = instance.Client switch
             {
                 SonarrClient sonarr when commandRow.CommandName == "EpisodeSearch" =>
-                    await sonarr.SearchEpisodesAsync(targetIds).WaitAsync(ct).ConfigureAwait(false),
+                    await sonarr.SearchEpisodesAsync(targetIds, ct).ConfigureAwait(false),
                 RadarrClient radarr when commandRow.CommandName == "MoviesSearch" =>
-                    await radarr.SearchMoviesAsync(targetIds).WaitAsync(ct).ConfigureAwait(false),
+                    await radarr.SearchMoviesAsync(targetIds, ct).ConfigureAwait(false),
                 _ => throw new InvalidOperationException(
                     $"ARR command {commandRow.CommandName} is not supported for {instance.App}.")
             };
@@ -328,7 +329,7 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
     )
     {
         var now = DateTimeOffset.UtcNow;
-        var missing = await sonarr.GetMissingEpisodesAsync().WaitAsync(ct).ConfigureAwait(false);
+        var missing = await sonarr.GetMissingEpisodesAsync(ct: ct).ConfigureAwait(false);
         var monitored = missing.Records
             .Where(x => x.Monitored && !x.HasFile)
             .Where(x => x.AirDateUtc is null || x.AirDateUtc <= now.AddDays(1))
@@ -371,7 +372,7 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
     )
     {
         var now = DateTimeOffset.UtcNow;
-        var missing = await radarr.GetMissingMoviesAsync().WaitAsync(ct).ConfigureAwait(false);
+        var missing = await radarr.GetMissingMoviesAsync(ct: ct).ConfigureAwait(false);
         var monitored = missing.Records
             .Where(x => x.Monitored && !x.HasFile)
             .Where(x =>

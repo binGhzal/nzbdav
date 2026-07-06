@@ -7,6 +7,7 @@ using NzbWebDAV.Clients.RadarrSonarr.SonarrModels;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Utils;
 using Serilog;
 
 namespace NzbWebDAV.Services;
@@ -23,9 +24,9 @@ public sealed class ArrPriorityService(ConfigManager configManager) : Background
                 if (options.Enabled)
                     await RecomputeAsync(stoppingToken).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is OperationCanceledException && stoppingToken.IsCancellationRequested)
+            catch (Exception ex) when (BackgroundServiceCancellationUtil.IsExpectedCancellation(ex, stoppingToken))
             {
-                throw;
+                return;
             }
             catch (Exception ex)
             {
@@ -271,7 +272,7 @@ public sealed class ArrPriorityService(ConfigManager configManager) : Background
                 {
                     case SonarrClient sonarr:
                     {
-                        var missing = await sonarr.GetMissingEpisodesAsync().WaitAsync(ct).ConfigureAwait(false);
+                        var missing = await sonarr.GetMissingEpisodesAsync(ct: ct).ConfigureAwait(false);
                         foreach (var episode in missing.Records.Where(x => x.Monitored && !x.HasFile))
                         {
                             metadata.SonarrMissingEpisodes[(instance.InstanceKey, episode.Id)] = episode;
@@ -291,7 +292,7 @@ public sealed class ArrPriorityService(ConfigManager configManager) : Background
                     }
                     case RadarrClient radarr:
                     {
-                        var missing = await radarr.GetMissingMoviesAsync().WaitAsync(ct).ConfigureAwait(false);
+                        var missing = await radarr.GetMissingMoviesAsync(ct: ct).ConfigureAwait(false);
                         foreach (var movie in missing.Records.Where(x => x.Monitored && !x.HasFile))
                         {
                             metadata.RadarrMissingMovies[(instance.InstanceKey, movie.Id)] = movie;

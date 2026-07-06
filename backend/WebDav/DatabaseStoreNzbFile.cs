@@ -39,6 +39,6 @@ public class DatabaseStoreNzbFile(
         // Closed-range end byte from GetAndHeadHandlerPatch, used to cap prefetch.
         var requestedEndByte = RequestContext.Items["RequestedRangeEnd"] as long?;
         return usenetClient.GetFileStream(
-            nzbFile.SegmentIds, FileSize, ConfigManager.GetArticleBufferSize(), requestedEndByte);
+            nzbFile.SegmentIds, FileSize, ConfigManager.GetAdaptiveArticleBufferSize(), requestedEndByte);
     }
 }

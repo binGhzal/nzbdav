@@ -277,6 +277,7 @@ public sealed class DfsFileSystem : FileSystem
             PerAttemptTimeout = configManager.GetStreamingSegmentTimeout(),
             MaxRetries = configManager.GetStreamingSegmentRetries()
         });
+        var streamSlot = streamingConnectionLimiter.WaitForStreamAsync(cts.Token).GetAwaiter().GetResult();
         var activeStreamLease = activeStreamTracker.Open($"dfs:{path}", "fuse");
 
         return new DfsOpenFileHandle(
@@ -285,6 +286,7 @@ public sealed class DfsFileSystem : FileSystem
             priorityScope,
             timeoutScope,
             connectionLimiter,
+            streamSlot,
             activeStreamLease);
     }
 
@@ -313,7 +315,7 @@ public sealed class DfsFileSystem : FileSystem
         return new DavMultipartFileRangeReader(
             rarFile.ToDavMultipartFileMeta().FileParts,
             usenetClient,
-            configManager.GetArticleBufferSize(),
+            configManager.GetAdaptiveArticleBufferSize(),
             cacheOptions: configManager.GetSparseSegmentCacheOptions());
     }
 
@@ -326,14 +328,14 @@ public sealed class DfsFileSystem : FileSystem
             return new DavMultipartFileRangeReader(
                 multipartFile.Metadata.FileParts,
                 usenetClient,
-                configManager.GetArticleBufferSize(),
+                configManager.GetAdaptiveArticleBufferSize(),
                 cacheOptions: configManager.GetSparseSegmentCacheOptions());
         }
 
         var packedStream = new DavMultipartFileStream(
             multipartFile.Metadata.FileParts,
             usenetClient,
-            configManager.GetArticleBufferSize(),
+            configManager.GetAdaptiveArticleBufferSize(),
             cacheOptions: configManager.GetSparseSegmentCacheOptions());
         return new StreamFileRangeReader(new AesDecoderStream(packedStream, multipartFile.Metadata.AesParams));
     }
@@ -344,7 +346,7 @@ public sealed class DfsFileSystem : FileSystem
             segmentIds,
             length,
             usenetClient,
-            configManager.GetArticleBufferSize());
+            configManager.GetAdaptiveArticleBufferSize());
         var options = configManager.GetSparseSegmentCacheOptions();
         if (!options.Enabled) return inner;
         return SparseSegmentCacheManager.Shared.Open(
@@ -424,6 +426,7 @@ public sealed class DfsFileSystem : FileSystem
         IDisposable priorityContext,
         IDisposable timeoutContext,
         SemaphoreSlim connectionLimiter,
+        IDisposable streamSlot,
         ActiveStreamTracker.ActiveStreamLease activeStreamLease
     ) : IDisposable
     {
@@ -440,6 +443,7 @@ public sealed class DfsFileSystem : FileSystem
             priorityContext.Dispose();
             timeoutContext.Dispose();
             connectionLimiter.Dispose();
+            streamSlot.Dispose();
             activeStreamLease.Dispose();
             cancellationTokenSource.Dispose();
         }

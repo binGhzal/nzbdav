@@ -18,8 +18,10 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams) : FastReadOnlyNon
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         if (buffer.Length == 0) return 0;
-        while (!cancellationToken.IsCancellationRequested)
+        while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // If we haven't read the first stream, read it.
             if (_currentStream == null)
             {
@@ -38,8 +40,6 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams) : FastReadOnlyNon
             if (!_streams.MoveNext()) return 0;
             _currentStream = await _streams.Current.ConfigureAwait(false);
         }
-
-        return 0;
     }
 
     public override void Flush()

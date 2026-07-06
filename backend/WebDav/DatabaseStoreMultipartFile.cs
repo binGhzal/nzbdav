@@ -47,7 +47,7 @@ public class DatabaseStoreMultipartFile(
         var packedStream = new DavMultipartFileStream(
             multipartFile.Metadata.FileParts,
             usenetClient,
-            ConfigManager.GetArticleBufferSize(),
+            ConfigManager.GetAdaptiveArticleBufferSize(),
             requestedEndByte,
             ConfigManager.GetSparseSegmentCacheOptions()
         );

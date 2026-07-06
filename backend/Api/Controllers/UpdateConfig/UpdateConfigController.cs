@@ -13,7 +13,11 @@ public class UpdateConfigController(DavDatabaseClient dbClient, ConfigManager co
     private async Task<UpdateConfigResponse> UpdateConfig(UpdateConfigRequest request)
     {
         // 1. Retrieve all ConfigItems from the database that match the ConfigNames in the request
-        var configNames = request.ConfigItems.Select(x => x.ConfigName).ToHashSet();
+        var requestedItems = request.ConfigItems
+            .GroupBy(x => x.ConfigName)
+            .Select(x => x.Last())
+            .ToList();
+        var configNames = requestedItems.Select(x => x.ConfigName).ToHashSet();
         var existingItems = await dbClient.Ctx.ConfigItems
             .Where(c => configNames.Contains(c.ConfigName))
             .ToListAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -22,28 +26,42 @@ public class UpdateConfigController(DavDatabaseClient dbClient, ConfigManager co
         var existingItemsDict = existingItems.ToDictionary(i => i.ConfigName);
         var itemsToUpdate = new List<ConfigItem>();
         var itemsToInsert = new List<ConfigItem>();
-        foreach (var item in request.ConfigItems)
+        foreach (var item in requestedItems)
         {
             if (existingItemsDict.TryGetValue(item.ConfigName, out ConfigItem? existingItem))
             {
-                existingItem.ConfigValue = item.ConfigValue;
+                var normalizedItem = ConfigSecretRedactor.PreserveExistingSecrets(item, existingItem.ConfigValue);
+                if (ConfigManager.AreConfigValuesEquivalent(
+                        normalizedItem.ConfigName,
+                        existingItem.ConfigValue,
+                        normalizedItem.ConfigValue))
+                    continue;
+
+                existingItem.ConfigValue = normalizedItem.ConfigValue;
                 itemsToUpdate.Add(existingItem);
             }
             else
             {
-                itemsToInsert.Add(item);
+                var normalizedItem = ConfigSecretRedactor.PreserveExistingSecrets(item, existingValue: null);
+                if (ConfigManager.IsEffectivelyUnsetConfigValue(normalizedItem.ConfigName, normalizedItem.ConfigValue))
+                    continue;
+
+                itemsToInsert.Add(normalizedItem);
             }
         }
 
         // 3. Perform bulk insert and bulk update
-        dbClient.Ctx.ConfigItems.AddRange(itemsToInsert);
-        dbClient.Ctx.ConfigItems.UpdateRange(itemsToUpdate);
+        if (itemsToInsert.Count > 0)
+            dbClient.Ctx.ConfigItems.AddRange(itemsToInsert);
+        if (itemsToUpdate.Count > 0)
+            dbClient.Ctx.ConfigItems.UpdateRange(itemsToUpdate);
 
         // 4. Save changes in one call
-        await dbClient.Ctx.SaveChangesAsync(HttpContext.RequestAborted).ConfigureAwait(false);
+        if (itemsToInsert.Count > 0 || itemsToUpdate.Count > 0)
+            await dbClient.Ctx.SaveChangesAsync(HttpContext.RequestAborted).ConfigureAwait(false);
 
         // 5. Update the ConfigManager
-        configManager.UpdateValues(request.ConfigItems);
+        configManager.UpdateValues(itemsToInsert.Concat(itemsToUpdate).ToList());
 
         // return
         return new UpdateConfigResponse { Status = true };

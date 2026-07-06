@@ -101,9 +101,8 @@ public class NzbBlobCleanupService : BackgroundService
 
                 // Continue immediately to next iteration to process more items
             }
-            catch (OperationCanceledException) when (SigtermUtil.IsSigtermTriggered())
+            catch (OperationCanceledException e) when (BackgroundServiceCancellationUtil.IsExpectedCancellation(e, stoppingToken))
             {
-                // OperationCanceledException is expected on sigterm
                 return;
             }
             catch (Exception e)

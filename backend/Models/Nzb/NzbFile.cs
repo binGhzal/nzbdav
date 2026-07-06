@@ -9,18 +9,60 @@ public class NzbFile
 
     public string[] GetSegmentIds()
     {
-        return GetLogicalSegmentInfos()
-            .Select(x => x.SegmentId)
-            .ToArray();
+        var logicalSegments = GetLogicalSegmentInfos();
+        var segmentIds = new string[logicalSegments.Count];
+        for (var i = 0; i < logicalSegments.Count; i++)
+            segmentIds[i] = logicalSegments[i].SegmentId;
+        return segmentIds;
     }
 
     public IReadOnlyList<LogicalSegmentInfo> GetLogicalSegmentInfos()
     {
-        return GetLogicalSegments()
-            .Select(x => new LogicalSegmentInfo(
-                NzbSegmentIdSet.Encode(x.Select(segment => segment.MessageId).ToArray()),
-                x[0].Bytes))
-            .ToList();
+        if (Segments.Count == 0)
+            return [];
+
+        var allNumbered = true;
+        var strictlyAscending = true;
+        var previousNumber = 0;
+        foreach (var segment in Segments)
+        {
+            if (segment.Number <= 0)
+            {
+                allNumbered = false;
+                break;
+            }
+
+            if (segment.Number <= previousNumber)
+                strictlyAscending = false;
+            previousNumber = segment.Number;
+        }
+
+        if (!allNumbered || strictlyAscending)
+            return CreateSingleMessageLogicalSegments(Segments);
+
+        var groupedSegments = new SortedDictionary<int, List<NzbSegment>>();
+        foreach (var segment in Segments)
+        {
+            if (!groupedSegments.TryGetValue(segment.Number, out var group))
+            {
+                group = [];
+                groupedSegments[segment.Number] = group;
+            }
+
+            group.Add(segment);
+        }
+
+        var logicalSegments = new List<LogicalSegmentInfo>(groupedSegments.Count);
+        foreach (var group in groupedSegments.Values)
+        {
+            logicalSegments.Add(group.Count == 1
+                ? new LogicalSegmentInfo(group[0].MessageId, group[0].Bytes)
+                : new LogicalSegmentInfo(
+                    NzbSegmentIdSet.Encode(group.Select(segment => segment.MessageId).ToArray()),
+                    group[0].Bytes));
+        }
+
+        return logicalSegments;
     }
 
     public long GetTotalYencodedSize()
@@ -32,7 +74,7 @@ public class NzbFile
 
     public int GetLogicalSegmentCount()
     {
-        return GetLogicalSegments().Count;
+        return GetLogicalSegmentInfos().Count;
     }
 
     public string GetSubjectFileName()
@@ -67,23 +109,13 @@ public class NzbFile
             .FirstOrDefault(x => x != "") ?? "";
     }
 
-    private List<List<NzbSegment>> GetLogicalSegments()
+    private static IReadOnlyList<LogicalSegmentInfo> CreateSingleMessageLogicalSegments(
+        IReadOnlyList<NzbSegment> segments)
     {
-        if (Segments.Count == 0)
-            return [];
-
-        if (Segments.All(segment => segment.Number > 0))
-        {
-            return Segments
-                .GroupBy(segment => segment.Number)
-                .OrderBy(group => group.Key)
-                .Select(group => group.ToList())
-                .ToList();
-        }
-
-        return Segments
-            .Select(segment => new List<NzbSegment> { segment })
-            .ToList();
+        var logicalSegments = new LogicalSegmentInfo[segments.Count];
+        for (var i = 0; i < segments.Count; i++)
+            logicalSegments[i] = new LogicalSegmentInfo(segments[i].MessageId, segments[i].Bytes);
+        return logicalSegments;
     }
 
     public sealed record LogicalSegmentInfo(string SegmentId, long Bytes);

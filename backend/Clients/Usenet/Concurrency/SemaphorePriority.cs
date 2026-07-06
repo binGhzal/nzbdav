@@ -3,5 +3,6 @@
 public enum SemaphorePriority
 {
     Low,
+    Normal,
     High,
 }

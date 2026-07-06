@@ -50,7 +50,7 @@ public class RcloneInvalidationService : BackgroundService
                     .Distinct(StringComparer.Ordinal)
                     .ToList();
 
-                var result = await RcloneClient.ForgetVfsPaths(paths).ConfigureAwait(false);
+                var result = await RcloneClient.ForgetVfsPaths(paths, stoppingToken).ConfigureAwait(false);
                 if (result.Success)
                 {
                     var forgottenItems = GetSuccessfullyForgottenItems(items, result);
@@ -76,7 +76,7 @@ public class RcloneInvalidationService : BackgroundService
                 Reschedule(items, error, DateTimeOffset.UtcNow);
                 await dbContext.SaveChangesAsync(stoppingToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
+            catch (OperationCanceledException e) when (BackgroundServiceCancellationUtil.IsExpectedCancellation(e, stoppingToken))
             {
                 return;
             }

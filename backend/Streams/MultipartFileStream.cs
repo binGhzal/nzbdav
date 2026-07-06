@@ -28,8 +28,10 @@ public class MultipartFileStream(MultipartFile multipartFile, INntpClient usenet
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         if (buffer.Length == 0) return 0;
-        while (_position < Length && !cancellationToken.IsCancellationRequested)
+        while (_position < Length)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // If we haven't read the first stream, read it.
             _currentStream ??= GetCurrentStream();
 
@@ -67,6 +69,8 @@ public class MultipartFileStream(MultipartFile multipartFile, INntpClient usenet
         var absoluteOffset = origin == SeekOrigin.Begin ? offset
             : origin == SeekOrigin.Current ? _position + offset
             : throw new InvalidOperationException("SeekOrigin must be Begin or Current.");
+        if (absoluteOffset < 0)
+            throw new ArgumentOutOfRangeException(nameof(offset), "Cannot seek before the beginning of the stream.");
         if (_position == absoluteOffset) return _position;
         _position = absoluteOffset;
         _currentStream?.Dispose();

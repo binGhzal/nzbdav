@@ -124,14 +124,21 @@ BACKEND_PID=$!
 
 # Wait for backend health check
 echo "Waiting for backend to start."
-MAX_BACKEND_HEALTH_RETRIES=${MAX_BACKEND_HEALTH_RETRIES:-30}
+MAX_BACKEND_HEALTH_RETRIES=${MAX_BACKEND_HEALTH_RETRIES:-180}
 MAX_BACKEND_HEALTH_RETRY_DELAY=${MAX_BACKEND_HEALTH_RETRY_DELAY:-1}
 i=0
 while true; do
     echo "Checking backend health: $BACKEND_URL/health ..."
-    if curl -s -o /dev/null -w "%{http_code}" "$BACKEND_URL/health" | grep -q "^200$"; then
+    if curl --max-time 5 -s -o /dev/null -w "%{http_code}" "$BACKEND_URL/health" | grep -q "^200$"; then
         echo "Backend is healthy."
         break
+    fi
+
+    if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+        wait "$BACKEND_PID"
+        BACKEND_EXIT_CODE=$?
+        echo "Backend exited before becoming healthy with code $BACKEND_EXIT_CODE."
+        exit "$BACKEND_EXIT_CODE"
     fi
 
     i=$((i+1))

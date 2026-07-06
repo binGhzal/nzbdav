@@ -19,6 +19,8 @@ public partial class FilenameUtil
         ".img", ".iso", ".vob", ".mkv", ".mk3d", ".ts", ".wtv", ".m2ts"
     ];
 
+    public static IReadOnlyCollection<string> VideoFileExtensions => VideoExtensions;
+
     public static bool IsImportantFileType(string filename)
     {
         return IsVideoFile(filename)

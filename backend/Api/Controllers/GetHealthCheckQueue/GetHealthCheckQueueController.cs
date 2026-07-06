@@ -1,7 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
-using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Api.Controllers.GetHealthCheckQueue;
 
@@ -11,18 +9,14 @@ public class GetHealthCheckQueueController(DavDatabaseClient dbClient) : BaseApi
 {
     private async Task<GetHealthCheckQueueResponse> GetHealthCheckQueue(GetHealthCheckQueueRequest request)
     {
-        var davItems = await HealthCheckService.GetHealthCheckQueueItems(dbClient)
-            .Take(request.PageSize)
-            .ToListAsync().ConfigureAwait(false);
-
-        var uncheckedCount = await HealthCheckService.GetHealthCheckQueueItemsQuery(dbClient)
-            .Where(x => x.NextHealthCheck == null)
-            .CountAsync().ConfigureAwait(false);
+        var snapshot = await dbClient
+            .GetHealthCheckQueueSnapshotAsync(request.PageSize, request.CancellationToken)
+            .ConfigureAwait(false);
 
         return new GetHealthCheckQueueResponse()
         {
-            UncheckedCount = uncheckedCount,
-            Items = davItems.Select(x => new GetHealthCheckQueueResponse.HealthCheckQueueItem()
+            UncheckedCount = snapshot.UncheckedCount,
+            Items = snapshot.Items.Select(x => new GetHealthCheckQueueResponse.HealthCheckQueueItem()
             {
                 Id = x.Id.ToString(),
                 Name = x.Name,

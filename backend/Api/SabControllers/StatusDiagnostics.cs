@@ -84,7 +84,7 @@ public sealed class ProviderDiagnosticStatus
                 UseSsl = provider.GetEffectiveUseSsl(),
                 ConfiguredUseSsl = provider.UseSsl,
                 ImplicitTls = provider.IsImplicitTlsEnabled(),
-                StatPipeliningEnabled = provider.StatPipeliningEnabled
+                StatPipeliningEnabled = provider.IsStatPipeliningEnabled()
             })
             .ToList();
     }
@@ -113,6 +113,9 @@ public sealed class CacheStatus
     [JsonPropertyName("active_readers")]
     public int ActiveReaders { get; init; }
 
+    [JsonPropertyName("read_ahead_active")]
+    public int ReadAheadActive { get; init; }
+
     [JsonPropertyName("pending_fetches")]
     public int PendingFetches { get; init; }
 
@@ -127,6 +130,7 @@ public sealed class CacheStatus
             Evictions = snapshot.Evictions,
             Files = snapshot.Files,
             ActiveReaders = snapshot.ActiveReaders,
+            ReadAheadActive = snapshot.ReadAheadActive,
             PendingFetches = snapshot.PendingFetches
         };
     }
@@ -222,6 +226,9 @@ public sealed class WorkerQueueStatus
     [JsonPropertyName("verify_active")]
     public int VerifyActive { get; init; }
 
+    [JsonPropertyName("verify_waiting")]
+    public int VerifyWaiting { get; init; }
+
     [JsonPropertyName("verify_ready")]
     public int VerifyReady { get; init; }
 
@@ -256,6 +263,8 @@ public sealed class WorkerQueueStatus
     (
         int downloadActive,
         int downloadWaiting,
+        int inlineVerifyActive,
+        int inlineVerifyWaiting,
         int maxDownloadWorkers,
         int maxVerifyWorkers,
         int maxRepairWorkers,
@@ -265,11 +274,11 @@ public sealed class WorkerQueueStatus
         DavDatabaseClient.WorkerJobQueueStats durableJobs
     )
     {
-        var effectiveDownloadActive = Math.Max(downloadActive, durableJobs.Download.Leased);
+        var effectiveDownloadActive = downloadActive;
         var effectiveDownloadReady = Math.Max(downloadWaiting, durableJobs.Download.Ready);
-        var effectiveVerifyActive = Math.Max(healthWorkers.VerifyActive, durableJobs.Verify.Leased);
-        var effectiveVerifyReady = Math.Max(healthQueue.VerifyReady, durableJobs.Verify.Ready);
-        var effectiveRepairActive = Math.Max(healthWorkers.RepairActive, durableJobs.Repair.Leased);
+        var effectiveVerifyActive = healthWorkers.VerifyActive + inlineVerifyActive;
+        var effectiveVerifyReady = Math.Max(healthQueue.VerifyReady + inlineVerifyWaiting, durableJobs.Verify.Ready);
+        var effectiveRepairActive = healthWorkers.RepairActive;
         return new WorkerQueueStatus
         {
             DownloadMax = maxDownloadWorkers,
@@ -284,6 +293,7 @@ public sealed class WorkerQueueStatus
             VerifyMax = maxVerifyWorkers,
             VerifyState = GetLaneState(effectiveVerifyActive, effectiveVerifyReady, durableJobs.Verify.Retry, durableJobs.Verify.Quarantined, maxVerifyWorkers),
             VerifyActive = effectiveVerifyActive,
+            VerifyWaiting = inlineVerifyWaiting,
             VerifyReady = effectiveVerifyReady,
             VerifyRetry = durableJobs.Verify.Retry,
             VerifyQuarantined = durableJobs.Verify.Quarantined,

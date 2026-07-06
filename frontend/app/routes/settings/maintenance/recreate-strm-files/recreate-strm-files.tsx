@@ -1,8 +1,9 @@
-import { Button, Form } from "react-bootstrap";
+import { Alert, Button, Form } from "react-bootstrap";
 import styles from "./recreate-strm-files.module.css";
 import { useCallback, useEffect, useState } from "react";
-import { receiveMessage } from "~/utils/websocket-util";
-import { getWebsocketUrl, withUrlBase } from "~/utils/url-base";
+import { createReconnectingWebSocket } from "~/utils/websocket-util";
+import { getWebsocketUrl } from "~/utils/url-base";
+import { startMaintenanceTask } from "../start-maintenance-task";
 
 const cleanupTaskTopic = { 'crst': 'state' };
 
@@ -11,6 +12,7 @@ export function RecreateStrmFiles() {
     const [connected, setConnected] = useState<boolean>(false);
     const [progress, setProgress] = useState<string | null>(null);
     const [isFetching, setIsFetching] = useState<boolean>(false);
+    const [requestError, setRequestError] = useState<string | null>(null);
 
     // derived variables
     const isFinished = progress?.startsWith("Done") || progress?.startsWith("Failed");
@@ -21,44 +23,37 @@ export function RecreateStrmFiles() {
 
     // effects
     useEffect(() => {
-        let ws: WebSocket;
-        let disposed = false;
-        let reconnectDelayMs = 1000;
-        let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-        function connect() {
-            ws = new WebSocket(getWebsocketUrl());
-            ws.onmessage = receiveMessage((_, message) => setProgress(message));
-            ws.onopen = () => {
-                reconnectDelayMs = 1000;
+        return createReconnectingWebSocket({
+            createSocket: () => new WebSocket(getWebsocketUrl()),
+            onMessage: (_, message) => setProgress(message),
+            onOpen: socket => {
                 setConnected(true);
-                ws.send(JSON.stringify(cleanupTaskTopic));
-            }
-            ws.onclose = () => {
+                socket.send(JSON.stringify(cleanupTaskTopic));
+            },
+            onClose: () => {
                 setConnected(false);
                 setProgress(null);
-                if (disposed) return;
-                reconnectTimer = setTimeout(() => connect(), reconnectDelayMs);
-                reconnectDelayMs = Math.min(reconnectDelayMs * 2, 30000);
-            };
-            ws.onerror = () => { ws.close() };
-            return () => {
-                disposed = true;
-                if (reconnectTimer) clearTimeout(reconnectTimer);
-                ws.close();
-            }
-        }
-        return connect();
+            },
+        });
     }, [setProgress, setConnected]);
 
     // events
     const onRun = useCallback(async () => {
         setIsFetching(true);
-        await fetch(withUrlBase("/api/recreate-strm-files"));
-        setIsFetching(false);
-    }, [setIsFetching]);
+        try {
+            await startMaintenanceTask("/api/recreate-strm-files", "recreate STRM files", setRequestError);
+        } finally {
+            setIsFetching(false);
+        }
+    }, [setIsFetching, setRequestError]);
 
     return (
         <>
+            {requestError &&
+                <Alert className={styles.alert} variant="danger">
+                    {requestError}
+                </Alert>
+            }
             <div className={styles.task}>
                 <Form.Group>
                     <div className={styles.run}>

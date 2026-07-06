@@ -78,6 +78,7 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                     value={password}
                     onChange={e => setPassword(e.currentTarget.value)} />
                 <BootstrapForm.Control
+                    name="confirmPassword"
                     type="password"
                     placeholder="Confirm Password"
                     value={confirmPassword}
@@ -106,7 +107,9 @@ export async function action({ request }: Route.ActionArgs) {
         const formData = await request.formData();
         const username = formData.get("username")?.toString();
         const password = formData.get("password")?.toString();
+        const confirmPassword = formData.get("confirmPassword")?.toString();
         if (!username || !password) throw new Error("username and password required");
+        if (password !== confirmPassword) throw new Error("passwords must match");
         var isSuccess = await backendClient.createAccount(username, password);
         if (!isSuccess) throw new Error("Unknown error creating account");
         var responseInit = await setSessionUser(request, username);

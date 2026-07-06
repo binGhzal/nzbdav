@@ -18,6 +18,14 @@ function normalizeBasename(raw: string | undefined): string {
 export default {
   // Server-side render by default, to enable SPA mode set this to `false`
   ssr: true,
+  // Keep React Router v8 behavior changes explicit until each one is validated.
+  future: {
+    v8_middleware: false,
+    v8_splitRouteModules: false,
+    v8_viteEnvironmentApi: false,
+    v8_passThroughRequests: false,
+    v8_trailingSlashAwareDataRequests: false,
+  },
   // URL_BASE env var, read at build time, controls the React Router basename so
   // <Link> and useFetcher generate the correct paths when the app is hosted under
   // a sub-path. Must match the URL_BASE env var at runtime.

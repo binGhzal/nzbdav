@@ -15,10 +15,11 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
 
     protected abstract Task<Stream> GetStreamAsync(CancellationToken cancellationToken);
 
-    public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
+    public override async Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
     {
         var connectionLimiter = new SemaphoreSlim(ConfigManager.GetAdaptiveMaxStreamingConnections());
         var globalConnectionLimiter = RequestContext.RequestServices.GetRequiredService<StreamingConnectionLimiter>();
+        var activeStreamSlot = await globalConnectionLimiter.WaitForStreamAsync(cancellationToken).ConfigureAwait(false);
         var downloadPriorityContext = new DownloadPriorityContext()
         {
             Priority = SemaphorePriority.High,
@@ -41,15 +42,34 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
             RequestContext.Request.Path.Value,
             RequestContext.Request.Headers.UserAgent.ToString());
 
+        var completed = false;
         RequestContext.Response.OnCompleted(() =>
         {
+            completed = true;
             scopedDownloadPriorityContext.Dispose();
             scopedStreamingTimeoutContext.Dispose();
             connectionLimiter.Dispose();
             activeStreamLease.Dispose();
+            activeStreamSlot.Dispose();
             return Task.CompletedTask;
         });
 
-        return GetStreamAsync(cancellationToken);
+        try
+        {
+            return await GetStreamAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (!completed)
+            {
+                scopedDownloadPriorityContext.Dispose();
+                scopedStreamingTimeoutContext.Dispose();
+                connectionLimiter.Dispose();
+                activeStreamLease.Dispose();
+                activeStreamSlot.Dispose();
+            }
+
+            throw;
+        }
     }
 }

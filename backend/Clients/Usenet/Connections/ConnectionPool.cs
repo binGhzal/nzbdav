@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
+using Serilog;
 
 namespace NzbWebDAV.Clients.Usenet.Connections;
 
@@ -20,6 +21,8 @@ namespace NzbWebDAV.Clients.Usenet.Connections;
 /// </summary>
 public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 {
+    private static readonly TimeSpan MinimumSweepPeriod = TimeSpan.FromMilliseconds(1);
+
     /* -------------------------------- configuration -------------------------------- */
 
     public TimeSpan IdleTimeout { get; }
@@ -111,8 +114,15 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         }
         catch
         {
-            _gate.Release(); // free the permit on failure
+            TryReleaseGate(); // free the permit on failure
             throw;
+        }
+
+        if (Volatile.Read(ref _disposed) == 1)
+        {
+            DisposeConnection(conn);
+            TryReleaseGate();
+            ThrowDisposed();
         }
 
         Interlocked.Increment(ref _live);
@@ -124,6 +134,19 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
         static void ThrowDisposed()
             => throw new ObjectDisposedException(nameof(ConnectionPool<T>));
+    }
+
+    private void TryReleaseGate()
+    {
+        try
+        {
+            _gate.Release();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Disposal may win the race after a permit was acquired. The pool is
+            // already shutting down, so there is no useful waiter to release.
+        }
     }
 
     /* ========================== core helpers ====================================== */
@@ -168,11 +191,27 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     private void TriggerConnectionPoolChangedEvent()
     {
-        OnConnectionPoolChanged?.Invoke(this, new ConnectionPoolStats.ConnectionPoolChangedEventArgs(
+        var handler = OnConnectionPoolChanged;
+        if (handler is null)
+            return;
+
+        var args = new ConnectionPoolStats.ConnectionPoolChangedEventArgs(
             _live,
             _idleConnections.Count,
             _maxConnections
-        ));
+        );
+
+        foreach (var subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                ((EventHandler<ConnectionPoolStats.ConnectionPoolChangedEventArgs>)subscriber)(this, args);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Connection pool stats observer failed.");
+            }
+        }
     }
 
     /* =================== idle sweeper (background) ================================= */
@@ -181,7 +220,11 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     {
         try
         {
-            using var timer = new PeriodicTimer(IdleTimeout / 2);
+            var sweepPeriod = IdleTimeout / 2;
+            if (sweepPeriod < MinimumSweepPeriod)
+                sweepPeriod = MinimumSweepPeriod;
+
+            using var timer = new PeriodicTimer(sweepPeriod);
             while (await timer.WaitForNextTickAsync(_sweepCts.Token).ConfigureAwait(false))
                 SweepOnce();
         }
@@ -223,8 +266,17 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     private static void DisposeConnection(T conn)
     {
-        if (conn is IDisposable d)
+        if (conn is not IDisposable d)
+            return;
+
+        try
+        {
             d.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to dispose pooled connection {ConnectionType}.", conn.GetType().FullName);
+        }
     }
 
     /* -------------------------- IAsyncDisposable ---------------------------------- */
@@ -244,9 +296,20 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             /* ignore */
         }
 
-        // Drain and dispose cached items.
+        // Drain and dispose cached items. These connections are part of _live
+        // until the pool owns their disposal during shutdown.
+        var disposedIdleConnections = 0;
         while (_idleConnections.TryPop(out var item))
+        {
             DisposeConnection(item.Connection);
+            disposedIdleConnections++;
+        }
+
+        if (disposedIdleConnections > 0)
+        {
+            Interlocked.Add(ref _live, -disposedIdleConnections);
+            TriggerConnectionPoolChangedEvent();
+        }
 
         _sweepCts.Dispose();
         _gate.Dispose();
@@ -257,6 +320,6 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     public void Dispose()
     {
-        _ = DisposeAsync().AsTask(); // fire-and-forget synchronous path
+        DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 }

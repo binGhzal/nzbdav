@@ -199,12 +199,13 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                     type="checkbox"
                     id="ensure-article-existence-checkbox"
                     aria-describedby="ensure-article-existence-help"
-                    label={`Perform article health check during downloads`}
+                    label={`Verify media articles after download completion`}
                     ref={ensureArticleExistanceSetting.masterCheckboxRef}
                     checked={!ensureArticleExistanceSetting.areNoneSelected}
                     onChange={e => ensureArticleExistanceSetting.onMasterCheckboxChange(e.target.checked)} />
                 <Form.Text id="ensure-article-existence-help" muted>
-                    Whether to check for the existence of all articles within an NZB during queue processing. This process may be slow.
+                    Queues background article checks for completed media files in selected categories.
+                    This can still be slow for large releases, but it no longer blocks the download lane.
                 </Form.Text>
                 <MultiCheckboxInput
                     options={ensureArticleExistanceSetting.categories}
@@ -224,8 +225,8 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                     onChange={e => setNewConfig({ ...config, "usenet.nntp-pipelining.enabled": "" + e.target.checked })} />
                 <Form.Text id="nntp-pipelining-help" muted>
                     Sends STAT existence checks in batches instead of one at a time, speeding up the
-                    on-add and background article health checks. Only applies to providers with
-                    pipelining enabled on the Usenet tab; turn this off to disable it everywhere.
+                    on-add and background article health checks. Applies to providers unless they
+                    are explicitly disabled on the Usenet tab; turn this off to disable it everywhere.
                 </Form.Text>
                 <Form.Label htmlFor="nntp-pipelining-depth-input" style={{ marginTop: '15px' }}>
                     Pipelining Depth
@@ -357,7 +358,7 @@ export function isSabnzbdSettingsUpdated(config: Record<string, string>, newConf
     return config["api.key"] !== newConfig["api.key"]
         || config["api.categories"] !== newConfig["api.categories"]
         || config["api.manual-category"] !== newConfig["api.manual-category"]
-        || config["rclone.mount-dir"] !== newConfig["rclone.mount-dir"]
+        || normalizeMountDirectory(config["rclone.mount-dir"]) !== normalizeMountDirectory(newConfig["rclone.mount-dir"])
         || config["api.ensure-importable-video"] !== newConfig["api.ensure-importable-video"]
         || config["api.ensure-article-existence-categories"] !== newConfig["api.ensure-article-existence-categories"]
         || config["api.ignore-history-limit"] !== newConfig["api.ignore-history-limit"]
@@ -371,6 +372,10 @@ export function isSabnzbdSettingsUpdated(config: Record<string, string>, newConf
         || config["api.nzb-backup-location"] !== newConfig["api.nzb-backup-location"]
         || config["usenet.nntp-pipelining.enabled"] !== newConfig["usenet.nntp-pipelining.enabled"]
         || config["usenet.nntp-pipelining.depth"] !== newConfig["usenet.nntp-pipelining.depth"]
+}
+
+function normalizeMountDirectory(value: string | undefined): string {
+    return (value ?? "").trim().replace(/\/+$/, "");
 }
 
 export function isSabnzbdSettingsValid(newConfig: Record<string, string>) {

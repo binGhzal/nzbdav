@@ -2,6 +2,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using UsenetSharp.Models;
@@ -20,14 +21,18 @@ public class ArticleCachingNntpClient(
     long maxCacheBytes = long.MaxValue,
     long? sharedMaxCacheBytes = null,
     bool leaveOpen = true,
-    ArticleCacheBudget? sharedBudget = null
+    ArticleCacheBudget? sharedBudget = null,
+    int maxFetchedSegmentIds = 100_000
 ) : WrappingNntpClient(usenetClient), IAsyncDisposable
 {
     private readonly string _cacheDir = Directory.CreateTempSubdirectory().FullName;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _pendingRequests = new();
     private readonly ConcurrentDictionary<string, CacheEntry> _cachedSegments = new();
+    private readonly ConcurrentDictionary<string, byte> _fetchedSegmentIds = new(StringComparer.Ordinal);
+    private readonly ConcurrentQueue<string> _fetchedSegmentOrder = new();
     private readonly SemaphoreSlim _cacheSizeSemaphore = new(1, 1);
     private readonly long _maxCacheBytes = maxCacheBytes > 0 ? maxCacheBytes : long.MaxValue;
+    private readonly int _maxFetchedSegmentIds = Math.Max(0, maxFetchedSegmentIds);
     private readonly ArticleCacheBudget _sharedBudget = ConfigureSharedBudget(
         sharedBudget ?? ArticleCacheBudget.Shared,
         sharedMaxCacheBytes ?? maxCacheBytes);
@@ -82,13 +87,23 @@ public class ArticleCachingNntpClient(
             if (_cachedSegments.TryGetValue(segmentId, out var existingEntry))
             {
                 TouchCacheEntry(existingEntry);
-                onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
-                return ReadCachedBodyAsync(segmentId, existingEntry.YencHeaders);
+                try
+                {
+                    var cachedResponse = ReadCachedBodyAsync(segmentId, existingEntry.YencHeaders);
+                    onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+                    return cachedResponse;
+                }
+                catch (Exception e) when (IsStaleCacheFileException(e))
+                {
+                    await RemoveCachedEntryAsync(segmentId, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             // Fetch and cache the body
             var response = await base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, cancellationToken)
                 .ConfigureAwait(false);
+            if (response.ResponseType != UsenetResponseType.ArticleRetrievedBodyFollows)
+                return response;
 
             // Get the decoded stream
             await using var stream = response.Stream;
@@ -101,6 +116,7 @@ public class ArticleCachingNntpClient(
             }
 
             var sizeBytes = await CacheDecodedStreamAsync(segmentId, stream, cancellationToken).ConfigureAwait(false);
+            MarkFetched(segmentId);
 
             // Mark as cached (body only, no article headers yet)
             _cachedSegments.TryAdd(segmentId, new CacheEntry
@@ -147,33 +163,44 @@ public class ArticleCachingNntpClient(
                 if (cacheEntry.HasArticleHeaders)
                 {
                     // Full article is cached, read from cache
-                    onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
-                    return ReadCachedArticleAsync(segmentId, cacheEntry.YencHeaders, cacheEntry.ArticleHeaders!);
+                    try
+                    {
+                        var cachedResponse = ReadCachedArticleAsync(segmentId, cacheEntry.YencHeaders, cacheEntry.ArticleHeaders!);
+                        onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+                        return cachedResponse;
+                    }
+                    catch (Exception e) when (IsStaleCacheFileException(e))
+                    {
+                        await RemoveCachedEntryAsync(segmentId, cancellationToken).ConfigureAwait(false);
+                    }
                 }
                 else
                 {
                     // Only body is cached, fetch article headers separately
-                    UsenetHeadResponse? headResponse = null;
-                    try
-                    {
-                        headResponse = await base.HeadAsync(segmentId, cancellationToken).ConfigureAwait(false);
-                    }
-                    finally
-                    {
-                        onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
-                    }
+                    var headResponse = await base.HeadAsync(segmentId, cancellationToken).ConfigureAwait(false);
 
                     // Update cache entry to include article headers
                     cacheEntry.HasArticleHeaders = true;
                     cacheEntry.ArticleHeaders = headResponse.ArticleHeaders;
 
-                    return ReadCachedArticleAsync(segmentId, cacheEntry.YencHeaders, headResponse.ArticleHeaders!);
+                    try
+                    {
+                        var cachedResponse = ReadCachedArticleAsync(segmentId, cacheEntry.YencHeaders, headResponse.ArticleHeaders!);
+                        onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+                        return cachedResponse;
+                    }
+                    catch (Exception e) when (IsStaleCacheFileException(e))
+                    {
+                        await RemoveCachedEntryAsync(segmentId, cancellationToken).ConfigureAwait(false);
+                    }
                 }
             }
 
             // Fetch and cache the full article
             var response = await base.DecodedArticleAsync(segmentId, onConnectionReadyAgain, cancellationToken)
                 .ConfigureAwait(false);
+            if (response.ResponseType != UsenetResponseType.ArticleRetrievedHeadAndBodyFollow)
+                return response;
 
             // Get the decoded stream
             await using var stream = response.Stream;
@@ -186,6 +213,7 @@ public class ArticleCachingNntpClient(
             }
 
             var sizeBytes = await CacheDecodedStreamAsync(segmentId, stream, cancellationToken).ConfigureAwait(false);
+            MarkFetched(segmentId);
 
             // Mark as cached with both yenc and article headers
             _cachedSegments.TryAdd(segmentId, new CacheEntry
@@ -261,15 +289,102 @@ public class ArticleCachingNntpClient(
         return Task.FromResult(existingEntry.YencHeaders);
     }
 
+    public IReadOnlyCollection<string> GetCachedSegmentIdsSnapshot()
+    {
+        return _cachedSegments.Keys.ToArray();
+    }
+
+    public IReadOnlyCollection<string> GetFetchedSegmentIdsSnapshot()
+    {
+        return _fetchedSegmentIds.Keys.ToArray();
+    }
+
+    public override async Task<SegmentCheckBatch> CheckSegmentsAsync
+    (
+        IEnumerable<string> segmentIds,
+        int concurrency,
+        IProgress<int>? progress,
+        CancellationToken cancellationToken
+    )
+    {
+        var segmentList = segmentIds.ToList();
+        if (segmentList.Count == 0) return SegmentCheckBatch.AllExists(segmentList);
+
+        var results = new SegmentCheckResult[segmentList.Count];
+        var uncachedSegments = new List<(int Index, string SegmentId)>(segmentList.Count);
+        var completed = 0;
+
+        for (var i = 0; i < segmentList.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var segmentId = segmentList[i];
+            if (IsSegmentKnownFetched(segmentId)
+                || await IsSegmentCachedAsync(segmentId, cancellationToken).ConfigureAwait(false))
+            {
+                results[i] = new SegmentCheckResult(segmentId, SegmentCheckState.Exists, Provider: null, Error: null);
+                progress?.Report(++completed);
+                continue;
+            }
+
+            uncachedSegments.Add((i, segmentId));
+        }
+
+        if (uncachedSegments.Count == 0)
+            return SegmentCheckBatch.AllExists(segmentList);
+
+        var progressOffset = completed;
+        var uncachedProgress = progress == null
+            ? null
+            : new OffsetProgress(progress, progressOffset);
+        var uncachedBatch = await base
+            .CheckSegmentsAsync(
+                uncachedSegments.Select(x => x.SegmentId),
+                concurrency,
+                uncachedProgress,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        for (var i = 0; i < uncachedSegments.Count; i++)
+            results[uncachedSegments[i].Index] = uncachedBatch.Results[i];
+
+        return CreateSegmentCheckBatch(segmentList, results);
+    }
+
     private async Task<long> CacheDecodedStreamAsync(string segmentId, YencStream stream,
         CancellationToken cancellationToken)
     {
         var cachePath = GetCachePath(segmentId);
-        await using var fileStream = new FileStream(cachePath, FileMode.Create, FileAccess.Write, FileShare.None,
-            bufferSize: 81920, useAsync: true);
-        await stream.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
-        await fileStream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        return fileStream.Length;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                Directory.CreateDirectory(_cacheDir);
+                await using var fileStream = new FileStream(
+                    cachePath,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.None,
+                    bufferSize: 81920,
+                    useAsync: true);
+                await stream.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
+                await fileStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                return fileStream.Length;
+            }
+            catch (DirectoryNotFoundException) when (attempt == 0)
+            {
+                // A temp/cache cleanup can race between CreateDirectory and opening the file.
+            }
+        }
+
+        throw new DirectoryNotFoundException($"Could not create article cache path `{cachePath}`.");
+    }
+
+    private sealed class OffsetProgress(IProgress<int> inner, int offset) : IProgress<int>
+    {
+        public void Report(int value)
+        {
+            inner.Report(offset + value);
+        }
     }
 
     private UsenetDecodedBodyResponse ReadCachedBodyAsync(string segmentId, UsenetYencHeader yencHeaders)
@@ -315,6 +430,19 @@ public class ArticleCachingNntpClient(
     private static void TouchCacheEntry(CacheEntry cacheEntry)
     {
         cacheEntry.LastAccessUtc = DateTime.UtcNow;
+    }
+
+    private void MarkFetched(string segmentId)
+    {
+        if (_maxFetchedSegmentIds == 0) return;
+        if (!_fetchedSegmentIds.TryAdd(segmentId, 0)) return;
+
+        _fetchedSegmentOrder.Enqueue(segmentId);
+        while (_fetchedSegmentIds.Count > _maxFetchedSegmentIds
+               && _fetchedSegmentOrder.TryDequeue(out var oldestSegmentId))
+        {
+            _fetchedSegmentIds.TryRemove(oldestSegmentId, out _);
+        }
     }
 
     private async Task UpdateCacheSizeAndEvictAsync
@@ -365,6 +493,49 @@ public class ArticleCachingNntpClient(
         }
     }
 
+    private async Task<bool> IsSegmentCachedAsync(string segmentId, CancellationToken ct)
+    {
+        foreach (var candidateSegmentId in NzbSegmentIdSet.Decode(segmentId))
+        {
+            if (!_cachedSegments.ContainsKey(candidateSegmentId)) continue;
+            if (File.Exists(GetCachePath(candidateSegmentId)))
+                return true;
+
+            await RemoveCachedEntryAsync(candidateSegmentId, ct).ConfigureAwait(false);
+        }
+
+        return false;
+    }
+
+    private bool IsSegmentKnownFetched(string segmentId)
+    {
+        return NzbSegmentIdSet
+            .Decode(segmentId)
+            .Any(candidateSegmentId => _fetchedSegmentIds.ContainsKey(candidateSegmentId));
+    }
+
+    private async Task RemoveCachedEntryAsync(string segmentId, CancellationToken ct)
+    {
+        await _cacheSizeSemaphore.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!_cachedSegments.TryRemove(segmentId, out var cacheEntry)) return;
+
+            _cacheBytes = Math.Max(0, _cacheBytes - cacheEntry.SizeBytes);
+            _sharedBudget.Remove(cacheEntry.SizeBytes);
+            _pendingRequests.TryRemove(segmentId, out _);
+        }
+        finally
+        {
+            _cacheSizeSemaphore.Release();
+        }
+
+        TryDeleteCachedFile(segmentId);
+    }
+
+    private static bool IsStaleCacheFileException(Exception exception) =>
+        exception is FileNotFoundException or DirectoryNotFoundException or IOException;
+
     public override void Dispose()
     {
         DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -386,6 +557,10 @@ public class ArticleCachingNntpClient(
 
         _pendingRequests.Clear();
         _cachedSegments.Clear();
+        _fetchedSegmentIds.Clear();
+        while (_fetchedSegmentOrder.TryDequeue(out _))
+        {
+        }
         _cacheSizeSemaphore.Dispose();
         _sharedBudget.Remove(_cacheBytes);
         _cacheBytes = 0;
@@ -396,6 +571,8 @@ public class ArticleCachingNntpClient(
 
     private static async Task DeleteCacheDir(string cacheDir)
     {
+        if (!Directory.Exists(cacheDir)) return;
+
         var ct = SigtermUtil.GetCancellationToken();
         var delay = 1000;
         while (!ct.IsCancellationRequested)
@@ -403,6 +580,14 @@ public class ArticleCachingNntpClient(
             try
             {
                 Directory.Delete(cacheDir, recursive: true);
+                return;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return;
+            }
+            catch (FileNotFoundException)
+            {
                 return;
             }
             catch (Exception)

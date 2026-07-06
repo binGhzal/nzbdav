@@ -25,7 +25,8 @@ public class GetFullStatusController(
 {
     protected override async Task<IActionResult> Handle()
     {
-        var activeJobs = queueManager.GetInProgressQueueItems().Count;
+        var laneSnapshot = queueManager.GetLaneSnapshot();
+        var activeJobs = laneSnapshot.TotalActive;
         var queuedJobs = await dbClient.GetQueueItemsCount(null, RequestContext.RequestAborted).ConfigureAwait(false);
         var isPaused = ConfigManager.IsQueuePaused();
         var activeStreams = activeStreamTracker.GetSnapshot();
@@ -42,14 +43,8 @@ public class GetFullStatusController(
             ct: RequestContext.RequestAborted).ConfigureAwait(false);
         var arrPriorityOptions = ConfigManager.GetArrPrioritizationOptions();
         var arrSearchNudgeOptions = ConfigManager.GetArrSearchNudgeOptions();
-        var activeRepairRun = await dbClient.GetActiveRepairRunAsync(RequestContext.RequestAborted).ConfigureAwait(false);
-        var lastRepairRun = (await dbClient.GetRepairRunsAsync(1, RequestContext.RequestAborted).ConfigureAwait(false))
-            .FirstOrDefault();
-        var repairBrokenFiles = await dbClient.Ctx.RepairBrokenFiles
-            .AsNoTracking()
-            .Where(x => !x.Cleared)
-            .CountAsync(RequestContext.RequestAborted)
-            .ConfigureAwait(false);
+        var repairStatus = await dbClient.GetRepairRunStatusAsync(
+            ct: RequestContext.RequestAborted).ConfigureAwait(false);
         var healthWorkers = healthCheckService.GetWorkerSnapshot();
         var cacheSnapshot = SparseSegmentCacheManager.Shared.GetSnapshot(ConfigManager.GetSparseSegmentCacheOptions());
         var status = new GetFullStatusResponse()
@@ -70,14 +65,17 @@ public class GetFullStatusController(
                 HealthCheckConcurrency = ConfigManager.GetAdaptiveHealthCheckConcurrency(),
                 MaxStreamingConnections = ConfigManager.GetAdaptiveMaxStreamingConnections(),
                 MaxTotalStreamingConnections = ConfigManager.GetAdaptiveMaxTotalStreamingConnections(),
+                MaxActiveStreams = ConfigManager.GetAdaptiveMaxActiveStreams(),
                 ActiveStreams = activeStreams.Count,
                 RcloneInvalidations = RcloneInvalidationStatus.FromStats(rcloneInvalidations),
                 Cache = CacheStatus.FromSnapshot(cacheSnapshot),
                 Mount = MountDiagnosticStatus.FromSnapshot(mountStatusProvider.GetSnapshot(cacheSnapshot)),
                 ProviderDiagnostics = ProviderDiagnosticStatus.FromConfig(ConfigManager.GetUsenetProviderConfig()),
                 WorkerQueues = WorkerQueueStatus.FromStats(
-                    activeJobs,
+                    laneSnapshot.DownloadActive,
                     queuedJobs,
+                    laneSnapshot.Verifying,
+                    laneSnapshot.WaitingForVerify,
                     ConfigManager.GetAdaptiveMaxConcurrentQueueDownloads(),
                     ConfigManager.GetAdaptiveMaxConcurrentVerifyJobs(),
                     ConfigManager.GetAdaptiveMaxConcurrentRepairJobs(),
@@ -85,7 +83,10 @@ public class GetFullStatusController(
                     healthWorkers,
                     healthQueue,
                     durableWorkerJobs),
-                RepairRuns = RepairRunsStatus.FromRuns(activeRepairRun, lastRepairRun, repairBrokenFiles),
+                RepairRuns = RepairRunsStatus.FromRuns(
+                    repairStatus.ActiveRun,
+                    repairStatus.LastRun,
+                    repairStatus.BrokenFiles),
                 ArrPrioritization = ArrPrioritizationStatus.FromStats(arrPriorityOptions, arrIntegrationStats),
                 ArrSearchNudge = ArrSearchNudgeStatus.FromStats(arrSearchNudgeOptions, arrIntegrationStats),
                 ArrDownloadReport = ArrDownloadReportStatus.FromStats(arrIntegrationStats),

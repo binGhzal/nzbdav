@@ -51,6 +51,9 @@ public class GetStatusResponse
         [JsonPropertyName("max_total_streaming_connections")]
         public int MaxTotalStreamingConnections { get; init; }
 
+        [JsonPropertyName("max_active_streams")]
+        public int MaxActiveStreams { get; init; }
+
         [JsonPropertyName("active_streams")]
         public int ActiveStreams { get; init; }
 

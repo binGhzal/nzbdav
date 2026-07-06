@@ -4,6 +4,10 @@
     color: #dee2e6;
 }
 
+.alert {
+    margin-top: 8px;
+}
+
 .run {
     margin-top: 12px;
     display: flex;

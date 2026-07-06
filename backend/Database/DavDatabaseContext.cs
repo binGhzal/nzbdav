@@ -18,6 +18,9 @@ namespace NzbWebDAV.Database;
 
 public sealed class DavDatabaseContext : DbContext
 {
+    private const int SqliteBusy = 5;
+    private const int SqliteLocked = 6;
+
     public DavDatabaseContext() : base(CreateOptions())
     {
     }
@@ -56,7 +59,11 @@ public sealed class DavDatabaseContext : DbContext
         {
             DataSource = DatabaseFilePath,
             Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared,
+            // Shared-cache mode uses table-level locks and returns SQLITE_LOCKED
+            // under concurrent writers, bypassing the busy timeout. NZBDav uses
+            // many short-lived DbContexts, so private cache + WAL gives better
+            // writer/read concurrency and fewer user-visible "file" errors.
+            Cache = SqliteCacheMode.Private,
             Pooling = true,
             DefaultTimeout = 30
         }.ToString();
@@ -66,6 +73,78 @@ public sealed class DavDatabaseContext : DbContext
             .AddInterceptors(new SqliteForeignKeyEnabler(), new ContentIndexSnapshotInterceptor())
             .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
             .Options;
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        return ExecuteWithSqliteBusyRetry(() => SaveChangesWithBlobsAndInvalidations(acceptAllChangesOnSuccess));
+    }
+
+    public override Task<int> SaveChangesAsync
+    (
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default
+    )
+    {
+        return ExecuteWithSqliteBusyRetryAsync(
+            () => SaveChangesWithBlobsAndInvalidationsAsync(acceptAllChangesOnSuccess, cancellationToken),
+            cancellationToken);
+    }
+
+    public static T ExecuteWithSqliteBusyRetry<T>(Func<T> action)
+    {
+        for (var attempt = 1;; attempt++)
+        {
+            try
+            {
+                return action();
+            }
+            catch (Exception ex) when (IsRetryableSqliteLock(ex) && attempt < 6)
+            {
+                Thread.Sleep(GetSqliteRetryDelay(attempt));
+            }
+        }
+    }
+
+    public static async Task<T> ExecuteWithSqliteBusyRetryAsync<T>
+    (
+        Func<Task<T>> action,
+        CancellationToken cancellationToken
+    )
+    {
+        for (var attempt = 1;; attempt++)
+        {
+            try
+            {
+                return await action().ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsRetryableSqliteLock(ex) && attempt < 6)
+            {
+                await Task.Delay(GetSqliteRetryDelay(attempt), cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static bool IsRetryableSqliteLock(Exception ex)
+    {
+        if (!IsSqlite) return false;
+
+        return ex switch
+        {
+            SqliteException sqliteException => IsRetryableSqliteLock(sqliteException),
+            DbUpdateException { InnerException: SqliteException sqliteException } => IsRetryableSqliteLock(sqliteException),
+            _ => false
+        };
+    }
+
+    private static bool IsRetryableSqliteLock(SqliteException ex)
+    {
+        return ex.SqliteErrorCode == SqliteBusy || ex.SqliteErrorCode == SqliteLocked;
+    }
+
+    private static TimeSpan GetSqliteRetryDelay(int attempt)
+    {
+        return TimeSpan.FromMilliseconds(100 * attempt * attempt);
     }
 
     // database sets
@@ -99,6 +178,8 @@ public sealed class DavDatabaseContext : DbContext
     public List<DavNzbFile> BlobNzbFiles = [];
     public List<DavRarFile> BlobRarFiles = [];
     public List<DavMultipartFile> BlobMultipartFiles = [];
+
+    public bool SuppressRcloneInvalidations { get; set; }
 
     // tables
     protected override void OnModelCreating(ModelBuilder b)
@@ -456,6 +537,10 @@ public sealed class DavDatabaseContext : DbContext
             e.HasIndex(i => new { i.CreatedAt })
                 .IsUnique(false);
 
+            e.HasIndex(i => new { i.DavItemId, i.CreatedAt, i.Id })
+                .IsDescending(false, true, true)
+                .IsUnique(false);
+
             e.HasIndex(h => h.DavItemId)
                 .HasFilter("\"RepairStatus\" = 3")
                 .IsUnique(false);
@@ -571,6 +656,15 @@ public sealed class DavDatabaseContext : DbContext
                 .IsUnique();
 
             e.HasIndex(i => new { i.Kind, i.Status, i.AvailableAt, i.LeaseExpiresAt, i.Priority, i.CreatedAt })
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.Kind, i.Status, i.Priority, i.AvailableAt, i.CreatedAt })
+                .IsDescending(false, false, true, false, false)
+                .HasDatabaseName("IX_WorkerJobs_Kind_Status_Priority_AvailableAt_CreatedAt")
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.Kind, i.Status, i.LeaseExpiresAt })
+                .HasDatabaseName("IX_WorkerJobs_Kind_Status_LeaseExpiresAt")
                 .IsUnique(false);
         });
 
@@ -1142,7 +1236,45 @@ public sealed class DavDatabaseContext : DbContext
         });
     }
 
-    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = new CancellationToken())
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = new CancellationToken())
+    {
+        return SaveChangesAsync(acceptAllChangesOnSuccess: true, cancellationToken);
+    }
+
+    private int SaveChangesWithBlobsAndInvalidations(bool acceptAllChangesOnSuccess)
+    {
+        try
+        {
+            foreach (var blobNzbFile in BlobNzbFiles)
+                BlobStore.WriteBlob(blobNzbFile.Id, blobNzbFile).GetAwaiter().GetResult();
+            foreach (var blobRarFile in BlobRarFiles)
+                BlobStore.WriteBlob(blobRarFile.Id, blobRarFile).GetAwaiter().GetResult();
+            foreach (var blobMultipartFile in BlobMultipartFiles)
+                BlobStore.WriteBlob(blobMultipartFile.Id, blobMultipartFile).GetAwaiter().GetResult();
+
+            var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();
+            if (!SuppressRcloneInvalidations)
+                EnqueueRcloneVfsForget(addedOrRemovedDavItems);
+            var result = base.SaveChanges(acceptAllChangesOnSuccess);
+
+            BlobNzbFiles.Clear();
+            BlobRarFiles.Clear();
+            BlobMultipartFiles.Clear();
+
+            return result;
+        }
+        catch
+        {
+            DeletePendingBlobWrites();
+            throw;
+        }
+    }
+
+    private async Task<int> SaveChangesWithBlobsAndInvalidationsAsync
+    (
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken
+    )
     {
         try
         {
@@ -1156,8 +1288,9 @@ public sealed class DavDatabaseContext : DbContext
 
             // save db changes
             var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();
-            EnqueueRcloneVfsForget(addedOrRemovedDavItems);
-            var result = await base.SaveChangesAsync(cancellationToken);
+            if (!SuppressRcloneInvalidations)
+                EnqueueRcloneVfsForget(addedOrRemovedDavItems);
+            var result = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
 
             // clear pending blob writes
             BlobNzbFiles.Clear();
@@ -1169,17 +1302,22 @@ public sealed class DavDatabaseContext : DbContext
         }
         catch
         {
-            // on errors, remove any already-written blob files
-            foreach (var blobNzbFile in BlobNzbFiles)
-                BlobStore.Delete(blobNzbFile.Id);
-            foreach (var blobRarFile in BlobRarFiles)
-                BlobStore.Delete(blobRarFile.Id);
-            foreach (var blobMultipartFile in BlobMultipartFiles)
-                BlobStore.Delete(blobMultipartFile.Id);
+            DeletePendingBlobWrites();
 
             // rethrow the exception
             throw;
         }
+    }
+
+    private void DeletePendingBlobWrites()
+    {
+        // on errors, remove any already-written blob files
+        foreach (var blobNzbFile in BlobNzbFiles)
+            BlobStore.Delete(blobNzbFile.Id);
+        foreach (var blobRarFile in BlobRarFiles)
+            BlobStore.Delete(blobRarFile.Id);
+        foreach (var blobMultipartFile in BlobMultipartFiles)
+            BlobStore.Delete(blobMultipartFile.Id);
     }
 
     private List<DavItem> GetAddedOrRemovedDavItems()
@@ -1194,13 +1332,17 @@ public sealed class DavDatabaseContext : DbContext
     {
         var contentDirs = addedOrRemoved
             .Select(x => x.Path)
-            .Select(x => Path.GetDirectoryName(x)!)
+            .Select(Path.GetDirectoryName)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
             .ToList();
 
         var idDirs = addedOrRemoved
             .Where(x => x.Type == DavItem.ItemType.UsenetFile)
             .Select(x => DatabaseStoreSymlinkFile.GetTargetPath(x.Id))
-            .Select(x => Path.GetDirectoryName(x)!)
+            .Select(Path.GetDirectoryName)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
             .ToList();
 
         var completedSymlinkDirs = contentDirs
@@ -1217,6 +1359,7 @@ public sealed class DavDatabaseContext : DbContext
 
     public void EnqueueRcloneVfsForget(List<DavItem> addedOrRemovedDavItems)
     {
+        if (SuppressRcloneInvalidations) return;
         if (!ShouldQueueRcloneInvalidations()) return;
         if (addedOrRemovedDavItems.Count == 0) return;
 
@@ -1226,8 +1369,10 @@ public sealed class DavDatabaseContext : DbContext
 
     public void EnqueueRcloneVfsForgetPaths(IEnumerable<string> paths)
     {
+        if (SuppressRcloneInvalidations) return;
         if (!ShouldQueueRcloneInvalidations()) return;
 
+        var now = DateTimeOffset.UtcNow;
         var pathList = paths
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => x.Trim())
@@ -1236,14 +1381,41 @@ public sealed class DavDatabaseContext : DbContext
 
         if (pathList.Count == 0) return;
 
-        var now = DateTimeOffset.UtcNow;
-        RcloneInvalidationItems.AddRange(pathList.Select(path => new RcloneInvalidationItem
+        var pathSet = pathList.ToHashSet(StringComparer.Ordinal);
+        var existingItems = RcloneInvalidationItems.Local
+            .Where(x => pathSet.Contains(x.Path) && Entry(x).State != EntityState.Deleted)
+            .Concat(RcloneInvalidationItems
+                .Where(x => pathList.Contains(x.Path))
+                .ToList())
+            .GroupBy(x => x.Id)
+            .Select(x => x.First())
+            .ToList();
+        var existingPaths = existingItems
+            .Select(x => x.Path)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var existingItem in existingItems)
         {
-            Id = Guid.NewGuid(),
-            Path = path,
-            CreatedAt = now,
-            NextAttemptAt = now
-        }));
+            if (existingItem.NextAttemptAt > now)
+                existingItem.NextAttemptAt = now;
+        }
+
+        var newItems = new List<RcloneInvalidationItem>();
+        foreach (var path in pathList)
+        {
+            if (existingPaths.Contains(path))
+                continue;
+
+            newItems.Add(new RcloneInvalidationItem
+            {
+                Id = Guid.NewGuid(),
+                Path = path,
+                CreatedAt = now,
+                NextAttemptAt = now
+            });
+        }
+
+        RcloneInvalidationItems.AddRange(newItems);
     }
 
     public static async Task EnqueueRcloneVfsForgetAsync

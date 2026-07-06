@@ -14,6 +14,7 @@ public static class StreamExtensions
     {
         if (count == 0) return;
         var remaining = count;
+        long discarded = 0;
         var throwaway = ArrayPool<byte>.Shared.Rent(1024);
         try
         {
@@ -21,8 +22,12 @@ public static class StreamExtensions
             {
                 var toRead = (int)Math.Min(remaining, throwaway.Length);
                 var read = await stream.ReadAsync(throwaway.AsMemory(0, toRead), ct).ConfigureAwait(false);
-                if (read == 0) break;
+                if (read == 0)
+                    throw new IOException(
+                        $"Source stream ended before discarding {count} byte(s). Discarded {discarded} byte(s).");
+
                 remaining -= read;
+                discarded += read;
             }
         }
         finally

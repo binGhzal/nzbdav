@@ -5,6 +5,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
@@ -29,13 +30,15 @@ public class QueueItemProcessor(
     WebsocketManager websocketManager,
     ArrDownloadReportService arrDownloadReportService,
     IProgress<int> progress,
-    CancellationToken ct
+    CancellationToken ct,
+    Action<QueueProcessingStage>? onStageChanged = null
 )
 {
     public async Task<ProcessingOutcome> ProcessAsync()
     {
         // initialize
         var startTime = DateTime.Now;
+        onStageChanged?.Invoke(QueueProcessingStage.Downloading);
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Downloading");
         await arrDownloadReportService
             .RecordQueueLifecycleAsync(dbClient, queueItem, "Downloading", ct: ct)
@@ -117,7 +120,7 @@ public class QueueItemProcessor(
         // if the `/blobs` folder is tampered with outside the nzbdav process,
         // then it is possible that the nzb file goes missing.
         if (queueNzbStream is null)
-            throw new Exception($"The NZB file could not be found.");
+            throw new NonRetryableDownloadException("The NZB file is missing from the queue store.");
 
         // load config for handling duplicate nzbs
         var existingMountFolder = await GetMountFolder().ConfigureAwait(false);
@@ -135,7 +138,7 @@ public class QueueItemProcessor(
         }
 
         // read the nzb document
-        var nzb = await NzbDocument.LoadAsync(queueNzbStream).ConfigureAwait(false);
+        var nzb = await LoadQueueNzbDocumentAsync().ConfigureAwait(false);
         var nzbFiles = nzb.Files.Where(x => x.Segments.Count > 0).ToList();
 
         // Look for a password in filename, submission params, and nzb document.
@@ -146,7 +149,9 @@ public class QueueItemProcessor(
 
         // step 0 -- perform article existence pre-check against cache
         // https://github.com/nzbdav-dev/nzbdav/issues/101
-        var articlesToPrecheck = nzbFiles.SelectMany(x => x.GetSegmentIds());
+        var articlesToPrecheck = nzbFiles
+            .SelectMany(x => x.GetSegmentIds())
+            .Distinct(StringComparer.Ordinal);
         HealthCheckService.CheckCachedMissingSegmentIds(articlesToPrecheck);
 
         // step 1 -- get name and size of each nzb file
@@ -175,31 +180,13 @@ public class QueueItemProcessor(
             .Select(x => x!)
             .ToList();
 
-        // step 3 -- Optionally check full article existence
-        var checkedFullHealth = false;
+        // step 3 -- optionally enqueue full article existence verification.
+        // The durable verify lane keeps large STAT sweeps out of the download lane.
         var healthCheckCategories = configManager.GetEnsureArticleExistenceCategories();
-        if (healthCheckCategories.Contains(queueItem.Category.ToLower()))
-        {
-            _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Verifying");
-            await arrDownloadReportService
-                .RecordQueueLifecycleAsync(dbClient, queueItem, "Verifying", ct: ct)
-                .ConfigureAwait(false);
-            var articlesToCheck = fileInfos
-                .Where(x => x.IsRar || FilenameUtil.IsImportantFileType(x.FileName))
-                .SelectMany(x => x.NzbFile.GetSegmentIds())
-                .ToList();
-            var part3Progress = progress
-                .Offset(100)
-                .ToPercentage(articlesToCheck.Count);
-            var healthCheckConcurrency = configManager
-                .GetAdaptiveHealthCheckConcurrency();
-            await usenetClient
-                .CheckAllSegmentsAsync(articlesToCheck, healthCheckConcurrency, part3Progress, ct)
-                .ConfigureAwait(false);
-            checkedFullHealth = true;
-        }
+        var queuePostDownloadVerification = healthCheckCategories.Contains(queueItem.Category.ToLower());
 
         // update the database
+        onStageChanged?.Invoke(QueueProcessingStage.Moving);
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Moving");
         await arrDownloadReportService
             .RecordQueueLifecycleAsync(dbClient, queueItem, "Moving", ct: ct)
@@ -209,10 +196,10 @@ public class QueueItemProcessor(
             var categoryFolder = await GetOrCreateCategoryFolder().ConfigureAwait(false);
             var mountFolder = await CreateMountFolder(categoryFolder, existingMountFolder, duplicateNzbBehavior)
                 .ConfigureAwait(false);
-            new RarAggregator(dbClient, mountFolder, checkedFullHealth).UpdateDatabase(fileProcessingResults);
-            new FileAggregator(dbClient, mountFolder, checkedFullHealth).UpdateDatabase(fileProcessingResults);
-            new SevenZipAggregator(dbClient, mountFolder, checkedFullHealth).UpdateDatabase(fileProcessingResults);
-            new MultipartMkvAggregator(dbClient, mountFolder, checkedFullHealth).UpdateDatabase(fileProcessingResults);
+            new RarAggregator(dbClient, mountFolder, checkedFullHealth: false).UpdateDatabase(fileProcessingResults);
+            new FileAggregator(dbClient, mountFolder, checkedFullHealth: false).UpdateDatabase(fileProcessingResults);
+            new SevenZipAggregator(dbClient, mountFolder, checkedFullHealth: false).UpdateDatabase(fileProcessingResults);
+            new MultipartMkvAggregator(dbClient, mountFolder, checkedFullHealth: false).UpdateDatabase(fileProcessingResults);
 
             // post-processing
             new RenameDuplicatesPostProcessor(dbClient).RenameDuplicates();
@@ -227,8 +214,64 @@ public class QueueItemProcessor(
                 await new CreateStrmFilesPostProcessor(configManager, dbClient).CreateStrmFilesAsync(mountFolder)
                     .ConfigureAwait(false);
 
+            if (queuePostDownloadVerification)
+            {
+                if (usenetClient is ArticleCachingNntpClient articleCachingClient)
+                    HealthCheckService.RememberRecentlyVerifiedSegmentIds(
+                        articleCachingClient.GetFetchedSegmentIdsSnapshot());
+                await EnqueuePostDownloadVerifyJobAsync(mountFolder).ConfigureAwait(false);
+            }
+
             return mountFolder;
         }).ConfigureAwait(false);
+    }
+
+    private async Task EnqueuePostDownloadVerifyJobAsync(DavItem mountFolder)
+    {
+        var hasVerifiableOutput = dbClient.Ctx.ChangeTracker
+            .Entries<DavItem>()
+            .Where(x => x.State == EntityState.Added)
+            .Select(x => x.Entity)
+            .Where(x => x.HistoryItemId == queueItem.Id)
+            .Any(ShouldEnqueuePostDownloadVerify);
+        if (!hasVerifiableOutput) return;
+
+        await dbClient.EnqueueWorkerJobsAsync(
+                WorkerJob.JobKind.Verify,
+                [mountFolder.Id],
+                priority: GetPostDownloadVerifyPriority(queueItem.Priority),
+                now: DateTimeOffset.UtcNow,
+                payloadJson: DavDatabaseClient.CreatePostDownloadVerifyPayloadJson(),
+                ct: ct,
+                saveChanges: false)
+            .ConfigureAwait(false);
+    }
+
+    private static bool ShouldEnqueuePostDownloadVerify(DavItem davItem)
+    {
+        return davItem.Type == DavItem.ItemType.UsenetFile
+               && FilenameUtil.IsVideoFile(davItem.Name);
+    }
+
+    private static int GetPostDownloadVerifyPriority(QueueItem.PriorityOption priority)
+    {
+        return priority switch
+        {
+            QueueItem.PriorityOption.Force => 100,
+            _ => 50
+        };
+    }
+
+    private async Task<NzbDocument> LoadQueueNzbDocumentAsync()
+    {
+        try
+        {
+            return await NzbDocument.LoadAsync(queueNzbStream!).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new NonRetryableDownloadException("The NZB file could not be read from the queue store.");
+        }
     }
 
     private IEnumerable<BaseProcessor> GetFileProcessors

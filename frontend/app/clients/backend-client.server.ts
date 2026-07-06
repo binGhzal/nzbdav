@@ -11,10 +11,10 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to fetch onboarding status: ${(await response.json()).error}`);
+            throw new Error(`Failed to fetch onboarding status: ${await getBackendErrorMessage(response)}`);
         }
 
-        const data = await response.json();
+        const data = await readBackendJson<{ isOnboarding: boolean }>(response, "fetch onboarding status");
         return data.isOnboarding;
     }
 
@@ -36,10 +36,10 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to create account: ${(await response.json()).error}`);
+            throw new Error(`Failed to create account: ${await getBackendErrorMessage(response)}`);
         }
 
-        const data = await response.json();
+        const data = await readBackendJson<{ status: boolean }>(response, "create account");
         return data.status;
     }
 
@@ -60,10 +60,10 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to authenticate: ${(await response.json()).error}`);
+            throw new Error(`Failed to authenticate: ${await getBackendErrorMessage(response)}`);
         }
 
-        const data = await response.json();
+        const data = await readBackendJson<{ authenticated: boolean }>(response, "authenticate");
         return data.authenticated;
     }
 
@@ -88,10 +88,10 @@ class BackendClient {
         const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
         const response = await fetch(url, { headers: { "x-api-key": apiKey } });
         if (!response.ok) {
-            throw new Error(`Failed to get queue: ${(await response.json()).error}`);
+            throw new Error(`Failed to get queue: ${await getBackendErrorMessage(response)}`);
         }
 
-        const data = await response.json();
+        const data = await readBackendJson<{ queue: QueueResponse }>(response, "get queue");
         return data.queue;
     }
 
@@ -101,10 +101,10 @@ class BackendClient {
         const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
         const response = await fetch(url, { headers: { "x-api-key": apiKey } });
         if (!response.ok) {
-            throw new Error(`Failed to get history: ${(await response.json()).error}`);
+            throw new Error(`Failed to get history: ${await getBackendErrorMessage(response)}`);
         }
 
-        const data = await response.json();
+        const data = await readBackendJson<{ history: HistoryResponse }>(response, "get history");
         return data.history;
     }
 
@@ -125,9 +125,9 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to add nzb file: ${(await response.json()).error}`);
+            throw new Error(`Failed to add nzb file: ${await getBackendErrorMessage(response)}`);
         }
-        const data = await response.json();
+        const data = await readBackendJson<{ nzo_ids?: string[] }>(response, "add nzb file");
         if (!data.nzo_ids || data.nzo_ids.length != 1) {
             throw new Error(`Failed to add nzb file: unexpected response format`);
         }
@@ -149,10 +149,10 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to list webdav directory: ${(await response.json()).error}`);
+            throw new Error(`Failed to list webdav directory: ${await getBackendErrorMessage(response)}`);
         }
-        const data = await response.json();
-        return data.items;
+        const data = await readBackendJson<{ items?: DirectoryItem[] }>(response, "list webdav directory");
+        return data.items || [];
     }
 
     public async getConfig(keys: string[]): Promise<ConfigItem[]> {
@@ -172,9 +172,9 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to get config items: ${(await response.json()).error}`);
+            throw new Error(`Failed to get config items: ${await getBackendErrorMessage(response)}`);
         }
-        const data = await response.json();
+        const data = await readBackendJson<{ configItems?: ConfigItem[] }>(response, "get config items");
         return data.configItems || [];
     }
 
@@ -195,9 +195,9 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to update config items: ${(await response.json()).error}`);
+            throw new Error(`Failed to update config items: ${await getBackendErrorMessage(response)}`);
         }
-        const data = await response.json();
+        const data = await readBackendJson<{ status: boolean }>(response, "update config items");
         return data.status;
     }
 
@@ -215,9 +215,9 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to get health check queue: ${(await response.json()).error}`);
+            throw new Error(`Failed to get health check queue: ${await getBackendErrorMessage(response)}`);
         }
-        const data = await response.json();
+        const data = await readBackendJson<HealthCheckQueueResponse>(response, "get health check queue");
         return data;
     }
 
@@ -235,9 +235,9 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to get health check history: ${(await response.json()).error}`);
+            throw new Error(`Failed to get health check history: ${await getBackendErrorMessage(response)}`);
         }
-        const data = await response.json();
+        const data = await readBackendJson<HealthCheckHistoryResponse>(response, "get health check history");
         return data;
     }
 
@@ -251,9 +251,9 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to get full status: ${(await response.json()).error}`);
+            throw new Error(`Failed to get full status: ${await getBackendErrorMessage(response)}`);
         }
-        const data = await response.json();
+        const data = await readBackendJson<{ status: FullStatusResponse }>(response, "get full status");
         return data.status;
     }
 
@@ -267,9 +267,9 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to get repair status: ${(await response.json()).error}`);
+            throw new Error(`Failed to get repair status: ${await getBackendErrorMessage(response)}`);
         }
-        return await response.json();
+        return await readBackendJson<RepairStatusResponse>(response, "get repair status");
     }
 
     public async startRepairRun(): Promise<RepairRunEnvelope> {
@@ -328,9 +328,9 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to delete ARR correlation: ${(await response.json()).error}`);
+            throw new Error(`Failed to delete ARR correlation: ${await getBackendErrorMessage(response)}`);
         }
-        return await response.json();
+        return await readBackendJson<{ status: boolean }>(response, "delete ARR correlation");
     }
 
     private async postRepairAction<T>(path: string, description: string): Promise<T> {
@@ -343,9 +343,9 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to ${description}: ${(await response.json()).error}`);
+            throw new Error(`Failed to ${description}: ${await getBackendErrorMessage(response)}`);
         }
-        return await response.json();
+        return await readBackendJson<T>(response, description);
     }
 
     private async getJson<T>(path: string, description: string): Promise<T> {
@@ -357,9 +357,9 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to ${description}: ${(await response.json()).error}`);
+            throw new Error(`Failed to ${description}: ${await getBackendErrorMessage(response)}`);
         }
-        return await response.json();
+        return await readBackendJson<T>(response, description);
     }
 
     private async postJson<T>(path: string, body: unknown, description: string): Promise<T> {
@@ -375,10 +375,45 @@ class BackendClient {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to ${description}: ${(await response.json()).error}`);
+            throw new Error(`Failed to ${description}: ${await getBackendErrorMessage(response)}`);
         }
-        return await response.json();
+        return await readBackendJson<T>(response, description);
     }
+}
+
+async function readBackendJson<T>(response: Response, description: string): Promise<T> {
+    try {
+        return await response.json() as T;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "unknown parse error";
+        throw new Error(`Failed to parse ${description} response: ${message}`);
+    }
+}
+
+async function getBackendErrorMessage(response: Response): Promise<string> {
+    let body = "";
+    try {
+        body = (await response.text()).trim();
+    } catch {
+        body = "";
+    }
+
+    if (body.length > 0) {
+        try {
+            const parsed = JSON.parse(body);
+            if (parsed && typeof parsed === "object" && "error" in parsed) {
+                const error = (parsed as { error?: unknown }).error;
+                if (typeof error === "string" && error.trim().length > 0) return error.trim();
+            }
+        } catch {
+            // Plain-text proxy/backend errors are common and should be shown as-is.
+        }
+
+        return body.length <= 500 ? body : `${body.slice(0, 500)}...`;
+    }
+
+    const statusText = response.statusText?.trim();
+    return statusText ? `${response.status} ${statusText}` : `HTTP ${response.status}`;
 }
 
 export const backendClient = new BackendClient();
@@ -566,6 +601,7 @@ export type CacheStatus = {
     evictions: number,
     files: number,
     active_readers: number,
+    read_ahead_active: number,
     pending_fetches: number,
 }
 
@@ -711,6 +747,8 @@ export type ArrValidationResponse = {
     generated_at: string,
     instance_count: number,
     queue_items: number,
+    queue_items_total: number,
+    ignored_queue_items: number,
     history_items: number,
     correlations: number,
     stale_correlations: number,

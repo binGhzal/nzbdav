@@ -1,10 +1,10 @@
 ﻿using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Http;
-using NWebDav.Server.Helpers;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using Serilog;
 
@@ -35,6 +35,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         }
         catch (UsenetArticleNotFoundException e)
         {
+            HealthCheckService.RememberMissingSegmentId(e.SegmentId);
             if (!context.Response.HasStarted)
             {
                 context.Response.Clear();
@@ -47,6 +48,23 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             if (context.Items["DavItem"] is DavItem davItem)
                 ScheduleRepair(davItem.Id);
         }
+        catch (RetryableDownloadException e) when (IsDavItemRequest(context))
+        {
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 503;
+                context.Response.Headers.RetryAfter = "30";
+            }
+
+            var filePath = GetRequestFilePath(context);
+            var seekPosition = HttpRangeHeader.GetSeekPositionForLog(context.Request.Headers.Range.FirstOrDefault());
+            Log.Warning(
+                "File `{FilePath}` could not be read from byte position {SeekPosition} because providers are temporarily unavailable: {Message}",
+                filePath,
+                seekPosition,
+                e.Message);
+        }
         catch (SeekPositionNotFoundException)
         {
             if (!context.Response.HasStarted)
@@ -56,8 +74,36 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             }
 
             var filePath = GetRequestFilePath(context);
-            var seekPosition = context.Request.GetRange()?.Start?.ToString() ?? "unknown";
+            var seekPosition = HttpRangeHeader.GetSeekPositionForLog(
+                context.Request.Headers.Range.FirstOrDefault(),
+                "unknown");
             Log.Error($"File `{filePath}` could not seek to byte position: {seekPosition}");
+        }
+        catch (FileNotFoundException e) when (IsDavItemRequest(context))
+        {
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 404;
+            }
+
+            var filePath = GetRequestFilePath(context);
+            Log.Warning(
+                "File `{FilePath}` could not be opened because backing metadata is missing: {Message}",
+                filePath,
+                e.Message);
+
+            if (context.Items["DavItem"] is DavItem davItem)
+                ScheduleRepair(davItem.Id);
+        }
+        catch (BadHttpRequestException e)
+        {
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                await context.Response.WriteAsync(e.Message).ConfigureAwait(false);
+            }
         }
         catch (Exception e) when (IsDavItemRequest(context))
         {
@@ -68,7 +114,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             }
 
             var filePath = GetRequestFilePath(context);
-            var seekPosition = context.Request.GetRange()?.Start?.ToString() ?? "0";
+            var seekPosition = HttpRangeHeader.GetSeekPositionForLog(context.Request.Headers.Range.FirstOrDefault());
             Log.Error($"File `{filePath}` could not be read from byte position: {seekPosition} " +
                       $"due to unhandled {e.GetType()}: {e.Message}");
         }

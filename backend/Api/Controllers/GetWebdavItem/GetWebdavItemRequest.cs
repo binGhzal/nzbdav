@@ -10,8 +10,10 @@ namespace NzbWebDAV.Api.Controllers.GetWebdavItem;
 public class GetWebdavItemRequest
 {
     public string Item { get; init; }
+    public HttpRangeHeader? Range { get; init; }
     public long? RangeStart { get; init; }
     public long? RangeEnd { get; init; }
+    public long? RangeSuffixLength { get; init; }
     public bool ShouldDownload { get; init; }
 
     public GetWebdavItemRequest(HttpContext context)
@@ -34,10 +36,10 @@ public class GetWebdavItemRequest
 
         // parse range header
         var rangeHeader = context.Request.Headers["Range"].FirstOrDefault() ?? "";
-        if (!rangeHeader.StartsWith("bytes=")) return;
-        var parts = rangeHeader[6..].Split("-", StringSplitOptions.RemoveEmptyEntries);
-        RangeStart = long.Parse(parts[0]);
-        if (parts.Length > 1) RangeEnd = long.Parse(parts[1]);
+        Range = HttpRangeHeader.Parse(rangeHeader);
+        RangeStart = Range?.Start;
+        RangeEnd = Range?.End;
+        RangeSuffixLength = Range?.SuffixLength;
     }
 
     private static bool VerifyDownloadKey(string? downloadKey, string path, ConfigManager configManager)

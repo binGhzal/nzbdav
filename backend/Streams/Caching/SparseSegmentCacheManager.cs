@@ -3,28 +3,34 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
+using NzbWebDAV.Exceptions;
 
 namespace NzbWebDAV.Streams.Caching;
 
 public sealed class SparseSegmentCacheManager : IDisposable
 {
     private const string CacheFileSuffix = ".nzbdav-cache.tmp";
+    private const int MaxFetchBufferBytes = 256 * 1024;
     private static readonly TimeSpan MaintenanceInterval = TimeSpan.FromMinutes(1);
+    private static readonly int DefaultMaxReadAheadTasks = Math.Clamp(Environment.ProcessorCount / 2, 2, 8);
 
     public static SparseSegmentCacheManager Shared { get; } = new();
 
     private readonly ConcurrentDictionary<string, CacheFile> _files = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _cleanedDirectories = new(StringComparer.Ordinal);
     private readonly Timer _maintenanceTimer;
+    private readonly int _maxReadAheadTasks;
     private long _bytes;
     private long _hits;
     private long _misses;
     private long _evictions;
+    private int _activeReadAheadTasks;
     private SparseSegmentCacheOptions _lastOptions = new();
     private bool _disposed;
 
-    public SparseSegmentCacheManager()
+    public SparseSegmentCacheManager(int? maxReadAheadTasks = null)
     {
+        _maxReadAheadTasks = Math.Max(1, maxReadAheadTasks ?? DefaultMaxReadAheadTasks);
         _maintenanceTimer = new Timer(
             _ => EvictIfNeeded(),
             null,
@@ -44,17 +50,33 @@ public sealed class SparseSegmentCacheManager : IDisposable
         if (options.MaxBytes <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxBytes));
 
         _lastOptions = options;
-        Directory.CreateDirectory(options.Directory);
-        CleanupOrphanFilesOnce(options.Directory);
+        try
+        {
+            Directory.CreateDirectory(options.Directory);
+            CleanupOrphanFilesOnce(options.Directory);
+        }
+        catch (Exception ex) when (IsCacheDirectoryUnavailable(ex))
+        {
+            return inner;
+        }
 
         var cacheKey = CreateNamespacedKey(key, options);
         while (true)
         {
-            var file = _files.GetOrAdd(cacheKey, _ =>
+            CacheFile file;
+            try
             {
-                var path = Path.Join(options.Directory, $"{cacheKey}{CacheFileSuffix}");
-                return new CacheFile(this, cacheKey, path, inner.Length, options);
-            });
+                file = _files.GetOrAdd(cacheKey, _ =>
+                {
+                    var path = Path.Join(options.Directory, $"{cacheKey}{CacheFileSuffix}");
+                    return new CacheFile(this, cacheKey, path, inner.Length, options);
+                });
+            }
+            catch (Exception ex) when (IsCacheDirectoryUnavailable(ex))
+            {
+                _files.TryRemove(cacheKey, out _);
+                return inner;
+            }
 
             try
             {
@@ -65,6 +87,11 @@ public sealed class SparseSegmentCacheManager : IDisposable
             catch (ObjectDisposedException)
             {
                 _files.TryRemove(new KeyValuePair<string, CacheFile>(file.Key, file));
+            }
+            catch (Exception ex) when (IsCacheDirectoryUnavailable(ex))
+            {
+                _files.TryRemove(new KeyValuePair<string, CacheFile>(file.Key, file));
+                return inner;
             }
         }
     }
@@ -79,6 +106,7 @@ public sealed class SparseSegmentCacheManager : IDisposable
             Evictions: Interlocked.Read(ref _evictions),
             Files: _files.Count,
             ActiveReaders: _files.Values.Sum(x => x.ActiveReaders),
+            ReadAheadActive: Volatile.Read(ref _activeReadAheadTasks),
             PendingFetches: _files.Values.Sum(x => x.PendingFetches)
         );
     }
@@ -130,16 +158,59 @@ public sealed class SparseSegmentCacheManager : IDisposable
         var fullPath = Path.GetFullPath(directory);
         if (!_cleanedDirectories.TryAdd(fullPath, 0)) return;
 
-        foreach (var file in Directory.EnumerateFiles(fullPath, $"*{CacheFileSuffix}"))
+        foreach (var file in EnumerateCacheFiles(fullPath))
         {
             try
             {
                 File.Delete(file);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            catch (Exception ex) when (IsCacheDirectoryUnavailable(ex) || ex is FileNotFoundException)
             {
             }
         }
+    }
+
+    private static IEnumerable<string> EnumerateCacheFiles(string directory)
+    {
+        IEnumerator<string> enumerator;
+        try
+        {
+            enumerator = Directory
+                .EnumerateFiles(directory, $"*{CacheFileSuffix}")
+                .GetEnumerator();
+        }
+        catch (Exception ex) when (IsCacheDirectoryUnavailable(ex))
+        {
+            yield break;
+        }
+
+        using (enumerator)
+        {
+            while (true)
+            {
+                string file;
+                try
+                {
+                    if (!enumerator.MoveNext()) yield break;
+                    file = enumerator.Current;
+                }
+                catch (Exception ex) when (IsCacheDirectoryUnavailable(ex))
+                {
+                    yield break;
+                }
+
+                yield return file;
+            }
+        }
+    }
+
+    private static bool IsCacheDirectoryUnavailable(Exception exception)
+    {
+        return exception is IOException
+            or UnauthorizedAccessException
+            or DirectoryNotFoundException
+            or NotSupportedException
+            or ArgumentException;
     }
 
     private void RecordHit()
@@ -156,6 +227,22 @@ public sealed class SparseSegmentCacheManager : IDisposable
     {
         Interlocked.Add(ref _bytes, bytes);
         EvictIfNeeded();
+    }
+
+    private bool TryEnterReadAhead()
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref _activeReadAheadTasks);
+            if (current >= _maxReadAheadTasks) return false;
+            if (Interlocked.CompareExchange(ref _activeReadAheadTasks, current + 1, current) == current)
+                return true;
+        }
+    }
+
+    private void ExitReadAhead()
+    {
+        Interlocked.Decrement(ref _activeReadAheadTasks);
     }
 
     private void EvictIfNeeded()
@@ -270,6 +357,22 @@ public sealed class SparseSegmentCacheManager : IDisposable
                 var chunkIndex = absoluteOffset / _options.ChunkBytes;
                 var chunkOffset = (int)(absoluteOffset % _options.ChunkBytes);
                 var bytesFromChunk = Math.Min(remaining - totalRead, _options.ChunkBytes - chunkOffset);
+                var chunkStart = chunkIndex * _options.ChunkBytes;
+                var chunkEndExclusive = Math.Min(_length, chunkStart + _options.ChunkBytes);
+
+                if (readLimitExclusive < chunkEndExclusive && !IsChunkCompleted(chunkIndex))
+                {
+                    var directRead = await ReadDirectAsync(
+                            inner,
+                            absoluteOffset,
+                            buffer.Slice(totalRead, bytesFromChunk),
+                            ct)
+                        .ConfigureAwait(false);
+                    if (directRead <= 0) break;
+                    totalRead += directRead;
+                    if (directRead < bytesFromChunk) break;
+                    continue;
+                }
 
                 await EnsureChunkAsync(chunkIndex, inner, ct).ConfigureAwait(false);
                 StartReadAhead(chunkIndex + 1, inner, readLimitExclusive, readAheadToken);
@@ -277,7 +380,65 @@ public sealed class SparseSegmentCacheManager : IDisposable
                     absoluteOffset,
                     buffer.Slice(totalRead, bytesFromChunk),
                     ct).ConfigureAwait(false);
-                if (read == 0) break;
+                if (read < bytesFromChunk)
+                {
+                    await RefetchCompletedChunkAsync(chunkIndex, inner, ct).ConfigureAwait(false);
+                    read = await ReadFromCacheAsync(
+                        absoluteOffset,
+                        buffer.Slice(totalRead, bytesFromChunk),
+                        ct).ConfigureAwait(false);
+                }
+
+                if (read < bytesFromChunk)
+                    throw new IOException($"Cached chunk {chunkIndex} could not satisfy read at offset {absoluteOffset}.");
+                totalRead += read;
+            }
+
+            return totalRead;
+        }
+
+        private bool IsChunkCompleted(long chunkIndex)
+        {
+            lock (_stateLock)
+                return _completedChunks.Contains(chunkIndex);
+        }
+
+        private async ValueTask<int> ReadDirectAsync(
+            IFileRangeReader inner,
+            long offset,
+            Memory<byte> buffer,
+            CancellationToken ct)
+        {
+            var totalRead = 0;
+            while (totalRead < buffer.Length)
+            {
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    _disposeCts.Token,
+                    ct);
+                timeoutCts.CancelAfter(_options.NoProgressTimeout);
+                int read;
+                try
+                {
+                    read = await inner
+                        .ReadAtAsync(offset + totalRead, buffer[totalRead..], timeoutCts.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException e)
+                    when (timeoutCts.IsCancellationRequested
+                          && !ct.IsCancellationRequested
+                          && !_disposeCts.IsCancellationRequested)
+                {
+                    throw new RetryableDownloadException(
+                        $"No progress reading cache direct range at offset {offset + totalRead} " +
+                        $"within {_options.NoProgressTimeout}.",
+                        e);
+                }
+
+                if (read <= 0)
+                {
+                    throw new IOException($"No progress reading cache direct range at offset {offset + totalRead}.");
+                }
+
                 totalRead += read;
             }
 
@@ -381,6 +542,28 @@ public sealed class SparseSegmentCacheManager : IDisposable
             }
         }
 
+        private async Task RefetchCompletedChunkAsync(long chunkIndex, IFileRangeReader inner, CancellationToken ct)
+        {
+            var chunkBytes = GetChunkByteCount(chunkIndex);
+            if (chunkBytes <= 0) return;
+            var removedCompletedChunk = false;
+
+            lock (_stateLock)
+            {
+                if (_completedChunks.Remove(chunkIndex))
+                {
+                    removedCompletedChunk = true;
+                    _cachedBytes = Math.Max(0, _cachedBytes - chunkBytes);
+                    _stream.SetLength(_length);
+                }
+            }
+
+            if (removedCompletedChunk)
+                _manager.AddBytes(-chunkBytes);
+
+            await EnsureChunkAsync(chunkIndex, inner, ct).ConfigureAwait(false);
+        }
+
         private void StartReadAhead(
             long firstChunkIndex,
             IFileRangeReader inner,
@@ -417,6 +600,14 @@ public sealed class SparseSegmentCacheManager : IDisposable
                 return;
             }
 
+            if (!_manager.TryEnterReadAhead())
+            {
+                Interlocked.Decrement(ref _activeReadAheadTasks);
+                foreach (var chunkIndex in chunks)
+                    _scheduledReadAheadChunks.TryRemove(chunkIndex, out _);
+                return;
+            }
+
             _ = Task.Run(async () =>
             {
                 try
@@ -436,6 +627,7 @@ public sealed class SparseSegmentCacheManager : IDisposable
                     foreach (var chunkIndex in chunks)
                         _scheduledReadAheadChunks.TryRemove(chunkIndex, out _);
                     Interlocked.Decrement(ref _activeReadAheadTasks);
+                    _manager.ExitReadAhead();
                 }
             });
         }
@@ -464,29 +656,51 @@ public sealed class SparseSegmentCacheManager : IDisposable
         private async Task FetchChunkAsync(long chunkIndex, IFileRangeReader inner)
         {
             var chunkStart = chunkIndex * _options.ChunkBytes;
-            var bytesToRead = (int)Math.Min(_options.ChunkBytes, _length - chunkStart);
+            var bytesToRead = GetChunkByteCount(chunkIndex);
             if (bytesToRead <= 0) return;
 
-            var buffer = ArrayPool<byte>.Shared.Rent(bytesToRead);
+            var buffer = ArrayPool<byte>.Shared.Rent(Math.Min(bytesToRead, MaxFetchBufferBytes));
             try
             {
                 var totalRead = 0;
                 while (totalRead < bytesToRead)
                 {
+                    var bytesRemaining = bytesToRead - totalRead;
+                    var requestBytes = Math.Min(buffer.Length, bytesRemaining);
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(_disposeCts.Token);
                     timeoutCts.CancelAfter(_options.NoProgressTimeout);
-                    var read = await inner
-                        .ReadAtAsync(chunkStart + totalRead, buffer.AsMemory(totalRead, bytesToRead - totalRead), timeoutCts.Token)
-                        .ConfigureAwait(false);
+                    int read;
+                    try
+                    {
+                        read = await inner
+                            .ReadAtAsync(
+                                chunkStart + totalRead,
+                                buffer.AsMemory(0, requestBytes),
+                                timeoutCts.Token)
+                            .ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException e)
+                        when (timeoutCts.IsCancellationRequested && !_disposeCts.IsCancellationRequested)
+                    {
+                        throw new RetryableDownloadException(
+                            $"No progress reading cache chunk {chunkIndex} at offset {chunkStart + totalRead} " +
+                            $"within {_options.NoProgressTimeout}.",
+                            e);
+                    }
+
                     if (read <= 0)
                     {
                         throw new IOException($"No progress reading cache chunk {chunkIndex} at offset {chunkStart + totalRead}.");
                     }
 
+                    await WriteChunkAsync(
+                            chunkStart + totalRead,
+                            buffer.AsMemory(0, read),
+                            _disposeCts.Token)
+                        .ConfigureAwait(false);
+
                     totalRead += read;
                 }
-
-                await WriteChunkAsync(chunkStart, buffer.AsMemory(0, bytesToRead), _disposeCts.Token).ConfigureAwait(false);
 
                 lock (_stateLock)
                 {
@@ -501,6 +715,12 @@ public sealed class SparseSegmentCacheManager : IDisposable
             {
                 ArrayPool<byte>.Shared.Return(buffer);
             }
+        }
+
+        private int GetChunkByteCount(long chunkIndex)
+        {
+            var chunkStart = chunkIndex * _options.ChunkBytes;
+            return (int)Math.Min(_options.ChunkBytes, _length - chunkStart);
         }
 
         private async Task WriteChunkAsync(long offset, ReadOnlyMemory<byte> buffer, CancellationToken ct)
@@ -537,10 +757,19 @@ public sealed class SparseSegmentCacheManager : IDisposable
 
             public long Length => readLimitExclusive;
 
-            public ValueTask<int> ReadAtAsync(long offset, Memory<byte> buffer, CancellationToken ct)
+            public async ValueTask<int> ReadAtAsync(long offset, Memory<byte> buffer, CancellationToken ct)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
-                return cacheFile.ReadAtAsync(inner, offset, buffer, readLimitExclusive, _readAheadCts.Token, ct);
+                try
+                {
+                    return await cacheFile.ReadAtAsync(inner, offset, buffer, readLimitExclusive, _readAheadCts.Token, ct)
+                        .ConfigureAwait(false);
+                }
+                catch (ObjectDisposedException) when (!ct.IsCancellationRequested)
+                {
+                    return await ReadDirectFromSourceAsync(inner, offset, buffer, readLimitExclusive, ct)
+                        .ConfigureAwait(false);
+                }
             }
 
             public void Dispose()
@@ -556,6 +785,35 @@ public sealed class SparseSegmentCacheManager : IDisposable
             {
                 Dispose();
                 return ValueTask.CompletedTask;
+            }
+
+            private static async ValueTask<int> ReadDirectFromSourceAsync(
+                IFileRangeReader inner,
+                long offset,
+                Memory<byte> buffer,
+                long limitExclusive,
+                CancellationToken ct)
+            {
+                if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
+                if (offset >= limitExclusive || buffer.Length == 0) return 0;
+
+                var remaining = (int)Math.Min(buffer.Length, limitExclusive - offset);
+                var totalRead = 0;
+                while (totalRead < remaining)
+                {
+                    var read = await inner
+                        .ReadAtAsync(offset + totalRead, buffer[totalRead..remaining], ct)
+                        .ConfigureAwait(false);
+                    if (read == 0)
+                    {
+                        throw new IOException(
+                            $"Source reader ended before satisfying cache fallback read at offset {offset + totalRead}.");
+                    }
+
+                    totalRead += read;
+                }
+
+                return totalRead;
             }
         }
     }

@@ -4,6 +4,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Streams.Caching;
 
@@ -19,10 +20,13 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
         long? requestedEndByte = null,
         SparseSegmentCacheOptions? cacheOptions = null)
     {
-        fileParts ??= [];
-        var inner = new UncachedDavMultipartFileRangeReader(fileParts, usenetClient, articleBufferSize);
+        fileParts = ValidateAndNormalizeFileParts(fileParts);
         if (cacheOptions is { Enabled: true })
         {
+            // The sparse cache is responsible for read-ahead. Its backing
+            // source should stay sequential to avoid one rclone range request
+            // spawning multiple buffered decoded article streams per chunk.
+            var inner = new UncachedDavMultipartFileRangeReader(fileParts, usenetClient, articleBufferSize: 0);
             var readLimitExclusive = requestedEndByte.HasValue
                 ? Math.Clamp(requestedEndByte.Value + 1, 0, inner.Length)
                 : inner.Length;
@@ -34,6 +38,7 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
         }
         else
         {
+            var inner = new UncachedDavMultipartFileRangeReader(fileParts, usenetClient, articleBufferSize);
             _reader = inner;
         }
     }
@@ -90,6 +95,87 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
         return Convert.ToHexString(sha256.Hash!).ToLowerInvariant();
     }
 
+    private static DavMultipartFile.FilePart[] ValidateAndNormalizeFileParts(DavMultipartFile.FilePart[]? fileParts)
+    {
+        fileParts ??= [];
+        for (var i = 0; i < fileParts.Length; i++)
+        {
+            var part = fileParts[i] ?? throw CreateInvalidPartException(i, "file part is missing");
+            if (part.FilePartByteRange is null)
+                throw CreateInvalidPartException(i, "file part byte range is missing");
+
+            if (part.SegmentIdByteRange is null)
+                throw CreateInvalidPartException(i, "segment byte range is missing");
+
+            if (part.FilePartByteRange.Count <= 0)
+                continue;
+
+            if (part.SegmentSlices is { Length: > 0 })
+            {
+                for (var sliceIndex = 0; sliceIndex < part.SegmentSlices.Length; sliceIndex++)
+                {
+                    var slice = part.SegmentSlices[sliceIndex];
+                    if (slice is null)
+                        throw CreateInvalidPartException(i, $"segment slice {sliceIndex} is missing");
+                    if (string.IsNullOrWhiteSpace(slice.SegmentId))
+                        throw CreateInvalidPartException(i, $"segment slice {sliceIndex} has missing segment metadata");
+                    if (slice.SegmentByteRange is null)
+                        throw CreateInvalidPartException(i, $"segment slice {sliceIndex} byte range is missing");
+                    if (slice.FilePartByteRange is null)
+                        throw CreateInvalidPartException(i, $"segment slice {sliceIndex} file byte range is missing");
+                    if (slice.SegmentByteRange.Count <= 0 || slice.FilePartByteRange.Count <= 0)
+                        throw CreateInvalidPartException(i, $"segment slice {sliceIndex} has an empty byte range");
+                }
+
+                ValidateSegmentSlicesCoverFilePart(part.SegmentSlices, part.FilePartByteRange.Count, i);
+                part.SegmentIds = [];
+                continue;
+            }
+
+            part.SegmentIds = NormalizeSegmentIds(part.SegmentIds);
+            if (part.SegmentIds.Length == 0)
+                throw CreateInvalidPartException(i, "segment metadata is missing");
+            if (part.SegmentIdByteRange.Count <= 0)
+                throw CreateInvalidPartException(i, "segment byte range is empty");
+        }
+
+        return fileParts;
+    }
+
+    private static void ValidateSegmentSlicesCoverFilePart(
+        DavMultipartFile.SegmentSlice[] segmentSlices,
+        long filePartLength,
+        int partIndex)
+    {
+        var expectedStart = 0L;
+        foreach (var slice in segmentSlices.OrderBy(x => x.FilePartByteRange.StartInclusive))
+        {
+            if (slice.FilePartByteRange.StartInclusive != expectedStart)
+                throw CreateInvalidPartException(partIndex, "segment slices do not cover file part");
+            if (slice.FilePartByteRange.EndExclusive > filePartLength)
+                throw CreateInvalidPartException(partIndex, "segment slices extend past file part");
+            if (slice.SegmentByteRange.Count != slice.FilePartByteRange.Count)
+                throw CreateInvalidPartException(partIndex, "segment slice byte ranges have mismatched lengths");
+
+            expectedStart = slice.FilePartByteRange.EndExclusive;
+        }
+
+        if (expectedStart != filePartLength)
+            throw CreateInvalidPartException(partIndex, "segment slices do not cover file part");
+    }
+
+    private static InvalidDataException CreateInvalidPartException(int index, string message)
+    {
+        return new InvalidDataException($"Invalid multipart file part {index}: {message}.");
+    }
+
+    private static string[] NormalizeSegmentIds(IEnumerable<string>? segmentIds)
+    {
+        return segmentIds?
+            .Where(segmentId => !string.IsNullOrWhiteSpace(segmentId))
+            .ToArray() ?? [];
+    }
+
     private static void AddRange(HashAlgorithm hash, LongRange range)
     {
         AddLong(hash, range.StartInclusive);
@@ -116,6 +202,8 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
     ) : IFileRangeReader
     {
         private readonly PartWindow[] _partWindows = CreatePartWindows(fileParts);
+        private readonly string[] _allSegmentIds = GetAllSegmentIds(fileParts);
+        private bool _checkedCachedMissingSegments;
 
         public long Length { get; } = fileParts.Select(x => x.FilePartByteRange.Count).Sum();
 
@@ -123,6 +211,7 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
         {
             if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
             if (offset >= Length || buffer.Length == 0) return 0;
+            EnsureNoKnownMissingSegments();
 
             var remaining = (int)Math.Min(buffer.Length, Length - offset);
             var totalRead = 0;
@@ -131,7 +220,10 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
                 ct.ThrowIfCancellationRequested();
                 var absoluteOffset = offset + totalRead;
                 var partWindow = FindPartWindow(absoluteOffset);
-                if (partWindow == null) break;
+                if (partWindow == null)
+                {
+                    throw new IOException($"No multipart file part covers range offset {absoluteOffset}.");
+                }
 
                 var localOffset = absoluteOffset - partWindow.StartInclusive;
                 var bytesFromPart = (int)Math.Min(
@@ -143,7 +235,10 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
                         buffer.Slice(totalRead, bytesFromPart),
                         ct)
                     .ConfigureAwait(false);
-                if (read <= 0) break;
+                if (read <= 0)
+                {
+                    throw new IOException($"No progress reading multipart file part at range offset {absoluteOffset}.");
+                }
                 totalRead += read;
             }
 
@@ -184,7 +279,10 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
                     .ConfigureAwait(false);
                 totalRead = Math.Max(totalRead, destinationOffset + read);
                 if (totalRead >= buffer.Length) break;
-                if (read <= 0) break;
+                if (read <= 0)
+                {
+                    throw new IOException($"No progress reading multipart segment slice at part offset {overlap.StartInclusive}.");
+                }
             }
 
             return totalRead;
@@ -253,6 +351,23 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
             return windows;
         }
 
+        private static string[] GetAllSegmentIds(DavMultipartFile.FilePart[] parts)
+        {
+            return parts.SelectMany(part =>
+                    part.SegmentSlices is { Length: > 0 }
+                        ? part.SegmentSlices.Select(slice => slice.SegmentId)
+                        : part.SegmentIds ?? [])
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        private void EnsureNoKnownMissingSegments()
+        {
+            if (_checkedCachedMissingSegments) return;
+            HealthCheckService.CheckCachedMissingSegmentIds(_allSegmentIds);
+            _checkedCachedMissingSegments = true;
+        }
+
         private static LongRange? GetOverlap(LongRange first, LongRange second)
         {
             var start = Math.Max(first.StartInclusive, second.StartInclusive);
@@ -269,7 +384,10 @@ public sealed class DavMultipartFileRangeReader : IFileRangeReader, IDisposable,
             while (totalRead < buffer.Length)
             {
                 var read = await stream.ReadAsync(buffer[totalRead..], ct).ConfigureAwait(false);
-                if (read == 0) break;
+                if (read == 0)
+                {
+                    throw new IOException($"Source stream ended before satisfying range read at relative offset {totalRead}.");
+                }
                 totalRead += read;
             }
 

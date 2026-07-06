@@ -50,6 +50,8 @@ public class DavMultipartFileStream(
         var absoluteOffset = origin == SeekOrigin.Begin ? offset
             : origin == SeekOrigin.Current ? _position + offset
             : throw new InvalidOperationException("SeekOrigin must be Begin or Current.");
+        if (absoluteOffset < 0)
+            throw new ArgumentOutOfRangeException(nameof(offset), "Cannot seek before the beginning of the stream.");
         if (_position == absoluteOffset) return _position;
         _position = absoluteOffset;
         return _position;

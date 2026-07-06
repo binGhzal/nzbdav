@@ -73,7 +73,7 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                     checked={config["usenet.adaptive-connections-enabled"] === "true"}
                     onChange={e => setNewConfig({ ...config, "usenet.adaptive-connections-enabled": "" + e.target.checked })} />
                 <Form.Text id="adaptive-connections-enabled-help" muted>
-                    Automatically sizes queue and streaming article connections from runtime pressure and provider capacity.
+                    Automatically sizes queue and streaming article connections from runtime pressure and provider capacity. Off by default.
                     Max Download Connections and queue fields below are manual fallbacks when adaptive sizing is off.
                 </Form.Text>
             </Form.Group>
@@ -115,7 +115,7 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                             onChange={e => setNewConfig({ ...config, "queue.max-concurrent-verify": e.target.value })} />
                         <Form.Text id="max-concurrent-verify-help" muted>
                             Maximum number of background verify jobs to run at once. Use 0 for automatic sizing.
-                            Verify jobs also stay inside the repair/check connection budget.
+                            Background verify uses the repair/check budget; fresh post-download verify can use the download check budget.
                         </Form.Text>
                     </Form.Group>
                     <hr />

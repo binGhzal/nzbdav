@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import styles from "./live-usenet-connections.module.css";
-import { receiveMessage } from "~/utils/websocket-util";
+import { createReconnectingWebSocket } from "~/utils/websocket-util";
 import { useNavigate } from "react-router";
 import { getWebsocketUrl } from "~/utils/url-base";
 
@@ -16,23 +16,16 @@ export function LiveUsenetConnections() {
     const livePercent = 100 * (live / max);
 
     useEffect(() => {
-        let ws: WebSocket;
-        let disposed = false;
-        function connect() {
-            ws = new WebSocket(getWebsocketUrl());
-            ws.onmessage = receiveMessage((_, message) => setConnections(message));
-            ws.onopen = () => ws.send(JSON.stringify(usenetConnectionsTopic));
-            ws.onerror = () => { ws.close() };
-            ws.onclose = onClose;
-            return () => { disposed = true; ws.close(); }
-        }
-        function onClose(e: CloseEvent) {
-            if (e.code == 1008) navigate('/login');
-            !disposed && setTimeout(() => connect(), 1000);
-            setConnections(null);
-        }
-        return connect();
-    }, [setConnections]);
+        return createReconnectingWebSocket({
+            createSocket: () => new WebSocket(getWebsocketUrl()),
+            onMessage: (_, message) => setConnections(message),
+            onOpen: socket => socket.send(JSON.stringify(usenetConnectionsTopic)),
+            onClose: event => {
+                if (event.code == 1008) navigate('/login');
+                setConnections(null);
+            },
+        });
+    }, [navigate, setConnections]);
 
     return (
         <div className={styles.container}>

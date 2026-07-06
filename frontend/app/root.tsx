@@ -8,7 +8,7 @@ import {
   useNavigation,
 } from "react-router";
 
-import 'bootstrap/dist/css/bootstrap.min.css';
+import "./bootstrap-lite.scss";
 import "./app.css";
 import type { Route } from "./+types/root";
 import { IS_FRONTEND_AUTH_DISABLED } from "~/auth/authentication.server";

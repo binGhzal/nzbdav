@@ -1,4 +1,5 @@
 ﻿using System.Text.RegularExpressions;
+using System.Globalization;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
@@ -88,12 +89,12 @@ public class RarProcessor(
         // handle the `.partXXX.rar` format
         var partMatch = Regex.Match(filename, @"\.part(\d+)\.rar$", RegexOptions.IgnoreCase);
         if (partMatch.Success)
-            return int.Parse(partMatch.Groups[1].Value);
+            return TryParsePartNumber(partMatch.Groups[1].Value);
 
         // handle the `.rXXX` format
         var rMatch = Regex.Match(filename, @"\.r(\d+)$", RegexOptions.IgnoreCase);
         if (rMatch.Success)
-            return int.Parse(rMatch.Groups[1].Value);
+            return TryParsePartNumber(rMatch.Groups[1].Value);
 
         // handle the `.rar` format.
         if (filename.EndsWith(".rar", StringComparison.OrdinalIgnoreCase))
@@ -101,6 +102,13 @@ public class RarProcessor(
 
         //  could not determine from filename
         return null;
+    }
+
+    private static int? TryParsePartNumber(string value)
+    {
+        return int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var partNumber)
+            ? partNumber
+            : null;
     }
 
     private async Task<NzbFileStream> GetNzbFileStream()

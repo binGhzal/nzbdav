@@ -1,94 +1,130 @@
-﻿using System.Diagnostics;
-using System.Runtime.InteropServices;
-
-namespace NzbWebDAV.Utils;
+﻿namespace NzbWebDAV.Utils;
 
 public static class SymlinkAndStrmUtil
 {
-    private static readonly bool IsLinux = RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
-
     public static IEnumerable<ISymlinkOrStrmInfo> GetAllSymlinksAndStrms(string directoryPath)
     {
-        return IsLinux
-            ? GetAllSymlinksAndStrmsLinux(directoryPath)
-            : GetAllSymlinksAndStrmsWindows(directoryPath);
-    }
+        if (!Directory.Exists(directoryPath))
+            yield break;
 
-    private static IEnumerable<ISymlinkOrStrmInfo> GetAllSymlinksAndStrmsLinux(string directoryPath)
-    {
-        const string command =
-            """
-            find . \( -type l -o -name '*.strm' \) -print0 | xargs -0 sh -c '
-              for path in \"$@\"; do
-                echo \"$path\"
-                if [ \"${path##*.}\" = \"strm\" ]; then
-                  echo \"$(cat \"$path\")\"
-                else
-                  echo \"$(readlink \"$path\")\"
-                fi
-              done
-            ' sh
-            """;
+        var pendingDirectories = new Stack<string>();
+        pendingDirectories.Push(directoryPath);
 
-        var escapedDirectory = directoryPath.Replace("'", "'\"'\"'");
-        var startInfo = new ProcessStartInfo
+        while (pendingDirectories.TryPop(out var currentDirectory))
         {
-            FileName = "sh",
-            Arguments = $"-c \"cd '{escapedDirectory}' && {command}\"",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        using var process = Process.Start(startInfo)!;
-        while (process.StandardOutput.EndOfStream == false)
-        {
-            var filePath = process.StandardOutput.ReadLine();
-            if (filePath == null) break;
-            var target = process.StandardOutput.ReadLine();
-            if (target == null) break;
-
-            if (filePath.ToLower().EndsWith(".strm"))
+            foreach (var entry in EnumerateFileSystemEntries(currentDirectory))
             {
-                yield return new StrmInfo()
+                var attributes = TryGetAttributes(entry);
+                if (attributes is null) continue;
+
+                var isSymlink = attributes.Value.HasFlag(FileAttributes.ReparsePoint);
+                var isDirectory = attributes.Value.HasFlag(FileAttributes.Directory);
+                var isStrm = IsStrmPath(entry);
+
+                if (isSymlink || isStrm)
                 {
-                    StrmPath = Path.GetFullPath(filePath, directoryPath),
-                    TargetUrl = target
-                };
-            }
-            else
-            {
-                yield return new SymlinkInfo()
-                {
-                    SymlinkPath = Path.GetFullPath(filePath, directoryPath),
-                    TargetPath = target
-                };
+                    var info = GetSymlinkOrStrmInfo(new FileInfo(entry));
+                    if (info is not null)
+                        yield return info;
+                }
+
+                if (isDirectory && !isSymlink)
+                    pendingDirectories.Push(entry);
             }
         }
     }
 
-    private static IEnumerable<ISymlinkOrStrmInfo> GetAllSymlinksAndStrmsWindows(string directoryPath)
+    private static IEnumerable<string> EnumerateFileSystemEntries(string directoryPath)
     {
-        return Directory.EnumerateFileSystemEntries(directoryPath, "*", SearchOption.AllDirectories)
-            .Select(x => new FileInfo(x))
-            .Select(GetSymlinkOrStrmInfo)
-            .Where(x => x != null)
-            .Select(x => x!);
+        IEnumerator<string> enumerator;
+        try
+        {
+            enumerator = Directory.EnumerateFileSystemEntries(directoryPath).GetEnumerator();
+        }
+        catch (Exception e) when (IsRecoverableFilesystemException(e))
+        {
+            yield break;
+        }
+
+        using (enumerator)
+        {
+            while (true)
+            {
+                string current;
+                try
+                {
+                    if (!enumerator.MoveNext()) yield break;
+                    current = enumerator.Current;
+                }
+                catch (Exception e) when (IsRecoverableFilesystemException(e))
+                {
+                    yield break;
+                }
+
+                yield return current;
+            }
+        }
+    }
+
+    private static FileAttributes? TryGetAttributes(string path)
+    {
+        try
+        {
+            return File.GetAttributes(path);
+        }
+        catch (Exception e) when (IsRecoverableFilesystemException(e))
+        {
+            return null;
+        }
     }
 
     public static ISymlinkOrStrmInfo? GetSymlinkOrStrmInfo(FileInfo x)
     {
-        return IsStrm(x) ? new StrmInfo() { StrmPath = x.FullName, TargetUrl = File.ReadAllText(x.FullName) }
-            : IsSymLink(x) ? new SymlinkInfo() { SymlinkPath = x.FullName, TargetPath = x.LinkTarget! }
-            : null;
+        try
+        {
+            return IsStrm(x) ? GetStrmInfo(x.FullName)
+                : IsSymLink(x) ? new SymlinkInfo { SymlinkPath = x.FullName, TargetPath = x.LinkTarget! }
+                : null;
+        }
+        catch (Exception e) when (IsRecoverableFilesystemException(e))
+        {
+            return null;
+        }
+    }
+
+    private static StrmInfo? GetStrmInfo(string path)
+    {
+        try
+        {
+            using var reader = new StreamReader(path, detectEncodingFromByteOrderMarks: true);
+            var targetUrl = reader.ReadLine()?.Trim();
+            return string.IsNullOrWhiteSpace(targetUrl)
+                ? null
+                : new StrmInfo { StrmPath = path, TargetUrl = targetUrl };
+        }
+        catch (Exception e) when (IsRecoverableFilesystemException(e))
+        {
+            return null;
+        }
     }
 
     private static bool IsStrm(FileInfo x) =>
-        x.Extension.Equals(".strm", StringComparison.CurrentCultureIgnoreCase);
+        IsStrmPath(x.FullName);
+
+    private static bool IsStrmPath(string path) =>
+        Path.GetExtension(path).Equals(".strm", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsSymLink(FileInfo x) =>
         x.Attributes.HasFlag(FileAttributes.ReparsePoint) && x.LinkTarget is not null;
+
+    private static bool IsRecoverableFilesystemException(Exception exception) =>
+        exception is FileNotFoundException
+            or DirectoryNotFoundException
+            or IOException
+            or UnauthorizedAccessException
+            or ArgumentException
+            or NotSupportedException
+            or PathTooLongException;
 
     public interface ISymlinkOrStrmInfo;
 

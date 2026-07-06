@@ -9,10 +9,11 @@ namespace NzbWebDAV.Services;
 
 public static class ContentIndexSnapshotStore
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     private const string SnapshotFileName = "content-index.snapshot.json";
     private const string BackupSnapshotFileName = "content-index.snapshot.backup.json";
+    private const long MaxSnapshotReadBytes = 512L * 1024 * 1024;
     private static readonly SemaphoreSlim Mutex = new(1, 1);
     private static readonly object PruneWarningLock = new();
     private static DateTime _lastPruneWarningUtc = DateTime.MinValue;
@@ -51,23 +52,67 @@ public static class ContentIndexSnapshotStore
 
             try
             {
+                TryDeleteFileOrDirectory(tempFilePath);
                 await using (var stream = File.Create(tempFilePath))
                 {
                     await JsonSerializer.SerializeAsync(stream, snapshot, JsonOptions, cancellationToken).ConfigureAwait(false);
                 }
 
-                File.Move(tempFilePath, SnapshotFilePath, overwrite: true);
-                File.Copy(SnapshotFilePath, BackupSnapshotFilePath, overwrite: true);
+                MoveFileReplacingDirectory(tempFilePath, SnapshotFilePath);
+                CopyFileReplacingDirectory(SnapshotFilePath, BackupSnapshotFilePath);
             }
             finally
             {
-                if (File.Exists(tempFilePath))
-                    File.Delete(tempFilePath);
+                TryDeleteFileOrDirectory(tempFilePath);
             }
         }
         finally
         {
             Mutex.Release();
+        }
+    }
+
+    private static void MoveFileReplacingDirectory(string sourcePath, string destinationPath)
+    {
+        DeleteDirectoryAtFilePathIfPresent(destinationPath);
+        File.Move(sourcePath, destinationPath, overwrite: true);
+    }
+
+    private static void CopyFileReplacingDirectory(string sourcePath, string destinationPath)
+    {
+        DeleteDirectoryAtFilePathIfPresent(destinationPath);
+        File.Copy(sourcePath, destinationPath, overwrite: true);
+    }
+
+    private static void DeleteDirectoryAtFilePathIfPresent(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            // Another process or cleanup task already removed it.
+        }
+    }
+
+    private static void TryDeleteFileOrDirectory(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+            else if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException
+                                      or DirectoryNotFoundException
+                                      or IOException
+                                      or UnauthorizedAccessException)
+        {
+            // Snapshot temp files are best-effort cleanup; a later flush writes a fresh temp path.
         }
     }
 
@@ -109,13 +154,18 @@ public static class ContentIndexSnapshotStore
                     Snapshot = backupResult.Snapshot,
                     SourcePath = backupResult.SourcePath,
                     Warnings = warnings,
+                    RewriteRecommended = primaryResult.RewriteRecommended || backupResult.RewriteRecommended,
                 };
             }
 
             if (backupResult.Warning != null)
                 warnings.Add(backupResult.Warning);
 
-            return new SnapshotReadResult { Warnings = warnings };
+            return new SnapshotReadResult
+            {
+                Warnings = warnings,
+                RewriteRecommended = primaryResult.RewriteRecommended || backupResult.RewriteRecommended,
+            };
         }
         finally
         {
@@ -129,6 +179,17 @@ public static class ContentIndexSnapshotStore
 
         try
         {
+            var fileInfo = new FileInfo(path);
+            if (fileInfo.Length > MaxSnapshotReadBytes)
+            {
+                return new SnapshotReadResult
+                {
+                    Warning =
+                        $"Ignored /content recovery snapshot at '{path}' because it is {fileInfo.Length} bytes, which exceeds the {MaxSnapshotReadBytes} byte safety limit.",
+                    RewriteRecommended = true
+                };
+            }
+
             await using var stream = File.OpenRead(path);
             var snapshot = await JsonSerializer
                 .DeserializeAsync<ContentIndexSnapshot>(stream, JsonOptions, cancellationToken)
@@ -156,6 +217,10 @@ public static class ContentIndexSnapshotStore
                 SourcePath = path,
             };
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             return new SnapshotReadResult
@@ -167,7 +232,7 @@ public static class ContentIndexSnapshotStore
 
     private static bool TryValidate(ContentIndexSnapshot snapshot, out string error)
     {
-        if (snapshot.Version != CurrentVersion)
+        if (snapshot.Version is not (1 or CurrentVersion))
         {
             error = $"unsupported version {snapshot.Version}";
             return false;
@@ -219,9 +284,9 @@ public static class ContentIndexSnapshotStore
                 DavItem.ItemType.Directory => true,
                 DavItem.ItemType.UsenetFile => item.SubType switch
                 {
-                    DavItem.ItemSubType.NzbFile => nzbFilesById.ContainsKey(item.Id),
-                    DavItem.ItemSubType.RarFile => rarFilesById.ContainsKey(item.Id),
-                    DavItem.ItemSubType.MultipartFile => multipartFilesById.ContainsKey(item.Id),
+                    DavItem.ItemSubType.NzbFile => item.FileBlobId.HasValue || nzbFilesById.ContainsKey(item.Id),
+                    DavItem.ItemSubType.RarFile => item.FileBlobId.HasValue || rarFilesById.ContainsKey(item.Id),
+                    DavItem.ItemSubType.MultipartFile => item.FileBlobId.HasValue || multipartFilesById.ContainsKey(item.Id),
                     _ => false
                 },
                 _ => false
@@ -274,24 +339,44 @@ public static class ContentIndexSnapshotStore
             .OrderBy(x => x.Path)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        var itemIds = items.Select(x => x.Id).ToHashSet();
+        var legacyNzbIds = items
+            .Where(x => x.Type == DavItem.ItemType.UsenetFile
+                        && x.SubType == DavItem.ItemSubType.NzbFile
+                        && !x.FileBlobId.HasValue)
+            .Select(x => x.Id)
+            .ToHashSet();
+        var legacyRarIds = items
+            .Where(x => x.Type == DavItem.ItemType.UsenetFile
+                        && x.SubType == DavItem.ItemSubType.RarFile
+                        && !x.FileBlobId.HasValue)
+            .Select(x => x.Id)
+            .ToHashSet();
+        var legacyMultipartIds = items
+            .Where(x => x.Type == DavItem.ItemType.UsenetFile
+                        && x.SubType == DavItem.ItemSubType.MultipartFile
+                        && !x.FileBlobId.HasValue)
+            .Select(x => x.Id)
+            .ToHashSet();
 
         var nzbFiles = await dbContext.NzbFiles
             .AsNoTracking()
-            .Where(x => itemIds.Contains(x.Id))
+            .Where(x => legacyNzbIds.Contains(x.Id))
             .OrderBy(x => x.Id)
+            .Select(x => CloneForSnapshot(x.Id, x))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
         var rarFiles = await dbContext.RarFiles
             .AsNoTracking()
-            .Where(x => itemIds.Contains(x.Id))
+            .Where(x => legacyRarIds.Contains(x.Id))
             .OrderBy(x => x.Id)
+            .Select(x => CloneForSnapshot(x.Id, x))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
         var multipartFiles = await dbContext.MultipartFiles
             .AsNoTracking()
-            .Where(x => itemIds.Contains(x.Id))
+            .Where(x => legacyMultipartIds.Contains(x.Id))
             .OrderBy(x => x.Id)
+            .Select(x => CloneForSnapshot(x.Id, x))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
@@ -303,6 +388,63 @@ public static class ContentIndexSnapshotStore
             NzbFiles = nzbFiles,
             RarFiles = rarFiles,
             MultipartFiles = multipartFiles,
+        };
+    }
+
+    private static DavNzbFile CloneForSnapshot(Guid itemId, DavNzbFile source)
+    {
+        return new DavNzbFile
+        {
+            Id = itemId,
+            SegmentIds = source.SegmentIds?.ToArray() ?? []
+        };
+    }
+
+    private static DavRarFile CloneForSnapshot(Guid itemId, DavRarFile source)
+    {
+        return new DavRarFile
+        {
+            Id = itemId,
+            RarParts = source.RarParts?
+                .Where(x => x is not null)
+                .Select(x => new DavRarFile.RarPart
+                {
+                    SegmentIds = x.SegmentIds?.ToArray() ?? [],
+                    PartSize = x.PartSize,
+                    Offset = x.Offset,
+                    ByteCount = x.ByteCount
+                })
+                .ToArray() ?? []
+        };
+    }
+
+    private static DavMultipartFile CloneForSnapshot(Guid itemId, DavMultipartFile source)
+    {
+        return new DavMultipartFile
+        {
+            Id = itemId,
+            Metadata = new DavMultipartFile.Meta
+            {
+                AesParams = source.Metadata?.AesParams,
+                FileParts = source.Metadata?.FileParts?
+                    .Where(x => x is not null)
+                    .Select(x => new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = x.SegmentIds?.ToArray() ?? [],
+                        SegmentIdByteRange = x.SegmentIdByteRange,
+                        FilePartByteRange = x.FilePartByteRange,
+                        SegmentSlices = x.SegmentSlices?
+                            .Where(slice => slice is not null)
+                            .Select(slice => new DavMultipartFile.SegmentSlice
+                            {
+                                SegmentId = slice.SegmentId,
+                                SegmentByteRange = slice.SegmentByteRange,
+                                FilePartByteRange = slice.FilePartByteRange
+                            })
+                            .ToArray() ?? []
+                    })
+                    .ToArray() ?? []
+            }
         };
     }
 
@@ -372,9 +514,9 @@ public static class ContentIndexSnapshotStore
             DavItem.ItemType.Directory => true,
             DavItem.ItemType.UsenetFile => item.SubType switch
             {
-                DavItem.ItemSubType.NzbFile => nzbFileIds.Contains(item.Id),
-                DavItem.ItemSubType.RarFile => rarFileIds.Contains(item.Id),
-                DavItem.ItemSubType.MultipartFile => multipartFileIds.Contains(item.Id),
+                DavItem.ItemSubType.NzbFile => item.FileBlobId.HasValue || nzbFileIds.Contains(item.Id),
+                DavItem.ItemSubType.RarFile => item.FileBlobId.HasValue || rarFileIds.Contains(item.Id),
+                DavItem.ItemSubType.MultipartFile => item.FileBlobId.HasValue || multipartFileIds.Contains(item.Id),
                 _ => false
             },
             _ => false
@@ -410,6 +552,7 @@ public static class ContentIndexSnapshotStore
         public string? SourcePath { get; init; }
         public string? Warning { get; init; }
         public List<string> Warnings { get; init; } = [];
+        public bool RewriteRecommended { get; init; }
     }
 
     public sealed class ContentIndexSnapshot

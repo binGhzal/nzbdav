@@ -501,6 +501,7 @@ function getFullStatusResponse() {
         evictions: 2,
         files: 5,
         active_readers: 2,
+        read_ahead_active: 1,
         pending_fetches: 1,
       },
       mount: {
@@ -596,6 +597,8 @@ function getArrValidationResponse() {
     generated_at: "2026-07-02T08:12:00Z",
     instance_count: 2,
     queue_items: 3,
+    queue_items_total: 3,
+    ignored_queue_items: 0,
     history_items: 1,
     correlations: 2,
     stale_correlations: 0,

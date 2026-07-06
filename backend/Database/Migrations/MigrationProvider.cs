@@ -59,7 +59,7 @@ internal static class MigrationProvider
             CREATE TRIGGER TR_QueueItems_AddBlobCleanup
             AFTER DELETE ON QueueItems
             BEGIN
-                INSERT INTO BlobCleanupItems (Id)
+                INSERT OR IGNORE INTO BlobCleanupItems (Id)
                 VALUES (OLD.Id);
             END
             """);
@@ -147,7 +147,7 @@ internal static class MigrationProvider
             AFTER DELETE ON DavItems
             WHEN OLD.FileBlobId IS NOT NULL
             BEGIN
-                INSERT INTO BlobCleanupItems (Id)
+                INSERT OR IGNORE INTO BlobCleanupItems (Id)
                 VALUES (OLD.FileBlobId);
             END
             """);
@@ -158,7 +158,7 @@ internal static class MigrationProvider
             AFTER UPDATE OF FileBlobId ON DavItems
             WHEN OLD.FileBlobId IS NOT NULL AND OLD.FileBlobId != NEW.FileBlobId
             BEGIN
-                INSERT INTO BlobCleanupItems (Id)
+                INSERT OR IGNORE INTO BlobCleanupItems (Id)
                 VALUES (OLD.FileBlobId);
             END
             """);
@@ -195,7 +195,7 @@ internal static class MigrationProvider
             AFTER DELETE ON DavItems
             WHEN OLD.SubType = 101
             BEGIN
-                INSERT INTO DavCleanupItems (Id)
+                INSERT OR IGNORE INTO DavCleanupItems (Id)
                 VALUES (OLD.Id);
             END
             """);
@@ -230,7 +230,7 @@ internal static class MigrationProvider
             CREATE TRIGGER TR_HistoryItems_Delete_AddHistoryCleanup
             AFTER DELETE ON HistoryItems
             BEGIN
-                INSERT INTO HistoryCleanupItems (Id)
+                INSERT OR IGNORE INTO HistoryCleanupItems (Id)
                 VALUES (OLD.Id);
             END
             """);

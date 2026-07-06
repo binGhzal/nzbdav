@@ -138,14 +138,14 @@ public sealed class ArrDownloadReportService(ConfigManager configManager)
                 && now - lastRefresh < RefreshDebounce)
                 return;
 
-            var downloadClients = await arrClient.GetDownloadClientsAsync().WaitAsync(ct).ConfigureAwait(false);
+            var downloadClients = await arrClient.GetDownloadClientsAsync(ct).ConfigureAwait(false);
             if (downloadClients.All(x => !string.Equals(x.Category, category, StringComparison.OrdinalIgnoreCase)))
                 return;
 
-            var queueCount = await arrClient.GetQueueCountAsync().WaitAsync(ct).ConfigureAwait(false);
+            var queueCount = await arrClient.GetQueueCountAsync(ct).ConfigureAwait(false);
             if (queueCount >= 300) return;
 
-            await arrClient.RefreshMonitoredDownloads().WaitAsync(ct).ConfigureAwait(false);
+            await arrClient.RefreshMonitoredDownloads(ct).ConfigureAwait(false);
             _lastRefreshByInstance[instanceKey] = now;
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException)

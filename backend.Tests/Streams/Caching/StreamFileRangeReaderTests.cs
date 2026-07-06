@@ -21,6 +21,18 @@ public sealed class StreamFileRangeReaderTests
         Assert.Equal(1, stream.MaxConcurrentReads);
     }
 
+    [Fact]
+    public async Task ReadAtAsyncThrowsWhenSourceEndsBeforeDeclaredLength()
+    {
+        await using var reader = new StreamFileRangeReader(new TruncatedSeekableStream([1], declaredLength: 4));
+        var buffer = new byte[4];
+
+        var exception = await Assert.ThrowsAsync<IOException>(() =>
+            reader.ReadAtAsync(0, buffer, CancellationToken.None).AsTask());
+
+        Assert.Contains("ended before satisfying range read", exception.Message);
+    }
+
     private sealed class SlowPositionedMemoryStream(byte[] bytes) : Stream
     {
         private int _activeReads;
@@ -62,6 +74,59 @@ public sealed class StreamFileRangeReaderTests
             {
                 Interlocked.Decrement(ref _activeReads);
             }
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            Position = origin switch
+            {
+                SeekOrigin.Begin => offset,
+                SeekOrigin.Current => Position + offset,
+                SeekOrigin.End => Length + offset,
+                _ => throw new ArgumentOutOfRangeException(nameof(origin), origin, null)
+            };
+            return Position;
+        }
+
+        public override void SetLength(long value)
+        {
+            throw new NotSupportedException();
+        }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class TruncatedSeekableStream(byte[] bytes, long declaredLength) : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length => declaredLength;
+        public override long Position { get; set; }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            return ReadAsync(buffer.AsMemory(offset, count), CancellationToken.None)
+                .AsTask()
+                .GetAwaiter()
+                .GetResult();
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Position >= bytes.Length) return ValueTask.FromResult(0);
+
+            var count = (int)Math.Min(buffer.Length, bytes.Length - Position);
+            bytes.AsMemory((int)Position, count).CopyTo(buffer[..count]);
+            Position += count;
+            return ValueTask.FromResult(count);
         }
 
         public override long Seek(long offset, SeekOrigin origin)

@@ -1,6 +1,9 @@
+using System.Data.Common;
 using backend.Tests.Services;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 
@@ -157,6 +160,40 @@ public sealed class RepairRunTests
 
         Assert.Null(activeRun);
         Assert.Equal(RepairRun.RepairRunStatus.Completed, reloadedRun.Status);
+    }
+
+    [Fact]
+    public async Task GetRepairRunStatusAsync_RefreshesActiveLatestRunOnlyOnce()
+    {
+        var interceptor = new CountingCommandInterceptor(commandText =>
+            commandText.Contains("RepairRuns", StringComparison.OrdinalIgnoreCase)
+            && commandText.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase));
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .AddInterceptors(interceptor)
+            .Options;
+        await using var dbContext = new DavDatabaseContext(options);
+        await dbContext.Database.EnsureCreatedAsync();
+        var movie = CreateDavItem("/content/Movie.mkv");
+        dbContext.Items.Add(movie);
+        await dbContext.SaveChangesAsync();
+
+        var now = DateTimeOffset.UtcNow;
+        var dbClient = new DavDatabaseClient(dbContext);
+        var run = await dbClient.StartRepairRunAsync(priority: 7, now: now);
+        interceptor.Reset();
+
+        var status = await dbClient.GetRepairRunStatusAsync(now.AddMinutes(2));
+
+        Assert.NotNull(status.ActiveRun);
+        Assert.NotNull(status.LastRun);
+        Assert.Equal(run.Id, status.ActiveRun.Id);
+        Assert.Equal(run.Id, status.LastRun.Id);
+        Assert.Equal(RepairRun.RepairRunStatus.Running, status.LastRun.Status);
+        Assert.Equal(0, status.BrokenFiles);
+        Assert.Equal(1, interceptor.Count);
     }
 
     [Fact]
@@ -343,5 +380,69 @@ public sealed class RepairRunTests
             AvailableAt = availableAt,
             LastError = "previous failure"
         };
+    }
+
+    private sealed class CountingCommandInterceptor(Func<string, bool> predicate) : DbCommandInterceptor
+    {
+        private int _count;
+
+        public int Count => Volatile.Read(ref _count);
+
+        public void Reset()
+        {
+            Volatile.Write(ref _count, 0);
+        }
+
+        public override InterceptionResult<int> NonQueryExecuting
+        (
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result
+        )
+        {
+            CountIfMatched(command);
+            return base.NonQueryExecuting(command, eventData, result);
+        }
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting
+        (
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result
+        )
+        {
+            CountIfMatched(command);
+            return base.ReaderExecuting(command, eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync
+        (
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default
+        )
+        {
+            CountIfMatched(command);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync
+        (
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default
+        )
+        {
+            CountIfMatched(command);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private void CountIfMatched(DbCommand command)
+        {
+            if (predicate(command.CommandText))
+                Interlocked.Increment(ref _count);
+        }
     }
 }

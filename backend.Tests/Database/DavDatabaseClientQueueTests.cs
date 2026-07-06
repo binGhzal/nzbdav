@@ -1,6 +1,9 @@
 using backend.Tests.Services;
+using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
+using System.Reflection;
 
 namespace backend.Tests.Database;
 
@@ -142,6 +145,40 @@ public sealed class DavDatabaseClientQueueTests
     }
 
     [Fact]
+    public async Task LeaseTopQueueItem_DoesNotLeaseWhenBlobStoreIsTemporarilyUnavailable()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var queueItem = CreateQueueItem("Locked blob", QueueItem.PriorityOption.Normal, DateTime.UtcNow);
+        dbContext.QueueItems.Add(queueItem);
+        await dbContext.SaveChangesAsync();
+        await using var nzbStream = new MemoryStream("<nzb />"u8.ToArray());
+        await BlobStore.WriteBlob(queueItem.Id, (Stream)nzbStream);
+        var blobPath = GetBlobPath(queueItem.Id);
+
+        try
+        {
+            await using var locked = new FileStream(
+                blobPath,
+                FileMode.Open,
+                FileAccess.ReadWrite,
+                FileShare.None);
+            var dbClient = new DavDatabaseClient(dbContext);
+
+            await Assert.ThrowsAsync<RetryableDownloadException>(() =>
+                dbClient.LeaseTopQueueItemAsync(
+                    excludeIds: null,
+                    owner: "test",
+                    leaseDuration: TimeSpan.FromMinutes(15)));
+
+            Assert.Empty(await dbContext.WorkerJobs.ToListAsync());
+        }
+        finally
+        {
+            BlobStore.Delete(queueItem.Id);
+        }
+    }
+
+    [Fact]
     public async Task GetQueueItemsCount_FiltersStatusAndExcludesActiveIds()
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
@@ -166,9 +203,17 @@ public sealed class DavDatabaseClientQueueTests
             priorities: null,
             statuses: ["paused"],
             excludeIds: [activeItem.Id]);
+        var downloadingCount = await dbClient.GetQueueItemsCount(
+            category: "movies",
+            nzoIds: null,
+            search: null,
+            priorities: null,
+            statuses: ["downloading"],
+            excludeIds: [activeItem.Id]);
 
         Assert.Equal(1, queuedCount);
         Assert.Equal(1, pausedCount);
+        Assert.Equal(0, downloadingCount);
     }
 
     [Fact]
@@ -195,6 +240,38 @@ public sealed class DavDatabaseClientQueueTests
 
         Assert.Equal([largerTv.Id, smallerMovie.Id], byName.Select(x => x.Id));
         Assert.Equal([largerTv.Id, smallerMovie.Id], bySize.Select(x => x.Id));
+    }
+
+    [Fact]
+    public async Task GetQueueItems_AppliesPagingAfterPriorityHintOrdering()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var normalItem = CreateQueueItem("Normal", QueueItem.PriorityOption.Normal, DateTime.UtcNow);
+        var highItem = CreateQueueItem("High", QueueItem.PriorityOption.High, DateTime.UtcNow.AddSeconds(1));
+        var hintedItem = CreateQueueItem("Hinted", QueueItem.PriorityOption.Low, DateTime.UtcNow.AddSeconds(2));
+        dbContext.QueueItems.AddRange(normalItem, highItem, hintedItem);
+        dbContext.QueuePriorityHints.Add(new QueuePriorityHint
+        {
+            QueueItemId = hintedItem.Id,
+            Score = 900,
+            EffectivePriority = QueueItem.PriorityOption.High,
+            ApplyToScheduling = true,
+            ReasonsJson = """["near-complete"]""",
+            Source = "arr-apply",
+            ComputedAt = DateTimeOffset.UtcNow,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var dbClient = new DavDatabaseClient(dbContext);
+
+        var page = await dbClient.GetQueueItems(
+            category: null,
+            sortOptions: DavDatabaseClient.QueueSortOptions.Default,
+            start: 1,
+            limit: 1);
+
+        Assert.Equal([highItem.Id], page.Select(x => x.Id));
     }
 
     [Fact]
@@ -239,6 +316,27 @@ public sealed class DavDatabaseClientQueueTests
         Assert.Single(dbContext.HistoryCleanupItems);
     }
 
+    [Fact]
+    public async Task RemoveHistoryItemsAsync_DeleteFilesUpgradesExistingUnlinkOnlyCleanupItem()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var historyItem = CreateHistoryItem();
+        dbContext.HistoryItems.Add(historyItem);
+        dbContext.HistoryCleanupItems.Add(new HistoryCleanupItem
+        {
+            Id = historyItem.Id,
+            DeleteMountedFiles = false
+        });
+        await dbContext.SaveChangesAsync();
+
+        var dbClient = new DavDatabaseClient(dbContext);
+        await dbClient.RemoveHistoryItemsAsync([historyItem.Id], deleteFiles: true);
+        await dbContext.SaveChangesAsync();
+
+        var cleanupItem = await dbContext.HistoryCleanupItems.SingleAsync();
+        Assert.True(cleanupItem.DeleteMountedFiles);
+    }
+
     private static QueueItem CreateQueueItem
     (
         string jobName,
@@ -268,6 +366,15 @@ public sealed class DavDatabaseClientQueueTests
             Id = id,
             NzbContents = "<nzb />"
         };
+    }
+
+    private static string GetBlobPath(Guid id)
+    {
+        var method = typeof(BlobStore).GetMethod(
+            "GetBlobPath",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+        return (string)method.Invoke(null, [id])!;
     }
 
     private static HistoryItem CreateHistoryItem()

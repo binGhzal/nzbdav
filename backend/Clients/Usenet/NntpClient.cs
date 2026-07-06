@@ -12,6 +12,8 @@ namespace NzbWebDAV.Clients.Usenet;
 /// </summary>
 public abstract class NntpClient : INntpClient
 {
+    protected virtual bool SupportsPipelinedSegmentChecks => false;
+
     public abstract Task ConnectAsync(
         string host, int port, bool useSsl, CancellationToken cancellationToken);
 
@@ -120,7 +122,17 @@ public abstract class NntpClient : INntpClient
     {
         var results = new UsenetStatResponse[segmentIds.Count];
         for (var i = 0; i < segmentIds.Count; i++)
-            results[i] = await StatAsync(segmentIds[i], cancellationToken).ConfigureAwait(false);
+        {
+            try
+            {
+                results[i] = await StatAsync(segmentIds[i], cancellationToken).ConfigureAwait(false);
+            }
+            catch (UsenetArticleNotFoundException e)
+            {
+                results[i] = CreateMissingStatResponse(e.SegmentId);
+            }
+        }
+
         return results;
     }
 
@@ -151,20 +163,208 @@ public abstract class NntpClient : INntpClient
         CancellationToken cancellationToken
     )
     {
+        if (!SupportsPipelinedSegmentChecks)
+            return await CheckSegmentsConcurrentlyAsync(segmentIds, concurrency, progress, cancellationToken)
+                .ConfigureAwait(false);
+
+        return await CheckSegmentsPipelinedAsync(
+                segmentIds,
+                batchSize: concurrency,
+                maxConcurrentBatches: concurrency,
+                progress,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    protected async Task<SegmentCheckBatch> CheckSegmentsPipelinedAsync
+    (
+        IEnumerable<string> segmentIds,
+        int batchSize,
+        int maxConcurrentBatches,
+        IProgress<int>? progress,
+        CancellationToken cancellationToken
+    )
+    {
         var segmentList = segmentIds.ToList();
-        var results = new SegmentCheckResult[segmentList.Count];
+        var results = new SegmentCheckResult?[segmentList.Count];
+        var unresolvedResults = new SegmentCheckResult?[segmentList.Count];
+        var pending = new List<PendingSegmentCheck>(segmentList.Count);
+
+        var processed = 0;
+        var normalizedBatchSize = Math.Max(1, batchSize);
+        var normalizedConcurrentBatches = Math.Max(1, maxConcurrentBatches);
+        for (var i = 0; i < segmentList.Count; i++)
+        {
+            if (!TryGetCandidateSegmentId(segmentList[i], candidateIndex: 0, out var candidateSegmentId))
+            {
+                Complete(i, new SegmentCheckResult(
+                    segmentList[i],
+                    SegmentCheckState.Missing,
+                    Provider: null,
+                    Error: "Segment id is empty."));
+                continue;
+            }
+
+            pending.Add(new PendingSegmentCheck(i, CandidateIndex: 0, candidateSegmentId));
+        }
+
+        while (pending.Count > 0)
+        {
+            var nextPending = new List<PendingSegmentCheck>();
+            var chunkChecks = pending
+                .Chunk(normalizedBatchSize)
+                .Select(chunk => CheckPipelinedChunkAsync(chunk.ToArray()))
+                .WithConcurrencyAsync(normalizedConcurrentBatches, cancellationToken);
+
+            await foreach (var chunkResult in chunkChecks.ConfigureAwait(false))
+            {
+                foreach (var (index, result) in chunkResult.Completed)
+                    Complete(index, result);
+                nextPending.AddRange(chunkResult.NextPending);
+            }
+
+            pending = nextPending;
+        }
+
+        return CreateSegmentCheckBatch(segmentList, results);
+
+        async Task<PipelinedChunkResult> CheckPipelinedChunkAsync(PendingSegmentCheck[] chunk)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var completed = new List<(int Index, SegmentCheckResult Result)>(chunk.Length);
+            var chunkNextPending = new List<PendingSegmentCheck>();
+
+            IReadOnlyList<UsenetStatResponse> responses;
+            try
+            {
+                responses = await StatPipelinedAsync(
+                        chunk.Select(x => x.CandidateSegmentId).ToArray(),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (UsenetArticleNotFoundException e)
+            {
+                responses = chunk
+                    .Select(x => string.Equals(x.CandidateSegmentId, e.SegmentId, StringComparison.Ordinal)
+                        ? CreateMissingStatResponse(e.SegmentId)
+                        : CreateUnknownStatResponse($"Pipelined STAT batch aborted after missing segment {e.SegmentId}."))
+                    .ToArray();
+            }
+            catch (OperationCanceledException e) when (!cancellationToken.IsCancellationRequested)
+            {
+                foreach (var item in chunk)
+                {
+                    completed.Add((item.Index, new SegmentCheckResult(
+                        segmentList[item.Index],
+                        SegmentCheckState.ProviderError,
+                        Provider: null,
+                        Error: e.Message,
+                        CandidateSegmentId: item.CandidateSegmentId)));
+                }
+
+                return new PipelinedChunkResult(completed, chunkNextPending);
+            }
+            catch (Exception e) when (!e.IsCancellationException())
+            {
+                foreach (var item in chunk)
+                {
+                    completed.Add((item.Index, new SegmentCheckResult(
+                        segmentList[item.Index],
+                        SegmentCheckState.ProviderError,
+                        Provider: null,
+                        Error: e.Message,
+                        CandidateSegmentId: item.CandidateSegmentId)));
+                }
+
+                return new PipelinedChunkResult(completed, chunkNextPending);
+            }
+
+            if (responses.Count != chunk.Length)
+            {
+                foreach (var item in chunk)
+                {
+                    completed.Add((item.Index, new SegmentCheckResult(
+                        segmentList[item.Index],
+                        SegmentCheckState.ProviderError,
+                        Provider: null,
+                        Error: $"Provider returned {responses.Count} STAT responses for {chunk.Length} requested segments.",
+                        CandidateSegmentId: item.CandidateSegmentId)));
+                }
+
+                return new PipelinedChunkResult(completed, chunkNextPending);
+            }
+
+            for (var i = 0; i < chunk.Length; i++)
+            {
+                var item = chunk[i];
+                if (results[item.Index] is not null) continue;
+
+                var response = responses[i];
+                if (response.ResponseType == UsenetResponseType.ArticleExists)
+                {
+                    completed.Add((item.Index, CreateSegmentCheckResult(
+                        segmentList[item.Index],
+                        response,
+                        item.CandidateSegmentId)));
+                    continue;
+                }
+
+                var result = CreateSegmentCheckResult(
+                    segmentList[item.Index],
+                    response,
+                    item.CandidateSegmentId);
+                if (response.ResponseType != UsenetResponseType.NoArticleWithThatMessageId)
+                    unresolvedResults[item.Index] = result;
+
+                var nextCandidateIndex = item.CandidateIndex + 1;
+                if (TryGetCandidateSegmentId(
+                        segmentList[item.Index],
+                        nextCandidateIndex,
+                        out var nextCandidateSegmentId))
+                {
+                    chunkNextPending.Add(new PendingSegmentCheck(
+                        item.Index,
+                        nextCandidateIndex,
+                        nextCandidateSegmentId));
+                    continue;
+                }
+
+                completed.Add((item.Index, unresolvedResults[item.Index] ?? result));
+            }
+
+            return new PipelinedChunkResult(completed, chunkNextPending);
+        }
+
+        void Complete(int index, SegmentCheckResult result)
+        {
+            if (results[index] is not null) return;
+            progress?.Report(Interlocked.Increment(ref processed));
+            results[index] = result;
+        }
+    }
+
+    protected async Task<SegmentCheckBatch> CheckSegmentsConcurrentlyAsync
+    (
+        IEnumerable<string> segmentIds,
+        int concurrency,
+        IProgress<int>? progress,
+        CancellationToken cancellationToken
+    )
+    {
+        var segmentList = segmentIds.ToList();
+        var results = new SegmentCheckResult?[segmentList.Count];
+        var processed = 0;
         var tasks = segmentList
             .Select((segmentId, index) => CheckSegmentAsync(index, segmentId, cancellationToken))
             .WithConcurrencyAsync(Math.Max(1, concurrency), cancellationToken);
 
-        var processed = 0;
-        await foreach (var task in tasks.ConfigureAwait(false))
+        await foreach (var item in tasks.ConfigureAwait(false))
         {
+            results[item.Index] = item.Result;
             progress?.Report(++processed);
-            results[task.Index] = task.Result;
         }
 
-        return SegmentCheckBatch.FromResults(results);
+        return CreateSegmentCheckBatch(segmentList, results);
     }
 
     protected virtual async Task<(int Index, SegmentCheckResult Result)> CheckSegmentAsync
@@ -176,13 +376,7 @@ public abstract class NntpClient : INntpClient
     {
         try
         {
-            var response = await NntpClientSegmentFallbackExtensions.WithFallbackAsync(
-                    segmentId,
-                    (candidateSegmentId, ct) => StatAsync(candidateSegmentId, ct),
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-            return (index, CreateSegmentCheckResult(segmentId, response));
+            return (index, await CheckSegmentWithFallbackAsync(segmentId, cancellationToken).ConfigureAwait(false));
         }
         catch (UsenetArticleNotFoundException e)
         {
@@ -202,15 +396,181 @@ public abstract class NntpClient : INntpClient
         }
     }
 
-    protected static SegmentCheckResult CreateSegmentCheckResult(string segmentId, UsenetStatResponse response)
+    private async Task<SegmentCheckResult> CheckSegmentWithFallbackAsync(
+        string segmentId,
+        CancellationToken cancellationToken)
+    {
+        var candidateSegmentIds = NzbSegmentIdSet.Decode(segmentId);
+        if (candidateSegmentIds.Length == 0)
+        {
+            return new SegmentCheckResult(
+                segmentId,
+                SegmentCheckState.Missing,
+                Provider: null,
+                Error: "Segment id is empty.");
+        }
+
+        SegmentCheckResult? unresolvedResult = null;
+        foreach (var candidateSegmentId in candidateSegmentIds)
+        {
+            try
+            {
+                var response = await StatAsync(candidateSegmentId, cancellationToken).ConfigureAwait(false);
+                var result = CreateSegmentCheckResult(segmentId, response, candidateSegmentId);
+                if (result.State == SegmentCheckState.Exists)
+                    return result;
+
+                if (unresolvedResult is null
+                    || unresolvedResult.State == SegmentCheckState.Missing
+                    || result.State != SegmentCheckState.Missing)
+                    unresolvedResult = result;
+            }
+            catch (UsenetArticleNotFoundException e)
+            {
+                if (unresolvedResult is null || unresolvedResult.State == SegmentCheckState.Missing)
+                {
+                    unresolvedResult = new SegmentCheckResult(
+                        segmentId,
+                        SegmentCheckState.Missing,
+                        Provider: null,
+                        Error: e.Message,
+                        CandidateSegmentId: e.SegmentId);
+                }
+            }
+        }
+
+        return unresolvedResult ?? new SegmentCheckResult(
+            segmentId,
+            SegmentCheckState.Missing,
+            Provider: null,
+            Error: "No article candidates were available.");
+    }
+
+    protected static SegmentCheckResult CreateSegmentCheckResult(
+        string segmentId,
+        UsenetStatResponse response,
+        string? candidateSegmentId = null)
     {
         return response.ResponseType switch
         {
             UsenetResponseType.ArticleExists =>
-                new SegmentCheckResult(segmentId, SegmentCheckState.Exists, Provider: null, Error: null),
+                new SegmentCheckResult(segmentId, SegmentCheckState.Exists, Provider: null, Error: null, candidateSegmentId),
             UsenetResponseType.NoArticleWithThatMessageId =>
-                new SegmentCheckResult(segmentId, SegmentCheckState.Missing, Provider: null, Error: response.ResponseMessage),
-            _ => new SegmentCheckResult(segmentId, SegmentCheckState.Unknown, Provider: null, Error: response.ResponseMessage)
+                new SegmentCheckResult(segmentId, SegmentCheckState.Missing, Provider: null, Error: response.ResponseMessage, candidateSegmentId),
+            _ => new SegmentCheckResult(segmentId, SegmentCheckState.Unknown, Provider: null, Error: response.ResponseMessage, candidateSegmentId)
         };
     }
+
+    protected static SegmentCheckBatch CreateSegmentCheckBatch(
+        IReadOnlyList<string> segmentIds,
+        IReadOnlyList<SegmentCheckResult?> results)
+    {
+        var checkedCount = results.Count;
+        var missing = 0;
+        var providerErrors = 0;
+        var unknown = 0;
+        var canUseLazyAllExists = checkedCount == segmentIds.Count;
+
+        for (var i = 0; i < results.Count; i++)
+        {
+            var result = results[i];
+            if (result is null)
+            {
+                providerErrors++;
+                canUseLazyAllExists = false;
+                continue;
+            }
+
+            switch (result.State)
+            {
+                case SegmentCheckState.Exists:
+                    if (!string.IsNullOrWhiteSpace(result.CandidateSegmentId)
+                        && !string.Equals(result.CandidateSegmentId, result.SegmentId, StringComparison.Ordinal))
+                        canUseLazyAllExists = false;
+                    break;
+                case SegmentCheckState.Missing:
+                    missing++;
+                    canUseLazyAllExists = false;
+                    break;
+                case SegmentCheckState.ProviderError:
+                    providerErrors++;
+                    canUseLazyAllExists = false;
+                    break;
+                case SegmentCheckState.Unknown:
+                    unknown++;
+                    canUseLazyAllExists = false;
+                    break;
+                default:
+                    canUseLazyAllExists = false;
+                    break;
+            }
+        }
+
+        if (canUseLazyAllExists)
+            return SegmentCheckBatch.AllExists(segmentIds);
+
+        return new SegmentCheckBatch(
+            results
+                .Select((result, index) => result ?? new SegmentCheckResult(
+                    segmentIds[index],
+                    SegmentCheckState.ProviderError,
+                    Provider: null,
+                    Error: "Provider did not return a segment check result."))
+                .ToArray(),
+            checkedCount,
+            missing,
+            providerErrors,
+            unknown);
+    }
+
+    private static bool TryGetCandidateSegmentId(
+        string encodedSegmentId,
+        int candidateIndex,
+        out string candidateSegmentId)
+    {
+        candidateSegmentId = "";
+        if (string.IsNullOrWhiteSpace(encodedSegmentId)) return false;
+
+        if (encodedSegmentId[0] != '[')
+        {
+            if (candidateIndex != 0) return false;
+            candidateSegmentId = encodedSegmentId;
+            return true;
+        }
+
+        var candidates = NzbSegmentIdSet.Decode(encodedSegmentId);
+        if ((uint)candidateIndex >= (uint)candidates.Length) return false;
+
+        candidateSegmentId = candidates[candidateIndex];
+        return true;
+    }
+
+    private static UsenetStatResponse CreateMissingStatResponse(string segmentId)
+    {
+        return new UsenetStatResponse
+        {
+            ArticleExists = false,
+            ResponseCode = (int)UsenetResponseType.NoArticleWithThatMessageId,
+            ResponseMessage = $"430 - No article with message-id <{segmentId}>"
+        };
+    }
+
+    private static UsenetStatResponse CreateUnknownStatResponse(string message)
+    {
+        return new UsenetStatResponse
+        {
+            ArticleExists = false,
+            ResponseCode = (int)UsenetResponseType.Unknown,
+            ResponseMessage = message
+        };
+    }
+
+    private readonly record struct PendingSegmentCheck(
+        int Index,
+        int CandidateIndex,
+        string CandidateSegmentId);
+
+    private readonly record struct PipelinedChunkResult(
+        IReadOnlyList<(int Index, SegmentCheckResult Result)> Completed,
+        IReadOnlyList<PendingSegmentCheck> NextPending);
 }

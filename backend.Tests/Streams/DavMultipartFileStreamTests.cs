@@ -14,30 +14,29 @@ public sealed class DavMultipartFileStreamTests
         using var client = new FakeNntpClient()
             .AddSegment("segment-1", [0, 1, 2, 3], partOffset: 0)
             .AddSegment("segment-2", [4, 5, 6, 7], partOffset: 4);
-        await using var stream = new DavMultipartFileStream(
+        var filePart = new DavMultipartFile.FilePart
+        {
+            SegmentIds = ["segment-1", "segment-2"],
+            SegmentIdByteRange = new LongRange(0, 8),
+            FilePartByteRange = new LongRange(2, 6),
+            SegmentSlices =
             [
-                new DavMultipartFile.FilePart
+                new DavMultipartFile.SegmentSlice
                 {
-                    SegmentIds = ["segment-1", "segment-2"],
-                    SegmentIdByteRange = new LongRange(0, 8),
-                    FilePartByteRange = new LongRange(2, 6),
-                    SegmentSlices =
-                    [
-                        new DavMultipartFile.SegmentSlice
-                        {
-                            SegmentId = "segment-1",
-                            SegmentByteRange = new LongRange(2, 4),
-                            FilePartByteRange = new LongRange(0, 2)
-                        },
-                        new DavMultipartFile.SegmentSlice
-                        {
-                            SegmentId = "segment-2",
-                            SegmentByteRange = new LongRange(0, 2),
-                            FilePartByteRange = new LongRange(2, 4)
-                        }
-                    ]
+                    SegmentId = "segment-1",
+                    SegmentByteRange = new LongRange(2, 4),
+                    FilePartByteRange = new LongRange(0, 2)
+                },
+                new DavMultipartFile.SegmentSlice
+                {
+                    SegmentId = "segment-2",
+                    SegmentByteRange = new LongRange(0, 2),
+                    FilePartByteRange = new LongRange(2, 4)
                 }
-            ],
+            ]
+        };
+        await using var stream = new DavMultipartFileStream(
+            [filePart],
             client,
             articleBufferSize: 1);
         var buffer = new byte[4];
@@ -46,6 +45,7 @@ public sealed class DavMultipartFileStreamTests
 
         Assert.Equal(4, read);
         Assert.Equal([2, 3, 4, 5], buffer);
+        Assert.Empty(filePart.SegmentIds);
     }
 
     [Fact]
@@ -148,6 +148,161 @@ public sealed class DavMultipartFileStreamTests
         Assert.Equal([2, 3], first);
         Assert.Equal([3, 4], second);
         Assert.Equal(decodedBodyCallsAfterFirstRead, client.DecodedBodyCallCount);
+    }
+
+    [Fact]
+    public async Task SeekRejectsNegativePositionWithoutChangingPosition()
+    {
+        using var client = new FakeNntpClient()
+            .AddSegment("segment-1", [0, 1, 2, 3], partOffset: 0);
+        await using var stream = new DavMultipartFileStream(
+            [
+                new DavMultipartFile.FilePart
+                {
+                    SegmentIds = ["segment-1"],
+                    SegmentIdByteRange = new LongRange(0, 4),
+                    FilePartByteRange = new LongRange(0, 4),
+                    SegmentSlices = []
+                }
+            ],
+            client,
+            articleBufferSize: 1);
+
+        stream.Seek(1, SeekOrigin.Begin);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => stream.Seek(-2, SeekOrigin.Current));
+        Assert.Equal(1, stream.Position);
+    }
+
+    [Fact]
+    public async Task ReadAsyncThrowsWhenSegmentEndsBeforeSliceRange()
+    {
+        using var client = new FakeNntpClient()
+            .AddSegment("segment-1", [0], partOffset: 0);
+        await using var stream = new DavMultipartFileStream(
+            [
+                new DavMultipartFile.FilePart
+                {
+                    SegmentIds = ["segment-1"],
+                    SegmentIdByteRange = new LongRange(0, 2),
+                    FilePartByteRange = new LongRange(0, 2),
+                    SegmentSlices =
+                    [
+                        new DavMultipartFile.SegmentSlice
+                        {
+                            SegmentId = "segment-1",
+                            SegmentByteRange = new LongRange(0, 2),
+                            FilePartByteRange = new LongRange(0, 2)
+                        }
+                    ]
+                }
+            ],
+            client,
+            articleBufferSize: 1);
+        var buffer = new byte[2];
+
+        var exception = await Assert.ThrowsAsync<IOException>(() =>
+            stream.ReadAsync(buffer, CancellationToken.None).AsTask());
+
+        Assert.Contains("ended before satisfying range read", exception.Message);
+    }
+
+    [Fact]
+    public void ConstructorRejectsFilePartWithoutFileByteRange()
+    {
+        using var client = new FakeNntpClient();
+
+        var exception = Assert.Throws<InvalidDataException>(() => new DavMultipartFileStream(
+            [
+                new DavMultipartFile.FilePart
+                {
+                    SegmentIds = ["segment-1"],
+                    SegmentIdByteRange = new LongRange(0, 4),
+                    FilePartByteRange = null!,
+                    SegmentSlices = []
+                }
+            ],
+            client,
+            articleBufferSize: 1));
+        Assert.Contains("file part", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ConstructorRejectsSliceWithoutSegmentId()
+    {
+        using var client = new FakeNntpClient();
+
+        var exception = Assert.Throws<InvalidDataException>(() => new DavMultipartFileStream(
+            [
+                new DavMultipartFile.FilePart
+                {
+                    SegmentIds = [],
+                    SegmentIdByteRange = new LongRange(0, 4),
+                    FilePartByteRange = new LongRange(0, 4),
+                    SegmentSlices =
+                    [
+                        new DavMultipartFile.SegmentSlice
+                        {
+                            SegmentId = " ",
+                            SegmentByteRange = new LongRange(0, 4),
+                            FilePartByteRange = new LongRange(0, 4)
+                        }
+                    ]
+                }
+            ],
+            client,
+            articleBufferSize: 1));
+        Assert.Contains("segment metadata", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ConstructorRejectsZeroLengthFilePartWithoutSegmentByteRangeWhenCacheIsEnabled()
+    {
+        using var tempDir = new TempDirectory();
+        using var client = new FakeNntpClient();
+
+        var exception = Assert.Throws<InvalidDataException>(() => new DavMultipartFileStream(
+            [
+                new DavMultipartFile.FilePart
+                {
+                    SegmentIds = [],
+                    SegmentIdByteRange = null!,
+                    FilePartByteRange = new LongRange(0, 0),
+                    SegmentSlices = []
+                }
+            ],
+            client,
+            articleBufferSize: 1,
+            cacheOptions: CreateOptions(tempDir.Path)));
+        Assert.Contains("segment byte range", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ConstructorRejectsSegmentSlicesWithCoverageGap()
+    {
+        using var client = new FakeNntpClient();
+
+        var exception = Assert.Throws<InvalidDataException>(() => new DavMultipartFileStream(
+            [
+                new DavMultipartFile.FilePart
+                {
+                    SegmentIds = [],
+                    SegmentIdByteRange = new LongRange(0, 8),
+                    FilePartByteRange = new LongRange(2, 6),
+                    SegmentSlices =
+                    [
+                        new DavMultipartFile.SegmentSlice
+                        {
+                            SegmentId = "segment-1",
+                            SegmentByteRange = new LongRange(2, 4),
+                            FilePartByteRange = new LongRange(0, 2)
+                        }
+                    ]
+                }
+            ],
+            client,
+            articleBufferSize: 1));
+        Assert.Contains("cover", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<int> ReadFullyAsync(Stream stream, byte[] buffer)

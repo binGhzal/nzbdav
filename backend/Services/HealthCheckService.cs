@@ -3,6 +3,8 @@ using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Concurrency;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -10,6 +12,7 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
@@ -26,34 +29,61 @@ public class HealthCheckService : BackgroundService
     private static readonly TimeSpan ProviderErrorRetryDelay = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan WorkerLeaseDuration = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan MissingSegmentCacheTtl = TimeSpan.FromHours(6);
+    private static readonly TimeSpan RecentlyVerifiedSegmentCacheTtl = TimeSpan.FromHours(6);
     private const int WorkerMaxAttempts = 3;
-    private const int MaxMissingSegmentCacheEntries = 100_000;
+    private const int MaxMissingSegmentCacheEntries = 50_000;
+    private const int MaxRecentlyVerifiedSegmentCacheEntries = 100_000;
+    private const int VerificationJobEnqueueBatchSize = 64;
+    private const int MaxBlobSegmentReadConcurrency = 8;
+    private const int MaxDeduplicatedVerificationSegments = 20_000;
+    private const int MaxProviderVerificationBatchSegments = 2_000;
 
     private readonly ConfigManager _configManager;
     private readonly INntpClient _usenetClient;
+    private readonly QueueWorkLaneCoordinator _queueWorkLaneCoordinator;
     private readonly WebsocketManager _websocketManager;
     private readonly object _activeHealthChecksLock = new();
     private readonly HashSet<Guid> _activeHealthChecks = [];
+    private readonly object _inFlightSegmentChecksLock = new();
+    private readonly Dictionary<string, TaskCompletionSource<SegmentCheckResult>> _inFlightSegmentChecks =
+        new(StringComparer.Ordinal);
     private int _activeVerificationJobs;
     private int _activeRepairJobs;
 
     private static readonly Dictionary<string, DateTimeOffset> _missingSegmentIds = [];
+    private static readonly Dictionary<string, DateTimeOffset> _recentlyVerifiedSegmentIds = [];
+
+    private enum SegmentMetadataReadState
+    {
+        DatabaseFallback,
+        Found,
+        TemporarilyUnavailable
+    }
+
+    private sealed record SegmentMetadataRead(
+        DavItem Item,
+        List<string> Segments,
+        SegmentMetadataReadState State,
+        string? Error);
 
     public HealthCheckService
     (
         ConfigManager configManager,
         UsenetStreamingClient usenetClient,
+        QueueWorkLaneCoordinator queueWorkLaneCoordinator,
         WebsocketManager websocketManager
     )
     {
         _configManager = configManager;
         _usenetClient = usenetClient;
+        _queueWorkLaneCoordinator = queueWorkLaneCoordinator;
         _websocketManager = websocketManager;
 
         _configManager.OnConfigChanged += (_, configEventArgs) =>
         {
             if (!configEventArgs.ChangedConfig.ContainsKey("usenet.providers")) return;
             lock (_missingSegmentIds) _missingSegmentIds.Clear();
+            lock (_recentlyVerifiedSegmentIds) _recentlyVerifiedSegmentIds.Clear();
         };
     }
 
@@ -63,41 +93,65 @@ public class HealthCheckService : BackgroundService
         {
             try
             {
-                // if the repair-job is disabled, then don't do anything
-                if (!_configManager.IsRepairJobEnabled())
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
-                    continue;
-                }
-
                 var startedWorker = false;
+                var workerPolicy = GetWorkerSchedulingPolicy(_configManager.IsRepairJobEnabled());
                 var segmentConcurrency = _configManager.GetAdaptiveHealthCheckConcurrency();
+                var postDownloadSegmentConcurrency = _configManager.GetAdaptivePostDownloadVerificationConcurrency();
                 var maxVerifyJobs = _configManager.GetAdaptiveMaxConcurrentVerifyJobs();
                 var maxRepairJobs = _configManager.GetAdaptiveMaxConcurrentRepairJobs();
-                var workerSegmentConcurrency = Math.Max(1, segmentConcurrency / Math.Max(1, maxVerifyJobs));
 
                 var activeVerificationJobs = Volatile.Read(ref _activeVerificationJobs);
-                while (activeVerificationJobs < maxVerifyJobs)
+                while (workerPolicy.ProcessExplicitVerifyJobs && activeVerificationJobs < maxVerifyJobs)
                 {
-                    var verifyJob = await LeaseNextVerificationJobAsync(stoppingToken).ConfigureAwait(false);
-                    if (verifyJob == null) break;
-                    if (!TryMarkHealthCheckActive(verifyJob.TargetId)) continue;
+                    IDisposable? verifyLease = null;
+                    try
+                    {
+                        verifyLease = _queueWorkLaneCoordinator.TryEnterVerify(maxVerifyJobs);
+                        if (verifyLease is null) break;
 
-                    startedWorker = true;
-                    activeVerificationJobs++;
-                    _ = RunVerificationWorkerAsync(verifyJob, workerSegmentConcurrency, stoppingToken);
+                        var verifyJob = await LeaseNextVerificationJobAsync(
+                                GetActiveHealthCheckIds(),
+                                workerPolicy.AutoEnqueueDueVerifyItems,
+                                stoppingToken)
+                            .ConfigureAwait(false);
+                        if (verifyJob == null) break;
+                        if (!TryMarkHealthCheckActive(verifyJob.TargetId))
+                        {
+                            await ReleaseLeasedWorkerJobAsync(verifyJob, stoppingToken).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        startedWorker = true;
+                        Interlocked.Increment(ref _activeVerificationJobs);
+                        activeVerificationJobs++;
+                        var workerLease = verifyLease;
+                        var isPostDownloadVerification = IsPostDownloadVerificationJob(verifyJob);
+                        var workerSegmentConcurrency = GetVerificationSegmentConcurrency(
+                            segmentConcurrency,
+                            postDownloadSegmentConcurrency,
+                            maxVerifyJobs,
+                            activeVerificationJobs - 1,
+                            isPostDownloadVerification ? Math.Max(1, verifyJob.Priority) : verifyJob.Priority);
+                        verifyLease = null;
+                        _ = RunVerificationWorkerAsync(verifyJob, workerSegmentConcurrency, workerLease, stoppingToken);
+                    }
+                    finally
+                    {
+                        verifyLease?.Dispose();
+                    }
                 }
 
                 var activeRepairJobs = Volatile.Read(ref _activeRepairJobs);
-                while (activeRepairJobs < maxRepairJobs)
+                while (workerPolicy.ProcessRepairJobs && activeRepairJobs < maxRepairJobs)
                 {
-                    var repairJob = await LeaseNextRepairJobAsync(stoppingToken).ConfigureAwait(false);
+                    var repairJob = await LeaseNextRepairJobAsync(GetActiveHealthCheckIds(), stoppingToken)
+                        .ConfigureAwait(false);
                     if (repairJob == null) break;
-                    if (!TryMarkHealthCheckActive(repairJob.TargetId)) continue;
+                    if (!await TryStartRepairWorkerAsync(repairJob, stoppingToken).ConfigureAwait(false))
+                        continue;
 
                     startedWorker = true;
                     activeRepairJobs++;
-                    _ = RunRepairWorkerAsync(repairJob, stoppingToken);
                 }
 
                 var delay = startedWorker
@@ -105,9 +159,8 @@ public class HealthCheckService : BackgroundService
                     : GetActiveHealthCheckCount() > 0 ? TimeSpan.FromSeconds(1) : TimeSpan.FromSeconds(5);
                 await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (SigtermUtil.IsSigtermTriggered())
+            catch (OperationCanceledException e) when (BackgroundServiceCancellationUtil.IsExpectedCancellation(e, stoppingToken))
             {
-                // OperationCanceledException is expected on sigterm
                 return;
             }
             catch (Exception e)
@@ -157,43 +210,107 @@ public class HealthCheckService : BackgroundService
             RepairActive: Volatile.Read(ref _activeRepairJobs));
     }
 
-    private async Task<WorkerJob?> LeaseNextVerificationJobAsync(CancellationToken ct)
+    public sealed record WorkerSchedulingPolicy
+    (
+        bool ProcessExplicitVerifyJobs,
+        bool AutoEnqueueDueVerifyItems,
+        bool ProcessRepairJobs
+    );
+
+    public static WorkerSchedulingPolicy GetWorkerSchedulingPolicy(bool repairJobEnabled)
+    {
+        return new WorkerSchedulingPolicy(
+            ProcessExplicitVerifyJobs: true,
+            AutoEnqueueDueVerifyItems: repairJobEnabled,
+            ProcessRepairJobs: repairJobEnabled);
+    }
+
+    public static int GetVerificationSegmentConcurrency
+    (
+        int segmentConcurrency,
+        int maxVerifyJobs,
+        int activeVerifyJobs
+    )
+    {
+        return GetVerificationSegmentConcurrency(
+            segmentConcurrency,
+            postDownloadSegmentConcurrency: segmentConcurrency,
+            maxVerifyJobs,
+            activeVerifyJobs,
+            workerJobPriority: 0);
+    }
+
+    public static int GetVerificationSegmentConcurrency
+    (
+        int segmentConcurrency,
+        int postDownloadSegmentConcurrency,
+        int maxVerifyJobs,
+        int activeVerifyJobs,
+        int workerJobPriority
+    )
+    {
+        var verifyWorkerBudget = Math.Max(1, maxVerifyJobs);
+        var plannedWorkers = Math.Clamp(activeVerifyJobs + 1, 1, verifyWorkerBudget);
+        if (workerJobPriority > 0)
+            return Math.Max(1, Math.Max(segmentConcurrency, postDownloadSegmentConcurrency) / verifyWorkerBudget);
+
+        return Math.Max(1, Math.Max(1, segmentConcurrency) / plannedWorkers);
+    }
+
+    private async Task<WorkerJob?> LeaseNextVerificationJobAsync(
+        IReadOnlyCollection<Guid> activeHealthCheckIds,
+        bool autoEnqueueDueItems,
+        CancellationToken ct)
     {
         await using var dbContext = new DavDatabaseContext();
         var dbClient = new DavDatabaseClient(dbContext);
         var currentDateTime = DateTimeOffset.UtcNow;
-        var activeHealthCheckIds = GetActiveHealthCheckIds();
+
+        var existingJob = await dbClient.LeaseNextWorkerJobAsync(
+                WorkerJob.JobKind.Verify,
+                owner: $"{Environment.MachineName}:{Environment.ProcessId}:verify",
+                leaseDuration: WorkerLeaseDuration,
+                now: currentDateTime,
+                ct: ct,
+                excludeTargetIds: activeHealthCheckIds)
+            .ConfigureAwait(false);
+        if (existingJob != null) return existingJob;
+
+        if (!autoEnqueueDueItems) return null;
+
         IQueryable<DavItem> query = GetHealthCheckQueueItems(dbClient)
             .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime);
 
-        if (activeHealthCheckIds.Length > 0)
+        if (activeHealthCheckIds.Count > 0)
             query = query.Where(x => !activeHealthCheckIds.Contains(x.Id));
 
         var dueItemIds = await query
             .Select(x => x.Id)
-            .Take(16)
+            .Take(VerificationJobEnqueueBatchSize)
             .ToListAsync(ct)
             .ConfigureAwait(false);
 
-        foreach (var davItemId in dueItemIds)
-            await dbClient.EnqueueWorkerJobAsync(
-                    WorkerJob.JobKind.Verify,
-                    davItemId,
-                    priority: 0,
-                    now: currentDateTime,
-                    ct: ct)
-                .ConfigureAwait(false);
+        await dbClient.EnqueueWorkerJobsAsync(
+                WorkerJob.JobKind.Verify,
+                dueItemIds,
+                priority: 0,
+                now: currentDateTime,
+                ct: ct)
+            .ConfigureAwait(false);
 
         return await dbClient.LeaseNextWorkerJobAsync(
                 WorkerJob.JobKind.Verify,
                 owner: $"{Environment.MachineName}:{Environment.ProcessId}:verify",
                 leaseDuration: WorkerLeaseDuration,
                 now: currentDateTime,
-                ct: ct)
+                ct: ct,
+                excludeTargetIds: activeHealthCheckIds)
             .ConfigureAwait(false);
     }
 
-    private static async Task<WorkerJob?> LeaseNextRepairJobAsync(CancellationToken ct)
+    private static async Task<WorkerJob?> LeaseNextRepairJobAsync(
+        IReadOnlyCollection<Guid> activeHealthCheckIds,
+        CancellationToken ct)
     {
         await using var dbContext = new DavDatabaseContext();
         var dbClient = new DavDatabaseClient(dbContext);
@@ -201,13 +318,25 @@ public class HealthCheckService : BackgroundService
                 WorkerJob.JobKind.Repair,
                 owner: $"{Environment.MachineName}:{Environment.ProcessId}:repair",
                 leaseDuration: WorkerLeaseDuration,
-                ct: ct)
+                ct: ct,
+                excludeTargetIds: activeHealthCheckIds)
             .ConfigureAwait(false);
     }
 
-    private async Task RunVerificationWorkerAsync(WorkerJob workerJob, int segmentConcurrency, CancellationToken ct)
+    private static async Task ReleaseLeasedWorkerJobAsync(WorkerJob workerJob, CancellationToken ct)
     {
-        Interlocked.Increment(ref _activeVerificationJobs);
+        await using var dbContext = new DavDatabaseContext();
+        dbContext.WorkerJobs.Attach(workerJob);
+        var dbClient = new DavDatabaseClient(dbContext);
+        await dbClient.ReleaseWorkerJobLeaseAsync(workerJob, ct: ct).ConfigureAwait(false);
+    }
+
+    private async Task RunVerificationWorkerAsync(
+        WorkerJob workerJob,
+        int segmentConcurrency,
+        IDisposable verifyLease,
+        CancellationToken ct)
+    {
         try
         {
             await using var dbContext = new DavDatabaseContext();
@@ -253,11 +382,22 @@ public class HealthCheckService : BackgroundService
                 await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
             }
 
-            await PerformHealthCheckAsync(davItem, dbClient, segmentConcurrency, ct, repairRunId).ConfigureAwait(false);
+            var isPostDownloadVerification = IsPostDownloadVerificationJob(workerJob);
+            await PerformHealthCheckAsync(
+                    davItem,
+                    dbClient,
+                    segmentConcurrency,
+                    ct,
+                    repairRunId,
+                    skipReleaseDateProbe: isPostDownloadVerification,
+                    useRecentlyVerifiedSegmentCache: isPostDownloadVerification)
+                .ConfigureAwait(false);
             await dbClient.CompleteWorkerJobAsync(workerJob, ct: ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
         {
+            await ReleaseWorkerJobAfterCancellationAsync(workerJob, WorkerJob.JobKind.Verify)
+                .ConfigureAwait(false);
         }
         catch (Exception e)
         {
@@ -277,13 +417,31 @@ public class HealthCheckService : BackgroundService
         finally
         {
             Interlocked.Decrement(ref _activeVerificationJobs);
+            verifyLease.Dispose();
             ClearHealthCheckActive(workerJob.TargetId);
         }
     }
 
+    private static bool IsPostDownloadVerificationJob(WorkerJob workerJob)
+    {
+        return workerJob.Priority > 0 || DavDatabaseClient.IsPostDownloadVerifyPayload(workerJob.PayloadJson);
+    }
+
+    private async Task<bool> TryStartRepairWorkerAsync(WorkerJob workerJob, CancellationToken ct)
+    {
+        if (!TryMarkHealthCheckActive(workerJob.TargetId))
+        {
+            await ReleaseLeasedWorkerJobAsync(workerJob, ct).ConfigureAwait(false);
+            return false;
+        }
+
+        Interlocked.Increment(ref _activeRepairJobs);
+        _ = RunRepairWorkerAsync(workerJob, ct);
+        return true;
+    }
+
     private async Task RunRepairWorkerAsync(WorkerJob workerJob, CancellationToken ct)
     {
-        Interlocked.Increment(ref _activeRepairJobs);
         try
         {
             await using var dbContext = new DavDatabaseContext();
@@ -304,6 +462,8 @@ public class HealthCheckService : BackgroundService
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
         {
+            await ReleaseWorkerJobAfterCancellationAsync(workerJob, WorkerJob.JobKind.Repair)
+                .ConfigureAwait(false);
         }
         catch (Exception e)
         {
@@ -343,6 +503,27 @@ public class HealthCheckService : BackgroundService
         {
             Log.Warning(e, "Failed to update {WorkerKind} worker job after error: {Message}", kind, e.Message);
             return null;
+        }
+    }
+
+    private static async Task ReleaseWorkerJobAfterCancellationAsync(WorkerJob workerJob, WorkerJob.JobKind kind)
+    {
+        try
+        {
+            await using var dbContext = new DavDatabaseContext();
+            dbContext.WorkerJobs.Attach(workerJob);
+            var dbClient = new DavDatabaseClient(dbContext);
+            await dbClient.ReleaseWorkerJobLeaseAsync(workerJob, ct: CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            Log.Warning(
+                e,
+                "Failed to release cancelled {WorkerKind} worker job {WorkerJobId}: {Message}",
+                kind,
+                workerJob.Id,
+                e.Message);
         }
     }
 
@@ -396,14 +577,43 @@ public class HealthCheckService : BackgroundService
         DavDatabaseClient dbClient,
         int concurrency,
         CancellationToken ct,
-        Guid? repairRunId = null
+        Guid? repairRunId = null,
+        bool skipReleaseDateProbe = false,
+        bool useRecentlyVerifiedSegmentCache = false
     )
     {
         try
         {
+            if (davItem.Type == DavItem.ItemType.Directory)
+            {
+                await PerformDirectoryHealthCheckAsync(
+                        davItem,
+                        dbClient,
+                        concurrency,
+                        ct,
+                        repairRunId,
+                        useRecentlyVerifiedSegmentCache)
+                    .ConfigureAwait(false);
+                return;
+            }
+
             // update the release date, if null
-            var segments = await GetAllSegments(davItem, dbClient, ct).ConfigureAwait(false);
-            if (davItem.ReleaseDate == null)
+            var metadata = await GetAllSegmentMetadataAsync(davItem, dbClient, ct).ConfigureAwait(false);
+            if (metadata.State == SegmentMetadataReadState.TemporarilyUnavailable)
+            {
+                await RecordTemporaryMetadataUnavailableAsync(davItem, dbClient, ct, repairRunId, metadata.Error)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            var segments = metadata.Segments;
+            if (segments.Count == 0)
+            {
+                await RecordMissingFileMetadataAsync(davItem, dbClient, ct, repairRunId).ConfigureAwait(false);
+                return;
+            }
+
+            if (davItem.ReleaseDate == null && !skipReleaseDateProbe)
             {
                 try
                 {
@@ -420,17 +630,22 @@ public class HealthCheckService : BackgroundService
             }
 
             // setup progress tracking
-            var progressHook = new Progress<int>();
             var debounce = DebounceUtil.CreateDebounce();
-            progressHook.ProgressChanged += (_, progress) =>
+            var progressHook = ProgressExtensions.FromAction(progress =>
             {
                 var message = $"{davItem.Id}|{progress}";
                 debounce(() => _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, message));
-            };
+            });
 
             // perform health check
-            var progress = progressHook.ToPercentage(segments.Count);
-            var checkBatch = await RunVerificationAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
+            var progress = progressHook.ToPercentage(Math.Max(1, segments.Count));
+            var checkBatch = await RunVerificationAsync(
+                    segments,
+                    concurrency,
+                    progress,
+                    ct,
+                    useRecentlyVerifiedSegmentCache)
+                .ConfigureAwait(false);
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
 
@@ -447,28 +662,14 @@ public class HealthCheckService : BackgroundService
             }
 
             // update the database
-            ClearCachedMissingSegmentIds(segments);
-            davItem.LastHealthCheck = DateTimeOffset.UtcNow;
-            davItem.NextHealthCheck = davItem.ReleaseDate + 2 * (davItem.LastHealthCheck - davItem.ReleaseDate);
-            dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
-            {
-                Id = Guid.NewGuid(),
-                DavItemId = davItem.Id,
-                Path = davItem.Path,
-                CreatedAt = DateTimeOffset.UtcNow,
-                Result = HealthCheckResult.HealthResult.Healthy,
-                RepairStatus = HealthCheckResult.RepairAction.None,
-                Message = "File is healthy."
-            }));
-            await MarkRepairEntryAsync(
+            await RecordHealthyVerificationAsync(
                     dbClient,
-                    repairRunId,
                     davItem,
-                    RepairEntryHealth.RepairEntryState.Healthy,
-                    "File is healthy.",
+                    segments,
+                    repairRunId,
+                    useRecentlyVerifiedSegmentCache,
                     ct)
                 .ConfigureAwait(false);
-            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
         }
         catch (UsenetArticleNotFoundException e)
         {
@@ -512,7 +713,207 @@ public class HealthCheckService : BackgroundService
         }
     }
 
+    private async Task PerformDirectoryHealthCheckAsync
+    (
+        DavItem directory,
+        DavDatabaseClient dbClient,
+        int concurrency,
+        CancellationToken ct,
+        Guid? repairRunId,
+        bool useRecentlyVerifiedSegmentCache
+    )
+    {
+        var fileItems = await GetDirectoryHealthCheckFileItems(directory, dbClient, ct).ConfigureAwait(false);
+        if (fileItems.Count == 0) return;
+
+        var itemSegments = await GetAllSegmentMetadataAsync(fileItems, dbClient, ct).ConfigureAwait(false);
+        foreach (var metadata in itemSegments)
+        {
+            if (metadata.State == SegmentMetadataReadState.TemporarilyUnavailable)
+            {
+                await RecordTemporaryMetadataUnavailableAsync(
+                        metadata.Item,
+                        dbClient,
+                        ct,
+                        repairRunId,
+                        metadata.Error)
+                    .ConfigureAwait(false);
+                continue;
+            }
+
+            if (metadata.Segments.Count == 0)
+            {
+                await RecordMissingFileMetadataAsync(metadata.Item, dbClient, ct, repairRunId).ConfigureAwait(false);
+                continue;
+            }
+        }
+
+        var allSegments = itemSegments
+            .SelectMany(x => x.Segments)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (allSegments.Count == 0) return;
+
+        var debounce = DebounceUtil.CreateDebounce();
+        var progressHook = ProgressExtensions.FromAction(progress =>
+        {
+            var message = $"{directory.Id}|{progress}";
+            debounce(() => _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, message));
+        });
+        var progress = progressHook.ToPercentage(Math.Max(1, allSegments.Count));
+        var checkBatch = await RunVerificationAsync(
+                allSegments,
+                concurrency,
+                progress,
+                ct,
+                useRecentlyVerifiedSegmentCache)
+            .ConfigureAwait(false);
+        _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{directory.Id}|100");
+        _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{directory.Id}|done");
+
+        if (checkBatch.IsClean)
+        {
+            foreach (var metadata in itemSegments)
+            {
+                var item = metadata.Item;
+                var segments = metadata.Segments;
+                if (segments.Count == 0) continue;
+
+                await RecordHealthyVerificationAsync(
+                        dbClient,
+                        item,
+                        segments,
+                        repairRunId,
+                        useRecentlyVerifiedSegmentCache,
+                        ct,
+                        saveChanges: false)
+                    .ConfigureAwait(false);
+            }
+
+            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+            return;
+        }
+
+        var resultsBySegment = checkBatch.Results
+            .GroupBy(x => x.SegmentId, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
+
+        foreach (var metadata in itemSegments)
+        {
+            var item = metadata.Item;
+            var segments = metadata.Segments;
+            if (segments.Count == 0) continue;
+
+            var itemBatch = SegmentCheckBatch.FromResults(segments
+                .Select(segment => resultsBySegment[segment])
+                .ToArray());
+
+            if (itemBatch.Missing > 0)
+            {
+                await RecordMissingSegmentsAsync(item, dbClient, itemBatch, ct, repairRunId).ConfigureAwait(false);
+                continue;
+            }
+
+            if (itemBatch.ProviderErrors > 0 || itemBatch.Unknown > 0)
+            {
+                await RecordUnknownVerificationAsync(item, dbClient, itemBatch, ct, repairRunId).ConfigureAwait(false);
+                continue;
+            }
+
+            await RecordHealthyVerificationAsync(
+                    dbClient,
+                    item,
+                    segments,
+                    repairRunId,
+                    useRecentlyVerifiedSegmentCache,
+                    ct,
+                    saveChanges: false)
+                .ConfigureAwait(false);
+        }
+
+        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    private static async Task<List<DavItem>> GetDirectoryHealthCheckFileItems
+    (
+        DavItem directory,
+        DavDatabaseClient dbClient,
+        CancellationToken ct
+    )
+    {
+        if (directory.HistoryItemId.HasValue)
+        {
+            var historyItemId = directory.HistoryItemId.Value;
+            var historyFileItems = await dbClient.Ctx.Items
+                .Where(x => x.Type == DavItem.ItemType.UsenetFile)
+                .Where(x => x.HistoryItemId == historyItemId)
+                .WhereVideoFiles()
+                .OrderBy(x => x.Path)
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+            return historyFileItems;
+        }
+
+        var normalizedDirectoryPath = ContentPathUtil.NormalizeSeparators(directory.Path).TrimEnd('/');
+        var directoryPrefix = normalizedDirectoryPath + "/";
+        var query = dbClient.Ctx.Items
+            .Where(x => x.Type == DavItem.ItemType.UsenetFile)
+            .Where(x => x.Path == normalizedDirectoryPath || x.Path.StartsWith(directoryPrefix))
+            .WhereVideoFiles();
+
+        return await query
+            .OrderBy(x => x.Path)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+    }
+
     private async Task<SegmentCheckBatch> RunVerificationAsync
+    (
+        List<string> segments,
+        int concurrency,
+        IProgress<int> progress,
+        CancellationToken ct,
+        bool useRecentlyVerifiedSegmentCache = false
+    )
+    {
+        using var priorityScope = ct.SetContext(new DownloadPriorityContext
+        {
+            Priority = SemaphorePriority.Normal
+        });
+        if (!useRecentlyVerifiedSegmentCache)
+            return await RunDirectVerificationAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
+
+        if (segments.Count > MaxDeduplicatedVerificationSegments)
+            return await RunDirectVerificationAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
+
+        var cachedResults = GetRecentlyVerifiedSegmentResults(segments);
+        var completed = CountCachedLogicalSegments(segments, cachedResults);
+        if (completed > 0)
+            progress.Report(completed);
+
+        var segmentsToCheck = segments
+            .Where(segment => !cachedResults.ContainsKey(segment))
+            .ToList();
+        if (segmentsToCheck.Count == 0)
+            return SegmentCheckBatch.AllExists(segments);
+
+        var progressOffset = completed;
+        var uncachedProgress = new OffsetProgress(progress, progressOffset);
+        var checkedBatch = await RunDeduplicatedVerificationAsync(segmentsToCheck, concurrency, uncachedProgress, ct)
+            .ConfigureAwait(false);
+        AddRecentlyVerifiedSegmentResults(checkedBatch.Results);
+        if (checkedBatch.IsClean) return SegmentCheckBatch.AllExists(segments);
+        if (cachedResults.Count == 0) return checkedBatch;
+
+        var checkedResults = checkedBatch.Results.ToDictionary(x => x.SegmentId, StringComparer.Ordinal);
+        return SegmentCheckBatch.FromResults(segments
+            .Select(segment => checkedResults.TryGetValue(segment, out var result)
+                ? result
+                : cachedResults[segment])
+            .ToArray());
+    }
+
+    private async Task<SegmentCheckBatch> RunDirectVerificationAsync
     (
         List<string> segments,
         int concurrency,
@@ -520,7 +921,332 @@ public class HealthCheckService : BackgroundService
         CancellationToken ct
     )
     {
-        return await _usenetClient.CheckSegmentsAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
+        if (segments.Count <= MaxProviderVerificationBatchSegments)
+        {
+            var batch = await _usenetClient.CheckSegmentsAsync(segments, concurrency, progress, ct)
+                .ConfigureAwait(false);
+            return batch.IsClean ? SegmentCheckBatch.AllExists(segments) : batch;
+        }
+
+        var nonCleanResults = new List<SegmentCheckResult>();
+        var checkedCount = 0;
+        var missing = 0;
+        var providerErrors = 0;
+        var unknown = 0;
+
+        for (var offset = 0; offset < segments.Count; offset += MaxProviderVerificationBatchSegments)
+        {
+            ct.ThrowIfCancellationRequested();
+            var count = Math.Min(MaxProviderVerificationBatchSegments, segments.Count - offset);
+            var chunk = segments.GetRange(offset, count);
+            var batch = await _usenetClient
+                .CheckSegmentsAsync(chunk, concurrency, new OffsetProgress(progress, checkedCount), ct)
+                .ConfigureAwait(false);
+
+            checkedCount += batch.Checked;
+            missing += batch.Missing;
+            providerErrors += batch.ProviderErrors;
+            unknown += batch.Unknown;
+
+            if (batch.IsClean) continue;
+
+            nonCleanResults.AddRange(batch.Results.Where(x => x.State != SegmentCheckState.Exists));
+        }
+
+        if (nonCleanResults.Count == 0 && missing == 0 && providerErrors == 0 && unknown == 0)
+            return SegmentCheckBatch.AllExists(segments);
+
+        return new SegmentCheckBatch(
+            nonCleanResults,
+            Checked: segments.Count,
+            Missing: missing,
+            ProviderErrors: providerErrors,
+            Unknown: unknown);
+    }
+
+    private static int CountCachedLogicalSegments(
+        IEnumerable<string> segments,
+        IReadOnlyDictionary<string, SegmentCheckResult> cachedResults)
+    {
+        var completed = 0;
+        foreach (var segment in segments)
+        {
+            if (cachedResults.ContainsKey(segment))
+                completed++;
+        }
+
+        return completed;
+    }
+
+    private async Task<SegmentCheckBatch> RunDeduplicatedVerificationAsync
+    (
+        IReadOnlyList<string> segments,
+        int concurrency,
+        IProgress<int> progress,
+        CancellationToken ct
+    )
+    {
+        var progressReporter = new SegmentCheckProgressReporter(progress);
+        var ownedSegments = new List<string>();
+        var ownedCompletions = new Dictionary<string, TaskCompletionSource<SegmentCheckResult>>(StringComparer.Ordinal);
+        var awaitedCompletions = new Dictionary<string, Task<SegmentCheckResult>>(StringComparer.Ordinal);
+        var segmentCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        lock (_inFlightSegmentChecksLock)
+        {
+            foreach (var segment in segments)
+            {
+                if (segmentCounts.TryGetValue(segment, out var count))
+                {
+                    segmentCounts[segment] = count + 1;
+                    continue;
+                }
+
+                segmentCounts[segment] = 1;
+                if (_inFlightSegmentChecks.TryGetValue(segment, out var existingCompletion))
+                {
+                    awaitedCompletions[segment] = existingCompletion.Task;
+                    continue;
+                }
+
+                var completion = new TaskCompletionSource<SegmentCheckResult>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                _inFlightSegmentChecks[segment] = completion;
+                ownedCompletions[segment] = completion;
+                ownedSegments.Add(segment);
+            }
+        }
+
+        var ownedTask = ownedSegments.Count == 0
+            ? Task.FromResult(new Dictionary<string, SegmentCheckResult>(StringComparer.Ordinal))
+            : CheckOwnedSegmentsAsync(
+                ownedSegments,
+                ownedCompletions,
+                concurrency,
+                progressReporter.CreateWeightedAbsoluteProgress(ownedSegments, segmentCounts),
+                ct);
+        var awaitedTask = AwaitInFlightSegmentsAsync(awaitedCompletions, segmentCounts, progressReporter.ReportCount, ct);
+
+        await Task.WhenAll(ownedTask, awaitedTask).ConfigureAwait(false);
+
+        var resultsBySegment = new Dictionary<string, SegmentCheckResult>(ownedTask.Result, StringComparer.Ordinal);
+        foreach (var item in awaitedTask.Result)
+            resultsBySegment[item.Key] = item.Value;
+
+        return SegmentCheckBatch.FromResults(segments.Select(x => resultsBySegment[x]).ToArray());
+    }
+
+    private async Task<Dictionary<string, SegmentCheckResult>> CheckOwnedSegmentsAsync
+    (
+        IReadOnlyList<string> ownedSegments,
+        IReadOnlyDictionary<string, TaskCompletionSource<SegmentCheckResult>> ownedCompletions,
+        int concurrency,
+        IProgress<int> progress,
+        CancellationToken ct
+    )
+    {
+        try
+        {
+            var batch = await _usenetClient.CheckSegmentsAsync(ownedSegments, concurrency, progress, ct)
+                .ConfigureAwait(false);
+            var results = new Dictionary<string, SegmentCheckResult>(StringComparer.Ordinal);
+            for (var i = 0; i < ownedSegments.Count; i++)
+            {
+                var segment = ownedSegments[i];
+                var result = i < batch.Results.Count
+                    ? batch.Results[i]
+                    : new SegmentCheckResult(
+                        segment,
+                        SegmentCheckState.ProviderError,
+                        Provider: null,
+                        Error: "Provider returned fewer segment check results than requested.");
+                results[segment] = result;
+                ownedCompletions[segment].TrySetResult(result);
+            }
+
+            return results;
+        }
+        catch (OperationCanceledException e)
+        {
+            foreach (var completion in ownedCompletions.Values)
+                completion.TrySetCanceled(e.CancellationToken);
+            throw;
+        }
+        catch (Exception e)
+        {
+            foreach (var completion in ownedCompletions.Values)
+                completion.TrySetException(e);
+            throw;
+        }
+        finally
+        {
+            lock (_inFlightSegmentChecksLock)
+            {
+                foreach (var item in ownedCompletions)
+                {
+                    if (_inFlightSegmentChecks.TryGetValue(item.Key, out var completion)
+                        && ReferenceEquals(completion, item.Value))
+                        _inFlightSegmentChecks.Remove(item.Key);
+                }
+            }
+        }
+    }
+
+    private static async Task<Dictionary<string, SegmentCheckResult>> AwaitInFlightSegmentsAsync
+    (
+        IReadOnlyDictionary<string, Task<SegmentCheckResult>> awaitedCompletions,
+        IReadOnlyDictionary<string, int> segmentCounts,
+        Action<int> reportSegmentsCompleted,
+        CancellationToken ct
+    )
+    {
+        var results = new Dictionary<string, SegmentCheckResult>(StringComparer.Ordinal);
+        foreach (var item in awaitedCompletions)
+        {
+            var result = await item.Value.WaitAsync(ct).ConfigureAwait(false);
+            reportSegmentsCompleted(segmentCounts.TryGetValue(item.Key, out var count) ? count : 1);
+            results[item.Key] = result;
+        }
+
+        return results;
+    }
+
+    private sealed class SegmentCheckProgressReporter(IProgress<int> progress)
+    {
+        private readonly object _lock = new();
+        private int _completed;
+
+        public IProgress<int> CreateWeightedAbsoluteProgress(
+            IReadOnlyList<string> orderedSegments,
+            IReadOnlyDictionary<string, int> segmentCounts)
+        {
+            return new WeightedAbsoluteProgress(this, orderedSegments, segmentCounts);
+        }
+
+        public void ReportCount(int count)
+        {
+            ReportDelta(count);
+        }
+
+        private void ReportDelta(int delta)
+        {
+            if (delta <= 0) return;
+            int completed;
+            lock (_lock)
+            {
+                _completed += delta;
+                completed = _completed;
+            }
+
+            progress.Report(completed);
+        }
+
+        private sealed class WeightedAbsoluteProgress(
+            SegmentCheckProgressReporter reporter,
+            IReadOnlyList<string> orderedSegments,
+            IReadOnlyDictionary<string, int> segmentCounts) : IProgress<int>
+        {
+            private int _previous;
+
+            public void Report(int value)
+            {
+                var current = Math.Clamp(value, _previous, orderedSegments.Count);
+                var delta = 0;
+                for (var i = _previous; i < current; i++)
+                    delta += segmentCounts.TryGetValue(orderedSegments[i], out var count) ? count : 1;
+                _previous = current;
+                reporter.ReportDelta(delta);
+            }
+        }
+    }
+
+    private sealed class OffsetProgress(IProgress<int> inner, int offset) : IProgress<int>
+    {
+        public void Report(int value)
+        {
+            inner.Report(offset + value);
+        }
+    }
+
+    private async Task RecordMissingFileMetadataAsync
+    (
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        CancellationToken ct,
+        Guid? repairRunId
+    )
+    {
+        var utcNow = DateTimeOffset.UtcNow;
+        const string message = "File metadata is missing or contains no article segments. Queued automatic repair.";
+        davItem.LastHealthCheck = utcNow;
+        davItem.NextHealthCheck = utcNow + AutoRepairRetryDelay;
+        dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = davItem.Id,
+            Path = davItem.Path,
+            CreatedAt = utcNow,
+            Result = HealthCheckResult.HealthResult.Unhealthy,
+            RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
+            Message = message
+        }));
+        await dbClient.EnqueueWorkerJobAsync(
+                WorkerJob.JobKind.Repair,
+                davItem.Id,
+                priority: 0,
+                now: utcNow,
+                payloadJson: repairRunId.HasValue
+                    ? DavDatabaseClient.CreateRepairRunPayloadJson(repairRunId.Value)
+                    : null,
+                ct: ct)
+            .ConfigureAwait(false);
+        await MarkRepairEntryAsync(
+                dbClient,
+                repairRunId,
+                davItem,
+                RepairEntryHealth.RepairEntryState.Missing,
+                message,
+                ct)
+            .ConfigureAwait(false);
+        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    private async Task RecordTemporaryMetadataUnavailableAsync
+    (
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        CancellationToken ct,
+        Guid? repairRunId,
+        string? error
+    )
+    {
+        var utcNow = DateTimeOffset.UtcNow;
+        var message = string.Join(" ", [
+            "File metadata could not be read because the blob store is temporarily unavailable.",
+            "Will retry before automatic repair.",
+            string.IsNullOrWhiteSpace(error) ? "" : $"Error: {error}"
+        ]).Trim();
+        davItem.LastHealthCheck = utcNow;
+        davItem.NextHealthCheck = utcNow + ProviderErrorRetryDelay;
+        dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = davItem.Id,
+            Path = davItem.Path,
+            CreatedAt = utcNow,
+            Result = HealthCheckResult.HealthResult.Unhealthy,
+            RepairStatus = HealthCheckResult.RepairAction.None,
+            Message = message
+        }));
+        await MarkRepairEntryAsync(
+                dbClient,
+                repairRunId,
+                davItem,
+                RepairEntryHealth.RepairEntryState.ProviderError,
+                message,
+                ct)
+            .ConfigureAwait(false);
+        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
     private async Task RecordMissingSegmentsAsync
@@ -585,6 +1311,44 @@ public class HealthCheckService : BackgroundService
                 ct)
             .ConfigureAwait(false);
         await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    private async Task RecordHealthyVerificationAsync
+    (
+        DavDatabaseClient dbClient,
+        DavItem davItem,
+        List<string> segments,
+        Guid? repairRunId,
+        bool useRecentlyVerifiedSegmentCache,
+        CancellationToken ct,
+        bool saveChanges = true
+    )
+    {
+        ClearCachedMissingSegmentIds(segments);
+        if (useRecentlyVerifiedSegmentCache)
+            AddRecentlyVerifiedSegmentIds(segments);
+        davItem.LastHealthCheck = DateTimeOffset.UtcNow;
+        davItem.NextHealthCheck = GetNextHealthyCheckAt(davItem.LastHealthCheck.Value, davItem.ReleaseDate);
+        dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = davItem.Id,
+            Path = davItem.Path,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Result = HealthCheckResult.HealthResult.Healthy,
+            RepairStatus = HealthCheckResult.RepairAction.None,
+            Message = "File is healthy."
+        }));
+        await MarkRepairEntryAsync(
+                dbClient,
+                repairRunId,
+                davItem,
+                RepairEntryHealth.RepairEntryState.Healthy,
+                "File is healthy.",
+                ct)
+            .ConfigureAwait(false);
+        if (saveChanges)
+            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
     public static void ApplyMissingSegmentPolicy
@@ -696,27 +1460,281 @@ public class HealthCheckService : BackgroundService
         davItem.ReleaseDate = articleHeaders.Date;
     }
 
-    private async Task<List<string>> GetAllSegments(DavItem davItem, DavDatabaseClient dbClient, CancellationToken ct)
+    private async Task<SegmentMetadataRead> GetAllSegmentMetadataAsync(
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        CancellationToken ct)
     {
+        var blobBackedRead = await TryReadBlobBackedSegmentsAsync(davItem, ct).ConfigureAwait(false);
+        if (blobBackedRead.State != SegmentMetadataReadState.DatabaseFallback)
+            return blobBackedRead;
+
         if (davItem.SubType == DavItem.ItemSubType.NzbFile)
         {
-            var nzbFile = await dbClient.GetDavNzbFileAsync(davItem, ct).ConfigureAwait(false);
-            return nzbFile?.SegmentIds?.ToList() ?? [];
+            var nzbFile = await dbClient.Ctx.NzbFiles
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == davItem.Id, ct)
+                .ConfigureAwait(false);
+            return FoundSegmentMetadata(davItem, DistinctSegmentIds(nzbFile?.SegmentIds));
         }
 
         if (davItem.SubType == DavItem.ItemSubType.RarFile)
         {
-            var rarFile = await dbClient.GetDavRarFileAsync(davItem, ct).ConfigureAwait(false);
-            return rarFile?.RarParts?.SelectMany(x => x.SegmentIds)?.ToList() ?? [];
+            var rarFile = await dbClient.Ctx.RarFiles
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == davItem.Id, ct)
+                .ConfigureAwait(false);
+            return FoundSegmentMetadata(davItem, DistinctSegmentIds(GetRarFileSegmentIds(rarFile)));
         }
 
         if (davItem.SubType == DavItem.ItemSubType.MultipartFile)
         {
-            var multipartFile = await dbClient.GetDavMultipartFileAsync(davItem, ct).ConfigureAwait(false);
-            return multipartFile?.Metadata?.FileParts?.SelectMany(x => x.SegmentIds)?.ToList() ?? [];
+            var multipartFile = await dbClient.Ctx.MultipartFiles
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == davItem.Id, ct)
+                .ConfigureAwait(false);
+            return FoundSegmentMetadata(davItem, DistinctSegmentIds(GetMultipartFileSegmentIds(multipartFile)));
         }
 
-        return [];
+        return FoundSegmentMetadata(davItem, []);
+    }
+
+    private static async Task<List<SegmentMetadataRead>> GetAllSegmentMetadataAsync
+    (
+        IReadOnlyList<DavItem> davItems,
+        DavDatabaseClient dbClient,
+        CancellationToken ct
+    )
+    {
+        var metadataByItemId = new Dictionary<Guid, SegmentMetadataRead>(davItems.Count);
+        var databaseBackedItems = new List<DavItem>(davItems.Count);
+        var blobBackedLookups = davItems
+            .Select(davItem => TryReadBlobBackedSegmentsAsync(davItem, ct))
+            .WithConcurrencyAsync(GetBlobSegmentReadConcurrency(davItems.Count), ct);
+
+        await foreach (var metadata in blobBackedLookups.ConfigureAwait(false))
+        {
+            if (metadata.State != SegmentMetadataReadState.DatabaseFallback)
+            {
+                metadataByItemId[metadata.Item.Id] = metadata;
+                continue;
+            }
+
+            databaseBackedItems.Add(metadata.Item);
+        }
+
+        await AddDatabaseBackedSegmentsAsync(databaseBackedItems, metadataByItemId, dbClient, ct)
+            .ConfigureAwait(false);
+
+        return davItems
+            .Select(davItem => metadataByItemId.TryGetValue(davItem.Id, out var metadata)
+                ? metadata
+                : FoundSegmentMetadata(davItem, []))
+            .ToList();
+    }
+
+    private static int GetBlobSegmentReadConcurrency(int itemCount)
+    {
+        if (itemCount <= 1) return 1;
+
+        var coreBased = Math.Max(2, Environment.ProcessorCount * 2);
+        return Math.Min(Math.Min(itemCount, MaxBlobSegmentReadConcurrency), coreBased);
+    }
+
+    private static async Task<SegmentMetadataRead> TryReadBlobBackedSegmentsAsync
+    (
+        DavItem davItem,
+        CancellationToken ct
+    )
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!davItem.FileBlobId.HasValue) return DatabaseFallbackSegmentMetadata(davItem);
+
+        if (davItem.SubType == DavItem.ItemSubType.NzbFile)
+        {
+            var blob = await BlobStore.TryReadBlob<DavNzbFile>(davItem.FileBlobId.Value).ConfigureAwait(false);
+            return ToSegmentMetadataRead(
+                davItem,
+                blob,
+                value => DistinctSegmentIds(value.SegmentIds));
+        }
+
+        if (davItem.SubType == DavItem.ItemSubType.RarFile)
+        {
+            var blob = await BlobStore.TryReadBlob<DavRarFile>(davItem.FileBlobId.Value).ConfigureAwait(false);
+            return ToSegmentMetadataRead(
+                davItem,
+                blob,
+                value => DistinctSegmentIds(GetRarFileSegmentIds(value)));
+        }
+
+        if (davItem.SubType == DavItem.ItemSubType.MultipartFile)
+        {
+            var blob = await BlobStore.TryReadBlob<DavMultipartFile>(davItem.FileBlobId.Value).ConfigureAwait(false);
+            return ToSegmentMetadataRead(
+                davItem,
+                blob,
+                value => DistinctSegmentIds(GetMultipartFileSegmentIds(value)));
+        }
+
+        return DatabaseFallbackSegmentMetadata(davItem);
+    }
+
+    private static SegmentMetadataRead ToSegmentMetadataRead<T>(
+        DavItem davItem,
+        BlobStore.BlobReadResult<T> blob,
+        Func<T, List<string>> getSegments)
+    {
+        return blob.Status switch
+        {
+            BlobStore.BlobReadStatus.Found => FoundSegmentMetadata(davItem, getSegments(blob.Value!)),
+            BlobStore.BlobReadStatus.TemporarilyUnavailable => new SegmentMetadataRead(
+                davItem,
+                [],
+                SegmentMetadataReadState.TemporarilyUnavailable,
+                blob.Error),
+            _ => DatabaseFallbackSegmentMetadata(davItem)
+        };
+    }
+
+    private static SegmentMetadataRead FoundSegmentMetadata(DavItem davItem, List<string> segments)
+    {
+        return new SegmentMetadataRead(davItem, segments, SegmentMetadataReadState.Found, Error: null);
+    }
+
+    private static SegmentMetadataRead DatabaseFallbackSegmentMetadata(DavItem davItem)
+    {
+        return new SegmentMetadataRead(davItem, [], SegmentMetadataReadState.DatabaseFallback, Error: null);
+    }
+
+    private static async Task AddDatabaseBackedSegmentsAsync
+    (
+        IReadOnlyList<DavItem> davItems,
+        Dictionary<Guid, SegmentMetadataRead> metadataByItemId,
+        DavDatabaseClient dbClient,
+        CancellationToken ct
+    )
+    {
+        var davItemsById = davItems.ToDictionary(x => x.Id);
+        var nzbItemIds = davItems
+            .Where(x => x.SubType == DavItem.ItemSubType.NzbFile)
+            .Select(x => x.Id)
+            .ToList();
+        if (nzbItemIds.Count > 0)
+        {
+            var nzbFiles = await dbClient.Ctx.NzbFiles
+                .AsNoTracking()
+                .Where(x => nzbItemIds.Contains(x.Id))
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+            foreach (var nzbFile in nzbFiles)
+            {
+                if (!davItemsById.TryGetValue(nzbFile.Id, out var davItem)) continue;
+                metadataByItemId[nzbFile.Id] = FoundSegmentMetadata(
+                    davItem,
+                    DistinctSegmentIds(nzbFile.SegmentIds));
+            }
+        }
+
+        var rarItemIds = davItems
+            .Where(x => x.SubType == DavItem.ItemSubType.RarFile)
+            .Select(x => x.Id)
+            .ToList();
+        if (rarItemIds.Count > 0)
+        {
+            var rarFiles = await dbClient.Ctx.RarFiles
+                .AsNoTracking()
+                .Where(x => rarItemIds.Contains(x.Id))
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+            foreach (var rarFile in rarFiles)
+            {
+                if (!davItemsById.TryGetValue(rarFile.Id, out var davItem)) continue;
+                metadataByItemId[rarFile.Id] = FoundSegmentMetadata(
+                    davItem,
+                    DistinctSegmentIds(GetRarFileSegmentIds(rarFile)));
+            }
+        }
+
+        var multipartItemIds = davItems
+            .Where(x => x.SubType == DavItem.ItemSubType.MultipartFile)
+            .Select(x => x.Id)
+            .ToList();
+        if (multipartItemIds.Count > 0)
+        {
+            var multipartFiles = await dbClient.Ctx.MultipartFiles
+                .AsNoTracking()
+                .Where(x => multipartItemIds.Contains(x.Id))
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+            foreach (var multipartFile in multipartFiles)
+            {
+                if (!davItemsById.TryGetValue(multipartFile.Id, out var davItem)) continue;
+                metadataByItemId[multipartFile.Id] = FoundSegmentMetadata(
+                    davItem,
+                    DistinctSegmentIds(GetMultipartFileSegmentIds(multipartFile)));
+            }
+        }
+    }
+
+    private static IEnumerable<string> GetRarFileSegmentIds(DavRarFile? rarFile)
+    {
+        return rarFile?.RarParts?.SelectMany(x => x?.SegmentIds ?? []) ?? [];
+    }
+
+    private static IEnumerable<string> GetMultipartFileSegmentIds(DavMultipartFile? multipartFile)
+    {
+        return multipartFile?.Metadata?.FileParts?.SelectMany(GetMultipartFilePartSegmentIds) ?? [];
+    }
+
+    private static IEnumerable<string> GetMultipartFilePartSegmentIds(DavMultipartFile.FilePart? filePart)
+    {
+        if (filePart is null) return [];
+
+        if (TryGetUsableSegmentSliceIds(filePart, out var sliceSegmentIds))
+            return sliceSegmentIds;
+
+        return filePart.SegmentIds ?? [];
+    }
+
+    private static bool TryGetUsableSegmentSliceIds(
+        DavMultipartFile.FilePart filePart,
+        out string[] segmentIds)
+    {
+        segmentIds = [];
+        if (filePart.SegmentSlices is not { Length: > 0 }) return false;
+
+        var sliceSegmentIds = new List<string>(filePart.SegmentSlices.Length);
+        foreach (var slice in filePart.SegmentSlices)
+        {
+            if (slice is null) return false;
+            if (string.IsNullOrWhiteSpace(slice.SegmentId)) return false;
+            if (slice.SegmentByteRange is null || slice.FilePartByteRange is null) return false;
+            if (slice.SegmentByteRange.Count <= 0 || slice.FilePartByteRange.Count <= 0) return false;
+            sliceSegmentIds.Add(slice.SegmentId);
+        }
+
+        segmentIds = sliceSegmentIds.ToArray();
+        return true;
+    }
+
+    private static List<string> DistinctSegmentIds(IEnumerable<string>? segmentIds)
+    {
+        return segmentIds?
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList() ?? [];
+    }
+
+    private static DateTimeOffset GetNextHealthyCheckAt(DateTimeOffset lastHealthCheck, DateTimeOffset? releaseDate)
+    {
+        if (!releaseDate.HasValue)
+            return lastHealthCheck + ProviderErrorRetryDelay;
+
+        var nextHealthCheck = releaseDate.Value + 2 * (lastHealthCheck - releaseDate.Value);
+        return nextHealthCheck > lastHealthCheck
+            ? nextHealthCheck
+            : lastHealthCheck + ProviderErrorRetryDelay;
     }
 
     private async Task Repair(DavItem davItem, DavDatabaseClient dbClient, CancellationToken ct, Guid? repairRunId = null)
@@ -796,7 +1814,7 @@ public class HealthCheckService : BackgroundService
             var matchingArrHosts = new List<string>();
             foreach (var arrClient in _configManager.GetArrConfig().GetArrClients())
             {
-                var rootFolders = await GetArrRootFolders(arrClient, arrErrors).ConfigureAwait(false);
+                var rootFolders = await GetArrRootFolders(arrClient, arrErrors, ct).ConfigureAwait(false);
                 if (!rootFolders.Any(x => IsPathInsideRoot(symlinkOrStrmPath, x.Path))) continue;
                 matchingArrHosts.Add(arrClient.Host);
 
@@ -804,7 +1822,7 @@ public class HealthCheckService : BackgroundService
                 // then remove and search.
                 try
                 {
-                    if (await arrClient.RemoveAndSearch(symlinkOrStrmPath).ConfigureAwait(false))
+                    if (await arrClient.RemoveAndSearch(symlinkOrStrmPath, ct).ConfigureAwait(false))
                     {
                         var message = string.Join(" ", [
                             "File had missing articles.",
@@ -894,12 +1912,13 @@ public class HealthCheckService : BackgroundService
     private static async Task<List<ArrRootFolder>> GetArrRootFolders
     (
         ArrClient arrClient,
-        List<string> errors
+        List<string> errors,
+        CancellationToken ct
     )
     {
         try
         {
-            return await arrClient.GetRootFolders().ConfigureAwait(false);
+            return await arrClient.GetRootFolders(ct).ConfigureAwait(false);
         }
         catch (Exception e)
         {
@@ -970,9 +1989,25 @@ public class HealthCheckService : BackgroundService
         {
             PruneExpiredMissingSegmentIds(DateTimeOffset.UtcNow);
             foreach (var segmentId in segmentIds)
-                if (NzbSegmentIdSet.Decode(segmentId).All(candidateSegmentId => _missingSegmentIds.ContainsKey(candidateSegmentId)))
+            {
+                var candidateSegmentIds = NzbSegmentIdSet.Decode(segmentId)
+                    .Where(candidateSegmentId => !string.IsNullOrWhiteSpace(candidateSegmentId))
+                    .ToArray();
+                if (candidateSegmentIds.Length > 0
+                    && candidateSegmentIds.All(candidateSegmentId => _missingSegmentIds.ContainsKey(candidateSegmentId)))
                     throw new UsenetArticleNotFoundException(segmentId);
+            }
         }
+    }
+
+    public static void RememberMissingSegmentId(string segmentId)
+    {
+        AddCachedMissingSegmentIds(NzbSegmentIdSet.Decode(segmentId));
+    }
+
+    public static void RememberMissingSegmentIds(IEnumerable<string> segmentIds)
+    {
+        AddCachedMissingSegmentIds(segmentIds.SelectMany(NzbSegmentIdSet.Decode));
     }
 
     private static void ClearCachedMissingSegmentIds(IEnumerable<string> segmentIds)
@@ -994,6 +2029,87 @@ public class HealthCheckService : BackgroundService
                 _missingSegmentIds[segmentId] = utcNow;
             PruneOldestMissingSegmentIds();
         }
+    }
+
+    private static Dictionary<string, SegmentCheckResult> GetRecentlyVerifiedSegmentResults(IEnumerable<string> segmentIds)
+    {
+        var utcNow = DateTimeOffset.UtcNow;
+        lock (_recentlyVerifiedSegmentIds)
+        {
+            PruneExpiredRecentlyVerifiedSegmentIds(utcNow);
+            return segmentIds
+                .Where(IsRecentlyVerified)
+                .Distinct(StringComparer.Ordinal)
+                .ToDictionary(
+                    segmentId => segmentId,
+                    segmentId => new SegmentCheckResult(segmentId, SegmentCheckState.Exists, Provider: null, Error: null),
+                    StringComparer.Ordinal);
+        }
+
+        bool IsRecentlyVerified(string segmentId)
+        {
+            if (_recentlyVerifiedSegmentIds.ContainsKey(segmentId))
+                return true;
+
+            return NzbSegmentIdSet
+                .Decode(segmentId)
+                .Any(candidateSegmentId => _recentlyVerifiedSegmentIds.ContainsKey(candidateSegmentId));
+        }
+    }
+
+    public static void RememberRecentlyVerifiedSegmentIds(IEnumerable<string> segmentIds)
+    {
+        AddRecentlyVerifiedSegmentIds(segmentIds);
+    }
+
+    private static void AddRecentlyVerifiedSegmentResults(IEnumerable<SegmentCheckResult> results)
+    {
+        AddRecentlyVerifiedSegmentIds(results
+            .Where(result => result.State == SegmentCheckState.Exists)
+            .Select(GetRecentlyVerifiedSegmentCacheKey));
+    }
+
+    private static string GetRecentlyVerifiedSegmentCacheKey(SegmentCheckResult result)
+    {
+        return string.IsNullOrWhiteSpace(result.CandidateSegmentId)
+            ? result.SegmentId
+            : result.CandidateSegmentId;
+    }
+
+    private static void AddRecentlyVerifiedSegmentIds(IEnumerable<string> segmentIds)
+    {
+        lock (_recentlyVerifiedSegmentIds)
+        {
+            var utcNow = DateTimeOffset.UtcNow;
+            PruneExpiredRecentlyVerifiedSegmentIds(utcNow);
+            foreach (var segmentId in segmentIds.Where(x => !string.IsNullOrWhiteSpace(x)))
+                _recentlyVerifiedSegmentIds[segmentId] = utcNow;
+            PruneOldestRecentlyVerifiedSegmentIds();
+        }
+    }
+
+    private static void PruneExpiredRecentlyVerifiedSegmentIds(DateTimeOffset utcNow)
+    {
+        var expiredSegmentIds = _recentlyVerifiedSegmentIds
+            .Where(x => utcNow - x.Value > RecentlyVerifiedSegmentCacheTtl)
+            .Select(x => x.Key)
+            .ToList();
+        foreach (var segmentId in expiredSegmentIds)
+            _recentlyVerifiedSegmentIds.Remove(segmentId);
+    }
+
+    private static void PruneOldestRecentlyVerifiedSegmentIds()
+    {
+        var excessCount = _recentlyVerifiedSegmentIds.Count - MaxRecentlyVerifiedSegmentCacheEntries;
+        if (excessCount <= 0) return;
+
+        var oldestSegmentIds = _recentlyVerifiedSegmentIds
+            .OrderBy(x => x.Value)
+            .Take(excessCount)
+            .Select(x => x.Key)
+            .ToList();
+        foreach (var segmentId in oldestSegmentIds)
+            _recentlyVerifiedSegmentIds.Remove(segmentId);
     }
 
     private static void PruneExpiredMissingSegmentIds(DateTimeOffset utcNow)

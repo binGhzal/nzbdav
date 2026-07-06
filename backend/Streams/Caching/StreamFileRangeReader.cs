@@ -24,7 +24,10 @@ public sealed class StreamFileRangeReader(Stream stream) : IFileRangeReader, IDi
             {
                 var read = await stream.ReadAsync(buffer.Slice(totalRead, remaining - totalRead), ct)
                     .ConfigureAwait(false);
-                if (read == 0) break;
+                if (read == 0)
+                {
+                    throw new IOException($"Source stream ended before satisfying range read at offset {offset + totalRead}.");
+                }
                 totalRead += read;
             }
 

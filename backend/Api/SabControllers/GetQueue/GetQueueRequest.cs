@@ -58,10 +58,31 @@ public class GetQueueRequest
     {
         if (string.IsNullOrWhiteSpace(statusParam)) return [];
 
-        return statusParam
+        var statuses = statusParam
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(x => x.ToLowerInvariant())
-            .ToHashSet();
+            .Select(NormalizeStatusFilter)
+            .ToList();
+
+        return statuses.Any(x => x is null)
+            ? []
+            : statuses
+                .Select(x => x!)
+                .ToHashSet();
+    }
+
+    private static string? NormalizeStatusFilter(string status)
+    {
+        return status.Trim().ToLowerInvariant() switch
+        {
+            "all" => null,
+            "downloading" or "download" => "downloading",
+            "verifying" or "verify" or "quickcheck" or "checking" => "verifying",
+            "repairing" or "repair" => "repairing",
+            "moving" or "move" or "pp" or "postprocessing" or "post-processing" or "extracting" => "moving",
+            "queued" or "queue" => "queued",
+            "paused" or "pause" => "paused",
+            _ => throw new BadHttpRequestException("Invalid status parameter")
+        };
     }
 
     private static QueueSortField ParseSortField(string? sortParam)

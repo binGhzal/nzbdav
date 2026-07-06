@@ -24,6 +24,7 @@ public class ProviderCircuitBreaker
 
     private int _consecutiveFailures;
     private long _trippedUntilMs;
+    private int _probeInFlight;
     private TimeSpan _currentCooldown = InitialCooldown;
 
     public ProviderCircuitBreaker(string providerName)
@@ -50,6 +51,7 @@ public class ProviderCircuitBreaker
 
             _consecutiveFailures = 0;
             _trippedUntilMs = 0;
+            _probeInFlight = 0;
             _currentCooldown = InitialCooldown;
         }
     }
@@ -59,17 +61,85 @@ public class ProviderCircuitBreaker
         lock (_lock)
         {
             _consecutiveFailures++;
+            _probeInFlight = 0;
 
             if (_consecutiveFailures < FailureThreshold) return;
 
-            _trippedUntilMs = Environment.TickCount64 + (long)_currentCooldown.TotalMilliseconds;
-            Log.Warning(
-                "Provider {Provider} tripped after {Failures} consecutive failures. " +
-                "Skipping for {Cooldown}s.",
-                _providerName, _consecutiveFailures, _currentCooldown.TotalSeconds);
+            var now = Environment.TickCount64;
+            var alreadyTripped = _trippedUntilMs != 0 && now < _trippedUntilMs;
+            _trippedUntilMs = now + (long)_currentCooldown.TotalMilliseconds;
+            if (!alreadyTripped)
+            {
+                Log.Warning(
+                    "Provider {Provider} tripped after {Failures} consecutive failures. " +
+                    "Skipping for {Cooldown}s.",
+                    _providerName, _consecutiveFailures, _currentCooldown.TotalSeconds);
+            }
 
             _currentCooldown = TimeSpan.FromMilliseconds(
                 Math.Min(_currentCooldown.TotalMilliseconds * 2, MaxCooldown.TotalMilliseconds));
+        }
+    }
+
+    public void RecordHardFailure()
+    {
+        lock (_lock)
+        {
+            var now = Environment.TickCount64;
+            var alreadyTripped = _trippedUntilMs != 0 && now < _trippedUntilMs;
+            _consecutiveFailures = FailureThreshold;
+            _probeInFlight = 0;
+            _trippedUntilMs = now + (long)MaxCooldown.TotalMilliseconds;
+            _currentCooldown = MaxCooldown;
+            if (!alreadyTripped)
+            {
+                Log.Warning(
+                    "Provider {Provider} tripped after a non-retryable connection failure. " +
+                    "Skipping for {Cooldown}s.",
+                    _providerName, MaxCooldown.TotalSeconds);
+            }
+        }
+    }
+
+    public AttemptLease? TryAcquireAttempt()
+    {
+        lock (_lock)
+        {
+            var trippedUntil = _trippedUntilMs;
+            if (trippedUntil == 0) return new AttemptLease(null);
+
+            var now = Environment.TickCount64;
+            if (now < trippedUntil) return null;
+            if (_probeInFlight != 0) return null;
+
+            _probeInFlight = 1;
+            return new AttemptLease(this);
+        }
+    }
+
+    private void ReleaseProbe()
+    {
+        lock (_lock)
+        {
+            _probeInFlight = 0;
+        }
+    }
+
+    public sealed class AttemptLease : IDisposable
+    {
+        private readonly ProviderCircuitBreaker? _owner;
+        private int _released;
+
+        internal AttemptLease(ProviderCircuitBreaker? owner)
+        {
+            _owner = owner;
+        }
+
+        public void Dispose()
+        {
+            if (_owner == null) return;
+            if (Interlocked.Exchange(ref _released, 1) != 0) return;
+            _owner.ReleaseProbe();
         }
     }
 }

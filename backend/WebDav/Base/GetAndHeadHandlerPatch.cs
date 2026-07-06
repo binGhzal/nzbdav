@@ -4,6 +4,7 @@ using NWebDav.Server.Handlers;
 using NWebDav.Server.Helpers;
 using NWebDav.Server.Props;
 using NWebDav.Server.Stores;
+using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.WebDav.Base;
 
@@ -46,13 +47,8 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         var isHeadRequest = request.Method == HttpMethods.Head;
 
         // Determine the requested range
-        var range = request.GetRange();
-
-        // Forward closed-range end byte to downstream prefetch capping.
-        if (range?.End is long requestedRangeEnd)
-        {
-            httpContext.Items["RequestedRangeEnd"] = requestedRangeEnd;
-        }
+        var range = HttpRangeHeader.Parse(request.Headers.Range.FirstOrDefault());
+        ResolvedHttpRange? resolvedRange = null;
 
         // Obtain the WebDAV collection
         var entry = await _store.GetItemAsync(request.GetUri(), httpContext.RequestAborted).ConfigureAwait(false);
@@ -91,6 +87,41 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                 response.Headers.ContentLanguage = contentLanguage;
         }
 
+        // Do not return the actual item data if ETag matches. This is metadata-only and should
+        // not open expensive Usenet streams.
+        if (etag != null && request.Headers.IfNoneMatch == etag)
+        {
+            response.ContentLength = 0;
+            response.SetStatus(DavStatusCode.NotModified);
+            return true;
+        }
+
+        if (isHeadRequest && entry is BaseStoreItem storeItem)
+        {
+            response.SetStatus(DavStatusCode.Ok);
+            response.Headers.AcceptRanges = "bytes";
+
+            var length = storeItem.FileSize;
+            if (range != null)
+            {
+                if (!range.TryResolve(length, out var resolved))
+                {
+                    response.Headers.ContentRange = $"bytes */{length}";
+                    response.SetStatus((DavStatusCode)416);
+                    return true;
+                }
+
+                httpContext.Items["RequestedRangeEnd"] = resolved.End;
+                response.Headers.ContentRange = $"bytes {resolved.Start}-{resolved.End}/{length}";
+                response.ContentLength = resolved.Length;
+                response.SetStatus(DavStatusCode.PartialContent);
+                return true;
+            }
+
+            response.ContentLength = length;
+            return true;
+        }
+
         // Stream the actual entry
         var stream = await entry.GetReadableStreamAsync(httpContext.RequestAborted).ConfigureAwait(false);
         await using (stream.ConfigureAwait(false))
@@ -116,29 +147,29 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                         // Check if a range was specified
                         if (range != null)
                         {
-                            var start = range.Start ?? 0;
-                            var end = Math.Min(range.End ?? long.MaxValue, length - 1);
-
-                            // Return 416 if the range start is beyond the end of the file
-                            if (start > end)
+                            if (!range.TryResolve(length, out var resolved))
                             {
                                 response.Headers.ContentRange = $"bytes */{stream.Length}";
                                 response.SetStatus((DavStatusCode)416);
                                 return true;
                             }
 
-                            length = end - start + 1;
+                            resolvedRange = resolved;
+                            httpContext.Items["RequestedRangeEnd"] = resolved.End;
+                            length = resolved.Length;
 
                             // Write the range
-                            response.Headers.ContentRange = $"bytes {start}-{end}/{stream.Length}";
+                            response.Headers.ContentRange = $"bytes {resolved.Start}-{resolved.End}/{stream.Length}";
 
-                            // Set status to partial result if not all data can be sent
-                            if (length < stream.Length)
-                                response.SetStatus(DavStatusCode.PartialContent);
+                            // A valid Range request should produce a partial-content response.
+                            response.SetStatus(DavStatusCode.PartialContent);
                         }
 
-                        // Set the header, so the client knows how much data is required
-                        response.ContentLength = length;
+                        // Avoid fixed-length streaming GET bodies. Usenet/rclone reads can fail
+                        // after headers are sent; chunked GET responses let the connection fail
+                        // cleanly instead of producing noisy Content-Length mismatch errors.
+                        if (isHeadRequest)
+                            response.ContentLength = length;
                     }
                 }
                 catch (NotSupportedException)
@@ -146,17 +177,14 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                     // If the content length is not supported, then we just skip it
                 }
 
-                // Do not return the actual item data if ETag matches
-                if (etag != null && request.Headers.IfNoneMatch == etag)
-                {
-                    response.ContentLength = 0;
-                    response.SetStatus(DavStatusCode.NotModified);
-                    return true;
-                }
-
                 // HEAD method doesn't require the actual item data
                 if (!isHeadRequest)
-                    await CopyToAsync(stream, response.Body, range?.Start ?? 0, range?.End, httpContext.RequestAborted).ConfigureAwait(false);
+                    await CopyToAsync(
+                        stream,
+                        response.Body,
+                        resolvedRange?.Start ?? 0,
+                        resolvedRange?.End,
+                        httpContext.RequestAborted).ConfigureAwait(false);
             }
             else
             {
@@ -194,7 +222,11 @@ public class GetAndHeadHandlerPatch : IRequestHandler
 
             // We're done, if we cannot read any data anymore
             if (bytesRead == 0)
+            {
+                if (end.HasValue)
+                    throw new IOException($"Source stream ended before satisfying response range at offset {src.Position}.");
                 return;
+            }
             
             // Write the data to the destination stream
             await dest.WriteAsync(buffer, 0, bytesRead, cancellationToken).ConfigureAwait(false);

@@ -16,6 +16,8 @@ namespace NzbWebDAV.Services;
 public class ArrMonitoringService : BackgroundService
 {
     private readonly ConfigManager _configManager;
+    private readonly ArrQueueResolutionLimiter _resolutionLimiter = new();
+    private bool _loggedStartupGrace;
 
     public ArrMonitoringService(ConfigManager configManager)
     {
@@ -34,6 +36,18 @@ public class ArrMonitoringService : BackgroundService
             if (arrConfig.QueueRules.All(x => x.Action == ArrConfig.QueueAction.DoNothing))
                 continue;
 
+            if (_resolutionLimiter.IsStartupGraceActive)
+            {
+                if (!_loggedStartupGrace)
+                {
+                    Log.Information(
+                        "ARR stuck queue cleanup is paused during the startup grace period.");
+                    _loggedStartupGrace = true;
+                }
+
+                continue;
+            }
+
             // otherwise, handle stuck queue items according to the config
             foreach (var arrClient in arrConfig.GetArrClients())
                 await HandleStuckQueueItems(arrConfig, arrClient).ConfigureAwait(false);
@@ -49,8 +63,22 @@ public class ArrMonitoringService : BackgroundService
             var queue = await client.GetQueueAsync().ConfigureAwait(false);
             var actionableStatuses = arrConfig.QueueRules.Select(x => x.Message);
             var stuckRecords = queue.Records.Where(x => actionableStatuses.Any(x.HasStatusMessage));
+            var actionsThisRun = 0;
             foreach (var record in stuckRecords)
-                await HandleStuckQueueItem(record, arrConfig, client).ConfigureAwait(false);
+            {
+                if (actionsThisRun >= ArrQueueResolutionLimiter.MaxActionsPerClientRun)
+                {
+                    Log.Warning(
+                        "ARR stuck queue cleanup for {Host} reached the per-pass cap of {MaxActions}; " +
+                        "remaining matching records will be retried on a later pass.",
+                        client.Host,
+                        ArrQueueResolutionLimiter.MaxActionsPerClientRun);
+                    break;
+                }
+
+                if (await HandleStuckQueueItem(record, arrConfig, client).ConfigureAwait(false))
+                    actionsThisRun++;
+            }
         }
         catch (Exception e) when (e is HttpRequestException { InnerException: System.Net.Sockets.SocketException })
         {
@@ -62,7 +90,7 @@ public class ArrMonitoringService : BackgroundService
         }
     }
 
-    private async Task HandleStuckQueueItem(ArrQueueRecord item, ArrConfig arrConfig, ArrClient client)
+    private async Task<bool> HandleStuckQueueItem(ArrQueueRecord item, ArrConfig arrConfig, ArrClient client)
     {
         // since there may be multiple status messages, multiple actions may apply.
         // in such case, always perform the strongest action.
@@ -72,8 +100,12 @@ public class ArrMonitoringService : BackgroundService
             .DefaultIfEmpty(ArrConfig.QueueAction.DoNothing)
             .Max();
 
-        if (action is ArrConfig.QueueAction.DoNothing) return;
+        if (action is ArrConfig.QueueAction.DoNothing) return false;
+        if (!_resolutionLimiter.TryAcquire(client.Host, item.Id.ToString(), action)) return false;
+
         await client.DeleteQueueRecord(item.Id, action).ConfigureAwait(false);
-        Log.Warning($"Resolved stuck queue item `{item.Title}` from `{client.Host}, with action `{action}`");
+        Log.Warning("Resolved stuck queue item `{Title}` from `{Host}`, with action `{Action}`",
+            item.Title, client.Host, action);
+        return true;
     }
 }
