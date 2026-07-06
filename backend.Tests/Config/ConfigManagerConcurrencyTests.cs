@@ -184,6 +184,36 @@ public class ConfigManagerConcurrencyTests
     }
 
     [Fact]
+    public void AdaptiveArticleBufferIsCappedByPerStreamMemoryBudget()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "200"),
+            ("usenet.adaptive-connections-enabled", "false"),
+            ("usenet.article-buffer-size", "400")
+        );
+
+        var expectedCeiling = Math.Clamp(Environment.ProcessorCount, 4, 32);
+
+        Assert.Equal(400, configManager.GetArticleBufferSize());
+        Assert.Equal(expectedCeiling, configManager.GetAdaptiveArticleBufferSize());
+    }
+
+    [Fact]
+    public void RuntimePressureReducesCappedArticleBuffer()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-download-connections", "200"),
+            ("usenet.adaptive-connections-enabled", "false"),
+            ("usenet.article-buffer-size", "400")
+        );
+        InjectCpuPressure(configManager, 0.50);
+
+        var expectedCeiling = Math.Clamp(Environment.ProcessorCount, 4, 32);
+
+        Assert.Equal(Math.Max(1, (int)Math.Floor(expectedCeiling * 0.50)), configManager.GetAdaptiveArticleBufferSize());
+    }
+
+    [Fact]
     public void StreamingPriorityCannotCreateNegativeLowPriorityOdds()
     {
         var configManager = CreateConfigManager(("usenet.streaming-priority", "250"));

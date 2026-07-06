@@ -24,6 +24,8 @@ public class ConfigManager
     private const int MaxTotalStreamingConnections = 512;
     private const int MaxHealthCheckConcurrency = 64;
     private const int MaxPostDownloadVerificationConcurrency = 512;
+    private const int MinArticleBufferCeiling = 4;
+    private const int MaxArticleBufferCeiling = 32;
     private const string CgroupCpuStatPath = "/sys/fs/cgroup/cpu.stat";
     private static readonly TimeSpan CpuSampleInterval = TimeSpan.FromSeconds(5);
     private static readonly JsonSerializerOptions ConfigJsonSerializerOptions = new()
@@ -608,7 +610,8 @@ public class ConfigManager
 
     public int GetAdaptiveArticleBufferSize()
     {
-        return ApplyRuntimePressureLimit(Math.Max(1, GetArticleBufferSize()));
+        var configuredBufferSize = Math.Min(Math.Max(1, GetArticleBufferSize()), GetArticleBufferCeiling());
+        return ApplyRuntimePressureLimit(configuredBufferSize);
     }
 
     public SparseSegmentCacheOptions GetSparseSegmentCacheOptions()
@@ -903,6 +906,11 @@ public class ConfigManager
     private static int GetStreamingCpuConcurrencyLimit()
     {
         return Math.Clamp(Environment.ProcessorCount * 4, 4, 64);
+    }
+
+    private static int GetArticleBufferCeiling()
+    {
+        return Math.Clamp(Environment.ProcessorCount, MinArticleBufferCeiling, MaxArticleBufferCeiling);
     }
 
     public int GetConnectionIdleTimeoutSeconds()
