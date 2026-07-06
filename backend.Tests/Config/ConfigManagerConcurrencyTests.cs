@@ -193,6 +193,21 @@ public class ConfigManagerConcurrencyTests
         Assert.Equal(
             Math.Max(1, (int)Math.Floor(Math.Min(Math.Clamp(Environment.ProcessorCount * 2, 2, 64), 200) * 0.50)),
             configManager.GetAdaptiveHealthCheckConcurrency());
+        var healthCheckConcurrencyBeforePressure = Math.Min(Math.Clamp(Environment.ProcessorCount * 2, 2, 64), 200);
+        var verifyWorkersBeforePressure = Math.Clamp(
+            (Math.Max(1, healthCheckConcurrencyBeforePressure) + 1) / 2,
+            1,
+            Math.Clamp(Environment.ProcessorCount, 1, 16));
+        var repairWorkersBeforePressure = Math.Clamp(
+            Math.Max(1, healthCheckConcurrencyBeforePressure) / 2,
+            1,
+            4);
+        Assert.Equal(
+            Math.Max(1, (int)Math.Floor(verifyWorkersBeforePressure * 0.50)),
+            configManager.GetAdaptiveMaxConcurrentVerifyJobs());
+        Assert.Equal(
+            Math.Max(1, (int)Math.Floor(repairWorkersBeforePressure * 0.50)),
+            configManager.GetAdaptiveMaxConcurrentRepairJobs());
     }
 
     [Fact]

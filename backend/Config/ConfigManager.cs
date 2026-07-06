@@ -565,7 +565,7 @@ public class ConfigManager
         var configValue = GetIntConfigValue("queue.max-concurrent-verify", 0);
         if (configValue > 0) return Math.Clamp(configValue, 1, MaxManualWorkerJobsPerKind);
 
-        return GetAutomaticVerifyItemConcurrency(GetAdaptiveHealthCheckConcurrency());
+        return GetAutomaticVerifyItemConcurrency(GetHealthCheckConcurrencyBeforeRuntimePressure());
     }
 
     public int GetAdaptiveMaxConcurrentVerifyJobs()
@@ -579,7 +579,7 @@ public class ConfigManager
         var configValue = GetIntConfigValue("queue.max-concurrent-repair", 0);
         if (configValue > 0) return Math.Clamp(configValue, 1, MaxManualWorkerJobsPerKind);
 
-        return GetAutomaticRepairItemConcurrency(GetAdaptiveHealthCheckConcurrency());
+        return GetAutomaticRepairItemConcurrency(GetHealthCheckConcurrencyBeforeRuntimePressure());
     }
 
     public int GetAdaptiveMaxConcurrentRepairJobs()
@@ -842,14 +842,17 @@ public class ConfigManager
 
     public int GetAdaptiveHealthCheckConcurrency()
     {
+        return ApplyRuntimePressureLimit(GetHealthCheckConcurrencyBeforeRuntimePressure());
+    }
+
+    private int GetHealthCheckConcurrencyBeforeRuntimePressure()
+    {
         var automaticConcurrency = Math.Min(
             GetHealthCheckCpuConcurrencyLimit(),
             Math.Min(GetAutomaticDownloadConnectionBudget(), GetRepairConnectionBudget()));
-        var healthCheckConcurrency = IsAdaptiveConnectionCountEnabled()
+        return IsAdaptiveConnectionCountEnabled()
             ? automaticConcurrency
             : Math.Min(Math.Max(1, GetHealthCheckConcurrency()), automaticConcurrency);
-
-        return ApplyRuntimePressureLimit(healthCheckConcurrency);
     }
 
     public int GetAdaptivePostDownloadVerificationConcurrency()
