@@ -185,11 +185,27 @@ public class ConfigManagerConcurrencyTests
         Assert.Equal(100, configManager.GetAdaptiveMaxDownloadConnections());
         Assert.Equal(100, configManager.GetAdaptiveQueueFileProcessingConcurrency());
         Assert.Equal(
+            Math.Max(1, (int)Math.Floor(Math.Clamp(Environment.ProcessorCount, 2, 16) * 0.50)),
+            configManager.GetAdaptiveMaxActiveStreams());
+        Assert.Equal(
             Math.Max(1, (int)Math.Floor(GetExpectedAutomaticQueueWorkers(200) * 0.50)),
             configManager.GetAdaptiveMaxConcurrentQueueDownloads());
         Assert.Equal(
             Math.Max(1, (int)Math.Floor(Math.Min(Math.Clamp(Environment.ProcessorCount * 2, 2, 64), 200) * 0.50)),
             configManager.GetAdaptiveHealthCheckConcurrency());
+    }
+
+    [Fact]
+    public void ExplicitActiveStreamCapCanExceedDefaultButUsesRuntimePressure()
+    {
+        var configManager = CreateConfigManager(
+            ("usenet.max-active-streams", "40"),
+            ("usenet.adaptive-connections-enabled", "false")
+        );
+        InjectCpuPressure(configManager, 0.50);
+
+        Assert.Equal(40, configManager.GetMaxActiveStreams());
+        Assert.Equal(20, configManager.GetAdaptiveMaxActiveStreams());
     }
 
     [Fact]

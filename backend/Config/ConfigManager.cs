@@ -22,6 +22,7 @@ public class ConfigManager
     private const int MaxManualWorkerJobsPerKind = 128;
     private const int MaxStreamingConnectionsPerStream = 256;
     private const int MaxTotalStreamingConnections = 512;
+    private const int MaxActiveStreams = 128;
     private const int MaxHealthCheckConcurrency = 64;
     private const int MaxPostDownloadVerificationConcurrency = 512;
     private const int MinArticleBufferCeiling = 4;
@@ -269,6 +270,7 @@ public class ConfigManager
             "usenet.max-download-connections" or
             "usenet.max-streaming-connections" or
             "usenet.max-total-streaming-connections" or
+            "usenet.max-active-streams" or
             "queue.max-concurrent-downloads" or
             "queue.max-concurrent-verify" or
             "queue.max-concurrent-repair" or
@@ -529,6 +531,19 @@ public class ConfigManager
     {
         var maxTotalStreamingConnections = GetMaxTotalStreamingConnections();
         return ApplyRuntimePressureLimit(maxTotalStreamingConnections);
+    }
+
+    public int GetMaxActiveStreams()
+    {
+        var configValue = GetIntConfigValue("usenet.max-active-streams", 0);
+        if (configValue > 0) return Math.Clamp(configValue, 1, MaxActiveStreams);
+
+        return Math.Clamp(Environment.ProcessorCount, 2, 16);
+    }
+
+    public int GetAdaptiveMaxActiveStreams()
+    {
+        return ApplyRuntimePressureLimit(GetMaxActiveStreams());
     }
 
     public int GetMaxConcurrentQueueDownloads()

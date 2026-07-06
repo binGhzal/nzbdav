@@ -65,6 +65,7 @@ public class GetFullStatusController(
                 HealthCheckConcurrency = ConfigManager.GetAdaptiveHealthCheckConcurrency(),
                 MaxStreamingConnections = ConfigManager.GetAdaptiveMaxStreamingConnections(),
                 MaxTotalStreamingConnections = ConfigManager.GetAdaptiveMaxTotalStreamingConnections(),
+                MaxActiveStreams = ConfigManager.GetAdaptiveMaxActiveStreams(),
                 ActiveStreams = activeStreams.Count,
                 RcloneInvalidations = RcloneInvalidationStatus.FromStats(rcloneInvalidations),
                 Cache = CacheStatus.FromSnapshot(cacheSnapshot),

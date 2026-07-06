@@ -277,6 +277,7 @@ public sealed class DfsFileSystem : FileSystem
             PerAttemptTimeout = configManager.GetStreamingSegmentTimeout(),
             MaxRetries = configManager.GetStreamingSegmentRetries()
         });
+        var streamSlot = streamingConnectionLimiter.WaitForStreamAsync(cts.Token).GetAwaiter().GetResult();
         var activeStreamLease = activeStreamTracker.Open($"dfs:{path}", "fuse");
 
         return new DfsOpenFileHandle(
@@ -285,6 +286,7 @@ public sealed class DfsFileSystem : FileSystem
             priorityScope,
             timeoutScope,
             connectionLimiter,
+            streamSlot,
             activeStreamLease);
     }
 
@@ -424,6 +426,7 @@ public sealed class DfsFileSystem : FileSystem
         IDisposable priorityContext,
         IDisposable timeoutContext,
         SemaphoreSlim connectionLimiter,
+        IDisposable streamSlot,
         ActiveStreamTracker.ActiveStreamLease activeStreamLease
     ) : IDisposable
     {
@@ -440,6 +443,7 @@ public sealed class DfsFileSystem : FileSystem
             priorityContext.Dispose();
             timeoutContext.Dispose();
             connectionLimiter.Dispose();
+            streamSlot.Dispose();
             activeStreamLease.Dispose();
             cancellationTokenSource.Dispose();
         }
