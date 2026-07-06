@@ -68,6 +68,28 @@ public sealed class ArticleCachingNntpClientTests
     }
 
     [Fact]
+    public async Task GetFetchedSegmentIdsSnapshot_IsBounded()
+    {
+        using var inner = new FakeNntpClient()
+            .AddSegment("segment-1", [1, 2, 3, 4])
+            .AddSegment("segment-2", [5, 6, 7, 8])
+            .AddSegment("segment-3", [9, 10, 11, 12]);
+        await using var client = new ArticleCachingNntpClient(
+            inner,
+            maxCacheBytes: 4,
+            sharedBudget: new ArticleCacheBudget(),
+            maxFetchedSegmentIds: 2);
+
+        foreach (var segmentId in new[] { "segment-1", "segment-2", "segment-3" })
+        {
+            var body = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
+            await body.Stream.DisposeAsync();
+        }
+
+        Assert.Equal(["segment-2", "segment-3"], client.GetFetchedSegmentIdsSnapshot().Order());
+    }
+
+    [Fact]
     public async Task CheckSegmentsAsync_ReturnsExistsForFetchedSegmentAfterCacheEvictionWithoutStat()
     {
         using var inner = new FakeNntpClient()

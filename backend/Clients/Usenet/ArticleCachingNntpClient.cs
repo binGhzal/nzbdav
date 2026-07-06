@@ -21,15 +21,18 @@ public class ArticleCachingNntpClient(
     long maxCacheBytes = long.MaxValue,
     long? sharedMaxCacheBytes = null,
     bool leaveOpen = true,
-    ArticleCacheBudget? sharedBudget = null
+    ArticleCacheBudget? sharedBudget = null,
+    int maxFetchedSegmentIds = 100_000
 ) : WrappingNntpClient(usenetClient), IAsyncDisposable
 {
     private readonly string _cacheDir = Directory.CreateTempSubdirectory().FullName;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _pendingRequests = new();
     private readonly ConcurrentDictionary<string, CacheEntry> _cachedSegments = new();
     private readonly ConcurrentDictionary<string, byte> _fetchedSegmentIds = new(StringComparer.Ordinal);
+    private readonly ConcurrentQueue<string> _fetchedSegmentOrder = new();
     private readonly SemaphoreSlim _cacheSizeSemaphore = new(1, 1);
     private readonly long _maxCacheBytes = maxCacheBytes > 0 ? maxCacheBytes : long.MaxValue;
+    private readonly int _maxFetchedSegmentIds = Math.Max(0, maxFetchedSegmentIds);
     private readonly ArticleCacheBudget _sharedBudget = ConfigureSharedBudget(
         sharedBudget ?? ArticleCacheBudget.Shared,
         sharedMaxCacheBytes ?? maxCacheBytes);
@@ -431,7 +434,15 @@ public class ArticleCachingNntpClient(
 
     private void MarkFetched(string segmentId)
     {
-        _fetchedSegmentIds.TryAdd(segmentId, 0);
+        if (_maxFetchedSegmentIds == 0) return;
+        if (!_fetchedSegmentIds.TryAdd(segmentId, 0)) return;
+
+        _fetchedSegmentOrder.Enqueue(segmentId);
+        while (_fetchedSegmentIds.Count > _maxFetchedSegmentIds
+               && _fetchedSegmentOrder.TryDequeue(out var oldestSegmentId))
+        {
+            _fetchedSegmentIds.TryRemove(oldestSegmentId, out _);
+        }
     }
 
     private async Task UpdateCacheSizeAndEvictAsync
@@ -547,6 +558,9 @@ public class ArticleCachingNntpClient(
         _pendingRequests.Clear();
         _cachedSegments.Clear();
         _fetchedSegmentIds.Clear();
+        while (_fetchedSegmentOrder.TryDequeue(out _))
+        {
+        }
         _cacheSizeSemaphore.Dispose();
         _sharedBudget.Remove(_cacheBytes);
         _cacheBytes = 0;

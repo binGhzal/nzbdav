@@ -119,7 +119,7 @@ public class RarAggregatorTests
         var multipartFile = Assert.Single(dbContext.BlobMultipartFiles);
         var filePart = Assert.Single(multipartFile.Metadata.FileParts);
 
-        Assert.Equal(["segment-1", "segment-2", "segment-3"], filePart.SegmentIds);
+        Assert.Empty(filePart.SegmentIds);
         Assert.Equal(3, filePart.SegmentSlices.Length);
         Assert.Equal("segment-1", filePart.SegmentSlices[0].SegmentId);
         Assert.Equal(new LongRange(2, 4), filePart.SegmentSlices[0].SegmentByteRange);

@@ -450,6 +450,16 @@ public class ConfigManagerConcurrencyTests
     }
 
     [Fact]
+    public void SparseSegmentCacheDefaultsToDisabledButCanBeEnabled()
+    {
+        var defaultConfig = CreateConfigManager();
+        Assert.False(defaultConfig.GetSparseSegmentCacheOptions().Enabled);
+
+        var enabledConfig = CreateConfigManager(("Cache:Enabled", "true"));
+        Assert.True(enabledConfig.GetSparseSegmentCacheOptions().Enabled);
+    }
+
+    [Fact]
     public void HealthCheckConcurrencyIsCpuBoundInsteadOfDownloadConnectionBound()
     {
         var configManager = CreateConfigManager(

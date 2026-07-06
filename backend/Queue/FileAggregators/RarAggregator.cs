@@ -59,16 +59,7 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
                 Metadata = new DavMultipartFile.Meta()
                 {
                     AesParams = aesParams,
-                    FileParts = fileParts.Select(x => new DavMultipartFile.FilePart()
-                    {
-                        SegmentIds = x.NzbFile.GetSegmentIds(),
-                        SegmentIdByteRange = LongRange.FromStartAndSize(0, x.PartSize),
-                        FilePartByteRange = x.ByteRangeWithinPart,
-                        SegmentSlices = SegmentSliceUtil.CreateSlices(
-                            x.NzbFile,
-                            x.PartSize,
-                            x.ByteRangeWithinPart)
-                    }).ToArray(),
+                    FileParts = fileParts.Select(CreateFilePart).ToArray(),
                 }
             };
 
@@ -89,6 +80,21 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
             dbClient.Ctx.Items.Add(davItem);
             dbClient.Ctx.BlobMultipartFiles.Add(davMultipartFile);
         }
+    }
+
+    private static DavMultipartFile.FilePart CreateFilePart(RarProcessor.StoredFileSegment filePart)
+    {
+        var segmentSlices = SegmentSliceUtil.CreateSlices(
+            filePart.NzbFile,
+            filePart.PartSize,
+            filePart.ByteRangeWithinPart);
+        return new DavMultipartFile.FilePart()
+        {
+            SegmentIds = segmentSlices.Length > 0 ? [] : filePart.NzbFile.GetSegmentIds(),
+            SegmentIdByteRange = LongRange.FromStartAndSize(0, filePart.PartSize),
+            FilePartByteRange = filePart.ByteRangeWithinPart,
+            SegmentSlices = segmentSlices
+        };
     }
 
     private static RarProcessor.StoredFileSegment[] SortByPartNumber(

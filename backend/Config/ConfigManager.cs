@@ -631,7 +631,7 @@ public class ConfigManager
     {
         return new SparseSegmentCacheOptions
         {
-            Enabled = GetBoolConfig(true, "Cache:Enabled", "cache.enabled"),
+            Enabled = GetBoolConfig(false, "Cache:Enabled", "cache.enabled"),
             Directory = GetFirstConfigValue("Cache:Directory", "cache.directory") ?? "/config/cache/segments",
             MaxBytes = GetLongConfig(64L * 1024 * 1024 * 1024, "Cache:MaxBytes", "cache.max-bytes"),
             ChunkBytes = (int)Math.Clamp(

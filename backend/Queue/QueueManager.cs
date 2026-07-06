@@ -7,6 +7,7 @@ using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
+using System.Runtime;
 
 namespace NzbWebDAV.Queue;
 
@@ -25,6 +26,7 @@ public class QueueManager : IDisposable
     private readonly WebsocketManager _websocketManager;
     private readonly ArrDownloadReportService _arrDownloadReportService;
     private readonly Lock _inProgressQueueItemsLock = new();
+    private long _lastMemoryCompactionTicks;
 
     private CancellationTokenSource _sleepingQueueToken = new();
     private readonly Lock _sleepingQueueLock = new();
@@ -313,8 +315,28 @@ public class QueueManager : IDisposable
             }
 
             await inProgressQueueItem.DisposeAsync().ConfigureAwait(false);
+            TryCompactManagedHeapAfterLargeQueueItem();
             AwakenQueue();
         }
+    }
+
+    private void TryCompactManagedHeapAfterLargeQueueItem()
+    {
+        var memoryInfo = GC.GetGCMemoryInfo();
+        if (memoryInfo.HighMemoryLoadThresholdBytes <= 0) return;
+        var pressure = memoryInfo.MemoryLoadBytes / (double)memoryInfo.HighMemoryLoadThresholdBytes;
+        if (pressure < 0.85) return;
+
+        var nowTicks = DateTimeOffset.UtcNow.Ticks;
+        var lastTicks = Interlocked.Read(ref _lastMemoryCompactionTicks);
+        if (lastTicks != 0 && nowTicks - lastTicks < TimeSpan.FromMinutes(2).Ticks) return;
+        if (Interlocked.CompareExchange(ref _lastMemoryCompactionTicks, nowTicks, lastTicks) != lastTicks) return;
+
+        Log.Information(
+            "Compacting managed heap after queue item completion under high memory pressure ({Pressure:P0}).",
+            pressure);
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
     }
 
     private static async Task UpdateDownloadWorkerJobAsync

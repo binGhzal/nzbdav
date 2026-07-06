@@ -31,8 +31,8 @@ public class HealthCheckService : BackgroundService
     private static readonly TimeSpan MissingSegmentCacheTtl = TimeSpan.FromHours(6);
     private static readonly TimeSpan RecentlyVerifiedSegmentCacheTtl = TimeSpan.FromHours(6);
     private const int WorkerMaxAttempts = 3;
-    private const int MaxMissingSegmentCacheEntries = 100_000;
-    private const int MaxRecentlyVerifiedSegmentCacheEntries = 500_000;
+    private const int MaxMissingSegmentCacheEntries = 50_000;
+    private const int MaxRecentlyVerifiedSegmentCacheEntries = 100_000;
     private const int VerificationJobEnqueueBatchSize = 64;
     private const int MaxBlobSegmentReadConcurrency = 8;
     private const int MaxDeduplicatedVerificationSegments = 20_000;
