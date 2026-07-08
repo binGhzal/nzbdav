@@ -50,6 +50,8 @@
 * drain replaced Usenet provider clients after config reloads instead of disposing active clients immediately.
 * add mount status observability so DFS/rclone readiness can be benchmarked with cache and operation counters.
 * add filesystem-transport rclone-vs-DFS benchmark gating with mandatory CPU/RSS process evidence and hard timeouts for mounted reads.
+* expose live provider circuit state, active/max connection counts, first-byte cache latency, and provider fetch-error metrics in status/fullstatus and the Health operations UI.
+* cache bounded foreground range reads so repeated small Plex/rclone probes can hit the temporary sparse cache instead of re-fetching from NNTP.
 
 ### Bug Fixes
 
@@ -76,6 +78,8 @@
 * add an explicit duplicate-reject SAB add mode for validated ARR duplicate loops while preserving diagnostic/report-only defaults.
 * avoid recreating or restarting rclone mounts when the generated rclone config is unchanged.
 * harden recovery paths that surfaced repeated file errors during content-index and blob migration cleanup.
+* avoid unsafe automatic repair when health checks see definitive missing segments mixed with unknown/provider-error segment results.
+* harden benchmark parallel filesystem probes so stale FUSE reads can time out without hanging the whole benchmark run.
 
 ### Infrastructure
 
