@@ -13,7 +13,7 @@ namespace NzbWebDAV.Clients.Usenet;
 /// scheduling that favors streaming over queue operations.
 /// </summary>
 /// <param name="usenetClient"></param>
-public class DownloadingNntpClient : WrappingNntpClient
+public class DownloadingNntpClient : WrappingNntpClient, IProviderPoolSnapshotSource
 {
     private sealed class ConnectionLease(
         PrioritizedSemaphore downloadSemaphore,
@@ -53,6 +53,13 @@ public class DownloadingNntpClient : WrappingNntpClient
         _maxAllowedConnections = maxDownloadConnections;
         _semaphore = new PrioritizedSemaphore(maxDownloadConnections, maxDownloadConnections, streamingPriority);
         configManager.OnConfigChanged += OnConfigChanged;
+    }
+
+    public IReadOnlyList<ProviderPoolSnapshot> GetProviderSnapshots()
+    {
+        return CurrentClient is IProviderPoolSnapshotSource source
+            ? source.GetProviderSnapshots()
+            : [];
     }
 
     private void OnConfigChanged(object? sender, ConfigManager.ConfigEventArgs e)

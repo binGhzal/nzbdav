@@ -8,12 +8,19 @@ using UsenetSharp.Models;
 
 namespace NzbWebDAV.Clients.Usenet;
 
-public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) : NntpClient
+public class MultiProviderNntpClient(List<MultiConnectionNntpClient> providers) : NntpClient, IProviderPoolSnapshotSource
 {
     private long _providerFanoutCursor;
 
     protected override bool SupportsPipelinedSegmentChecks =>
         providers.Any(provider => provider.ProviderType != ProviderType.Disabled && provider.StatPipeliningEnabled);
+
+    public IReadOnlyList<ProviderPoolSnapshot> GetProviderSnapshots()
+    {
+        return providers
+            .Select(provider => provider.GetProviderSnapshot())
+            .ToList();
+    }
 
     public override Task ConnectAsync(string host, int port, bool useSsl, CancellationToken ct)
     {

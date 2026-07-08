@@ -98,6 +98,8 @@ export function OperationsStatus({
                         <Metric label="Readers" value={fullStatus?.cache.active_readers ?? 0} />
                         <Metric label="Read Ahead" value={fullStatus?.cache.read_ahead_active ?? 0} />
                         <Metric label="Fetches" value={fullStatus?.cache.pending_fetches ?? 0} />
+                        <Metric label="First Byte" value={fullStatus ? `${fullStatus.cache.first_byte_average_ms}ms` : "unknown"} />
+                        <Metric label="Fetch Errors" value={fullStatus?.cache.provider_fetch_errors ?? 0} tone={fullStatus?.cache.provider_fetch_errors ? "danger" : undefined} />
                     </div>
                 </section>
 
@@ -528,10 +530,14 @@ function ProviderRow({ provider }: { provider: ProviderDiagnosticStatus }) {
         <div className={styles.providerRow}>
             <div>
                 <div className={styles.providerName}>{provider.host}:{provider.port}</div>
-                <div className={styles.muted}>{provider.type} priority {provider.priority}</div>
+                <div className={styles.muted}>
+                    {provider.type} {provider.role} priority {provider.priority}
+                </div>
             </div>
             <div className={styles.providerMeta}>
-                <span>{provider.max_connections} connections</span>
+                <span>{provider.active_connections}/{provider.max_connections} active</span>
+                <span>{provider.circuit_state}</span>
+                {provider.failure_count > 0 && <span>failures {provider.failure_count}</span>}
                 <span>{provider.ssl ? "SSL" : "Plain"}</span>
                 <span>{provider.stat_pipelining_enabled ? "Pipelined" : "Serial"}</span>
             </div>

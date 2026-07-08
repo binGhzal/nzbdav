@@ -649,7 +649,7 @@ public class HealthCheckService : BackgroundService
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
 
-            if (checkBatch.Missing > 0)
+            if (checkBatch.Missing > 0 && checkBatch.ProviderErrors == 0 && checkBatch.Unknown == 0)
             {
                 await RecordMissingSegmentsAsync(davItem, dbClient, checkBatch, ct, repairRunId).ConfigureAwait(false);
                 return;
@@ -805,10 +805,13 @@ public class HealthCheckService : BackgroundService
             if (segments.Count == 0) continue;
 
             var itemBatch = SegmentCheckBatch.FromResults(segments
-                .Select(segment => resultsBySegment[segment])
+                .Select(segment => GetSegmentCheckResultOrUnknown(
+                    resultsBySegment,
+                    segment,
+                    "Segment check result was absent from directory verification batch."))
                 .ToArray());
 
-            if (itemBatch.Missing > 0)
+            if (itemBatch.Missing > 0 && itemBatch.ProviderErrors == 0 && itemBatch.Unknown == 0)
             {
                 await RecordMissingSegmentsAsync(item, dbClient, itemBatch, ct, repairRunId).ConfigureAwait(false);
                 continue;
@@ -907,9 +910,13 @@ public class HealthCheckService : BackgroundService
 
         var checkedResults = checkedBatch.Results.ToDictionary(x => x.SegmentId, StringComparer.Ordinal);
         return SegmentCheckBatch.FromResults(segments
-            .Select(segment => checkedResults.TryGetValue(segment, out var result)
-                ? result
-                : cachedResults[segment])
+            .Select(segment =>
+                checkedResults.TryGetValue(segment, out var result)
+                    ? result
+                    : GetSegmentCheckResultOrUnknown(
+                        cachedResults,
+                        segment,
+                        "Segment check result was absent from checked and cached verification results."))
             .ToArray());
     }
 
@@ -1033,7 +1040,27 @@ public class HealthCheckService : BackgroundService
         foreach (var item in awaitedTask.Result)
             resultsBySegment[item.Key] = item.Value;
 
-        return SegmentCheckBatch.FromResults(segments.Select(x => resultsBySegment[x]).ToArray());
+        return SegmentCheckBatch.FromResults(segments
+            .Select(segment => GetSegmentCheckResultOrUnknown(
+                resultsBySegment,
+                segment,
+                "Segment check result was absent from deduplicated verification results."))
+            .ToArray());
+    }
+
+    private static SegmentCheckResult GetSegmentCheckResultOrUnknown(
+        IReadOnlyDictionary<string, SegmentCheckResult> resultsBySegment,
+        string segmentId,
+        string reason)
+    {
+        if (resultsBySegment.TryGetValue(segmentId, out var result))
+            return result;
+
+        return new SegmentCheckResult(
+            segmentId,
+            SegmentCheckState.Unknown,
+            Provider: null,
+            Error: reason);
     }
 
     private async Task<Dictionary<string, SegmentCheckResult>> CheckOwnedSegmentsAsync
@@ -1057,7 +1084,7 @@ public class HealthCheckService : BackgroundService
                     ? batch.Results[i]
                     : new SegmentCheckResult(
                         segment,
-                        SegmentCheckState.ProviderError,
+                        SegmentCheckState.Unknown,
                         Provider: null,
                         Error: "Provider returned fewer segment check results than requested.");
                 results[segment] = result;

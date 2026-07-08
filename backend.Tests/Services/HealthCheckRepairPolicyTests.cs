@@ -981,6 +981,132 @@ public class HealthCheckRepairPolicyTests
     }
 
     [Fact]
+    public async Task PerformDirectoryHealthCheckTreatsAbsentSegmentResultsAsUnknownWithoutRepair()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var prefix = Guid.NewGuid().ToString("N");
+        var historyId = Guid.NewGuid();
+        var mountFolder = CreateDirectory(
+            $"/content/{prefix}",
+            parentId: DavItem.ContentFolder.Id,
+            historyId);
+        var first = CreateDavItem(
+            $"/content/{prefix}/First.mkv",
+            parentId: mountFolder.Id,
+            historyId: historyId);
+        var second = CreateDavItem(
+            $"/content/{prefix}/Second.mkv",
+            parentId: mountFolder.Id,
+            historyId: historyId);
+        dbContext.Items.AddRange(mountFolder, first, second);
+        dbContext.NzbFiles.AddRange(
+            new DavNzbFile
+            {
+                Id = first.Id,
+                SegmentIds = [$"{prefix}-segment-1"]
+            },
+            new DavNzbFile
+            {
+                Id = second.Id,
+                SegmentIds = [$"{prefix}-segment-2"]
+            });
+        await dbContext.SaveChangesAsync();
+
+        var batch = SegmentCheckBatch.FromResults([
+            new SegmentCheckResult(
+                $"{prefix}-segment-1",
+                SegmentCheckState.ProviderError,
+                Provider: "primary",
+                Error: "timeout")
+        ]);
+        using var usenetClient = new FixedSegmentCheckStreamingClient(
+            new ConfigManager(),
+            new WebsocketManager(),
+            batch);
+        var service = new HealthCheckService(
+            new ConfigManager(),
+            usenetClient,
+            new QueueWorkLaneCoordinator(),
+            new WebsocketManager());
+
+        await service.PerformHealthCheckAsync(
+            mountFolder,
+            dbClient,
+            concurrency: 4,
+            CancellationToken.None,
+            skipReleaseDateProbe: true,
+            useRecentlyVerifiedSegmentCache: false);
+
+        var results = await dbContext.HealthCheckResults
+            .OrderBy(x => x.Path)
+            .ToListAsync();
+        Assert.Equal(2, results.Count);
+        Assert.All(results, result =>
+        {
+            Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, result.Result);
+            Assert.Equal(HealthCheckResult.RepairAction.None, result.RepairStatus);
+            Assert.Contains("could not prove articles are missing", result.Message);
+        });
+        Assert.Empty(await dbContext.WorkerJobs.ToListAsync());
+    }
+
+    [Fact]
+    public async Task PerformDirectoryHealthCheckDoesNotRepairWhenMissingResultIsMixedWithUnknown()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var prefix = Guid.NewGuid().ToString("N");
+        var historyId = Guid.NewGuid();
+        var mountFolder = CreateDirectory(
+            $"/content/{prefix}",
+            parentId: DavItem.ContentFolder.Id,
+            historyId);
+        var file = CreateDavItem(
+            $"/content/{prefix}/Movie.mkv",
+            parentId: mountFolder.Id,
+            historyId: historyId);
+        dbContext.Items.AddRange(mountFolder, file);
+        dbContext.NzbFiles.Add(new DavNzbFile
+        {
+            Id = file.Id,
+            SegmentIds = [$"{prefix}-missing", $"{prefix}-unknown"]
+        });
+        await dbContext.SaveChangesAsync();
+
+        var batch = SegmentCheckBatch.FromResults([
+            new SegmentCheckResult(
+                $"{prefix}-missing",
+                SegmentCheckState.Missing,
+                Provider: "primary",
+                Error: "missing")
+        ]);
+        using var usenetClient = new FixedSegmentCheckStreamingClient(
+            new ConfigManager(),
+            new WebsocketManager(),
+            batch);
+        var service = new HealthCheckService(
+            new ConfigManager(),
+            usenetClient,
+            new QueueWorkLaneCoordinator(),
+            new WebsocketManager());
+
+        await service.PerformHealthCheckAsync(
+            mountFolder,
+            dbClient,
+            concurrency: 4,
+            CancellationToken.None,
+            skipReleaseDateProbe: true,
+            useRecentlyVerifiedSegmentCache: false);
+
+        var result = await dbContext.HealthCheckResults.SingleAsync();
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, result.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.None, result.RepairStatus);
+        Assert.Contains("could not prove articles are missing", result.Message);
+        Assert.Empty(await dbContext.WorkerJobs.ToListAsync());
+    }
+
+    [Fact]
     public async Task DeduplicatedVerificationReportsProgressForDuplicateLogicalSegments()
     {
         using var usenetClient = new RecordingSegmentCheckStreamingClient(

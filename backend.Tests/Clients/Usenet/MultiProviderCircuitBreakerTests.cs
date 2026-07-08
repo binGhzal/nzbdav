@@ -1,6 +1,8 @@
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Models;
+using NzbWebDAV.Tests.TestDoubles;
 
 namespace backend.Tests.Clients.Usenet;
 
@@ -14,6 +16,63 @@ public sealed class MultiProviderCircuitBreakerTests
         breaker.RecordHardFailure();
 
         Assert.Null(breaker.TryAcquireAttempt());
+    }
+
+    [Fact]
+    public void ProviderCircuitBreakerSnapshotDistinguishesSoftAndHardFailures()
+    {
+        var breaker = new ProviderCircuitBreaker("provider-a");
+
+        breaker.RecordFailure();
+        breaker.RecordFailure();
+        breaker.RecordFailure();
+        var softSnapshot = breaker.GetSnapshot();
+        breaker.RecordSuccess();
+        breaker.RecordHardFailure();
+        var hardSnapshot = breaker.GetSnapshot();
+
+        Assert.Equal("soft_cooldown", softSnapshot.CircuitState);
+        Assert.Equal("retryable", softSnapshot.LastFailureKind);
+        Assert.NotNull(softSnapshot.CooldownUntil);
+        Assert.Equal("hard_tripped", hardSnapshot.CircuitState);
+        Assert.Equal("auth_or_config", hardSnapshot.LastFailureKind);
+        Assert.NotNull(hardSnapshot.CooldownUntil);
+    }
+
+    [Fact]
+    public void ProviderCircuitBreakerSnapshotReportsElapsedCooldownBeforeProbe()
+    {
+        var breaker = new ProviderCircuitBreaker("provider-a");
+
+        breaker.RecordFailure();
+        breaker.RecordFailure();
+        breaker.RecordFailure();
+        ExpireCooldown(breaker);
+
+        var snapshot = breaker.GetSnapshot();
+
+        Assert.Equal("cooldown_elapsed", snapshot.CircuitState);
+        Assert.Equal(3, snapshot.ConsecutiveFailures);
+        Assert.Null(snapshot.CooldownUntil);
+    }
+
+    [Fact]
+    public async Task MissingArticlesDoNotTripProviderCircuitBreaker()
+    {
+        var breaker = new ProviderCircuitBreaker("provider-a");
+        using var provider = new MissingArticleProvider("provider-a", breaker);
+
+        for (var i = 0; i < 5; i++)
+        {
+            await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() =>
+                provider.DecodedBodyAsync($"missing-{i}", CancellationToken.None));
+        }
+
+        var snapshot = breaker.GetSnapshot();
+        Assert.False(breaker.IsTripped);
+        Assert.Equal("healthy", snapshot.CircuitState);
+        Assert.Equal(0, snapshot.ConsecutiveFailures);
+        Assert.Null(snapshot.LastFailureKind);
     }
 
     [Fact]
@@ -92,5 +151,21 @@ public sealed class MultiProviderCircuitBreakerTests
         private readonly Counter _counter;
 
         public int FactoryCalls => Volatile.Read(ref _counter.FactoryCalls);
+    }
+
+    private sealed class MissingArticleProvider : MultiConnectionNntpClient
+    {
+        public MissingArticleProvider(string name, ProviderCircuitBreaker breaker)
+            : base(
+                new ConnectionPool<INntpClient>(
+                    1,
+                    _ => ValueTask.FromResult<INntpClient>(new FakeNntpClient()),
+                    TimeSpan.FromMinutes(1)),
+                ProviderType.Pooled,
+                breaker,
+                name,
+                providerPriority: 0)
+        {
+        }
     }
 }
