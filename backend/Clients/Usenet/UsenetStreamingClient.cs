@@ -8,7 +8,7 @@ using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Clients.Usenet;
 
-public class UsenetStreamingClient : WrappingNntpClient
+public class UsenetStreamingClient : WrappingNntpClient, IProviderPoolSnapshotSource
 {
     private const int MaxConcurrentPipelinedStatBatches = 64;
 
@@ -74,6 +74,13 @@ public class UsenetStreamingClient : WrappingNntpClient
     {
         var runtimeLimit = Math.Clamp(Environment.ProcessorCount * 4, 8, MaxConcurrentPipelinedStatBatches);
         return Math.Clamp(requestedConcurrency, 1, runtimeLimit);
+    }
+
+    public IReadOnlyList<ProviderPoolSnapshot> GetProviderSnapshots()
+    {
+        return CurrentClient is IProviderPoolSnapshotSource source
+            ? source.GetProviderSnapshots()
+            : [];
     }
 
     public override async Task<NzbFileStream> GetFileStream(NzbFile nzbFile, int articleBufferSize, CancellationToken ct)

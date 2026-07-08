@@ -25,6 +25,10 @@ public class ProviderCircuitBreaker
     private int _consecutiveFailures;
     private long _trippedUntilMs;
     private int _probeInFlight;
+    private int _hardTripped;
+    private long _lastSuccessUnixMs;
+    private long _lastFailureUnixMs;
+    private string? _lastFailureKind;
     private TimeSpan _currentCooldown = InitialCooldown;
 
     public ProviderCircuitBreaker(string providerName)
@@ -52,6 +56,8 @@ public class ProviderCircuitBreaker
             _consecutiveFailures = 0;
             _trippedUntilMs = 0;
             _probeInFlight = 0;
+            _hardTripped = 0;
+            _lastSuccessUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             _currentCooldown = InitialCooldown;
         }
     }
@@ -62,6 +68,9 @@ public class ProviderCircuitBreaker
         {
             _consecutiveFailures++;
             _probeInFlight = 0;
+            _hardTripped = 0;
+            _lastFailureUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            _lastFailureKind = "retryable";
 
             if (_consecutiveFailures < FailureThreshold) return;
 
@@ -89,6 +98,9 @@ public class ProviderCircuitBreaker
             var alreadyTripped = _trippedUntilMs != 0 && now < _trippedUntilMs;
             _consecutiveFailures = FailureThreshold;
             _probeInFlight = 0;
+            _hardTripped = 1;
+            _lastFailureUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            _lastFailureKind = "auth_or_config";
             _trippedUntilMs = now + (long)MaxCooldown.TotalMilliseconds;
             _currentCooldown = MaxCooldown;
             if (!alreadyTripped)
@@ -117,6 +129,40 @@ public class ProviderCircuitBreaker
         }
     }
 
+    public ProviderCircuitBreakerSnapshot GetSnapshot()
+    {
+        lock (_lock)
+        {
+            var nowMs = Environment.TickCount64;
+            var trippedUntil = _trippedUntilMs;
+            var inCooldown = trippedUntil != 0 && nowMs < trippedUntil;
+            var state = inCooldown
+                ? (_hardTripped != 0 ? "hard_tripped" : "soft_cooldown")
+                : _probeInFlight != 0
+                    ? "probe"
+                    : _consecutiveFailures >= FailureThreshold
+                        ? "cooldown_elapsed"
+                    : "healthy";
+
+            return new ProviderCircuitBreakerSnapshot(
+                ProviderName: _providerName,
+                ConsecutiveFailures: _consecutiveFailures,
+                CircuitState: state,
+                CooldownUntil: inCooldown
+                    ? DateTimeOffset.UtcNow.AddMilliseconds(Math.Max(0, trippedUntil - nowMs))
+                    : null,
+                LastSuccessAt: FromUnixMilliseconds(_lastSuccessUnixMs),
+                LastFailureAt: FromUnixMilliseconds(_lastFailureUnixMs),
+                LastFailureKind: _lastFailureKind,
+                ProbeInFlight: _probeInFlight != 0);
+        }
+    }
+
+    private static DateTimeOffset? FromUnixMilliseconds(long value)
+    {
+        return value <= 0 ? null : DateTimeOffset.FromUnixTimeMilliseconds(value);
+    }
+
     private void ReleaseProbe()
     {
         lock (_lock)
@@ -143,3 +189,13 @@ public class ProviderCircuitBreaker
         }
     }
 }
+
+public sealed record ProviderCircuitBreakerSnapshot(
+    string ProviderName,
+    int ConsecutiveFailures,
+    string CircuitState,
+    DateTimeOffset? CooldownUntil,
+    DateTimeOffset? LastSuccessAt,
+    DateTimeOffset? LastFailureAt,
+    string? LastFailureKind,
+    bool ProbeInFlight);

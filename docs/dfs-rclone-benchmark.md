@@ -24,11 +24,13 @@ Use the tuned rclone command from `docs/setup-guide.md`:
 * `--use-cookies`.
 * `--allow-other`.
 * `--rc` with authenticated RC access configured in NZBDav Settings > Rclone.
-* `--vfs-cache-mode=full`.
+* `--vfs-cache-mode=writes`.
 * `--buffer-size=0M`.
-* `--vfs-read-ahead=512M`.
-* `--vfs-read-chunk-size=4M`.
-* `--vfs-read-chunk-streams=16`.
+* `--vfs-read-ahead=0`.
+* `--vfs-read-chunk-size=256K`.
+* `--vfs-read-chunk-size-limit=8M`.
+* `--vfs-read-chunk-streams=0`.
+* `--vfs-cache-poll-interval=30s`.
 * short `--dir-cache-time`, plus NZBDav `vfs/forget` invalidations.
 
 Record:
@@ -67,6 +69,12 @@ Optional input:
 * `NZBDAV_BENCH_SEQUENTIAL_BYTES`: sequential read window. Default: `67108864`.
 * `NZBDAV_BENCH_FAIL_CLOSED_PATHS`: comma-separated paths that should fail instead of exposing stale/empty fallback content.
 * `NZBDAV_BENCH_OUTPUT_DIR`: output directory. Default: `artifacts/benchmarks/`.
+* `NZBDAV_BENCH_RANGE_PROBE_BYTES`: bytes per quick range probe. Default: `1048576`.
+* `NZBDAV_BENCH_RCLONE_CAT=true`: additionally measure `rclone cat` against the WebDAV remote without FUSE.
+* `NZBDAV_BENCH_RCLONE_REMOTE`: rclone remote used by `rclone cat`, for example `nzbdav:`.
+* `NZBDAV_BENCH_PLEX_PART_URLS`: comma-separated Plex part endpoint URLs to time during production diagnostics.
+* `NZBDAV_BENCH_PARALLEL_COUNT`: number of paths used by the parallel range probe. Default: `4`; set `0` or `1` to disable.
+* `NZBDAV_BENCH_PARALLEL_PATHS`: optional comma-separated paths for the parallel range probe. Defaults to the main benchmark paths.
 
 Example rclone baseline:
 
@@ -81,6 +89,8 @@ NZBDAV_BENCH_RCLONE_PID=$(pgrep -f 'rclone mount' | head -1) \
 RCLONE_RC_URL=http://127.0.0.1:5572 \
 RCLONE_RC_USER=nzbdav \
 RCLONE_RC_PASS=replace-with-rc-password \
+NZBDAV_BENCH_RCLONE_CAT=true \
+NZBDAV_BENCH_RCLONE_REMOTE=nzbdav: \
 python3 scripts/nzbdav_benchmark.py run --scenario rclone
 ```
 

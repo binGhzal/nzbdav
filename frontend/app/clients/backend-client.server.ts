@@ -603,6 +603,9 @@ export type CacheStatus = {
     active_readers: number,
     read_ahead_active: number,
     pending_fetches: number,
+    first_byte_reads: number,
+    first_byte_average_ms: number,
+    provider_fetch_errors: number,
 }
 
 export type MountDiagnosticStatus = {
@@ -626,9 +629,21 @@ export type ProviderDiagnosticStatus = {
     port: number,
     type: string,
     priority: number,
+    role: string,
     max_connections: number,
+    live_connections: number,
+    idle_connections: number,
+    active_connections: number,
+    available_connections: number,
     ssl: boolean,
     stat_pipelining_enabled: boolean,
+    failure_count: number,
+    circuit_state: string,
+    cooldown_until: string | null,
+    last_success_at: string | null,
+    last_failure_at: string | null,
+    last_failure_kind: string | null,
+    probe_in_flight: boolean,
 }
 
 export type WorkerQueueStatus = {

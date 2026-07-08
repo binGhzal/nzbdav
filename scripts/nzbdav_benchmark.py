@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import concurrent.futures
 import datetime as dt
 import json
 import math
@@ -27,6 +28,7 @@ DEFAULT_OUTPUT_DIR = Path("artifacts/benchmarks")
 DEFAULT_RUNS = 5
 DEFAULT_SEEK_COUNT = 5
 DEFAULT_SEQUENTIAL_BYTES = 64 * 1024 * 1024
+DEFAULT_RANGE_PROBE_BYTES = 1 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 30.0
 TRANSPORT_HTTP = "http"
 TRANSPORT_FILESYSTEM = "filesystem"
@@ -545,6 +547,239 @@ def process_snapshot(pid: int | None, name: str) -> dict[str, Any] | None:
     }
 
 
+def build_rclone_remote_path(remote: str, path: str) -> str:
+    parsed = urllib.parse.urlparse(path)
+    if parsed.scheme:
+        raise ValueError(f"rclone cat path must be a remote-relative path, not URL: {redact_path(path)}")
+    if ":" in path and not path.startswith("/"):
+        return path
+    return remote.rstrip(":") + ":" + path.lstrip("/")
+
+
+def measure_rclone_cat(
+    rclone_binary: str,
+    remote: str | None,
+    path: str,
+    byte_count: int,
+    timeout_seconds: float,
+) -> HttpResult:
+    if not remote:
+        return HttpResult(
+            status=None,
+            elapsed_ms=None,
+            first_byte_ms=None,
+            bytes_read=0,
+            headers={},
+            error="rclone remote is not configured",
+        )
+
+    started = time.perf_counter()
+    try:
+        remote_path = build_rclone_remote_path(remote, path)
+        result = subprocess.run(
+            [
+                rclone_binary,
+                "cat",
+                "--offset",
+                "0",
+                "--count",
+                str(byte_count),
+                remote_path,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        return HttpResult(
+            status=result.returncode,
+            elapsed_ms=elapsed_ms,
+            first_byte_ms=elapsed_ms,
+            bytes_read=byte_count if result.returncode == 0 else 0,
+            headers={},
+            error=result.stderr.strip() or None if result.returncode != 0 else None,
+        )
+    except Exception as error:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        return HttpResult(
+            status=None,
+            elapsed_ms=elapsed_ms,
+            first_byte_ms=None,
+            bytes_read=0,
+            headers={},
+            error=str(error),
+        )
+
+
+def run_parallel_range_probe(
+    args: argparse.Namespace,
+    paths: list[str],
+    headers: dict[str, str],
+    byte_count: int,
+) -> dict[str, Any] | None:
+    if not paths:
+        return None
+
+    selected_paths = paths[: args.parallel_count]
+    started = time.perf_counter()
+    samples: list[dict[str, Any]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(selected_paths)) as executor:
+        futures = [
+            executor.submit(measure_parallel_path, args, path, headers, byte_count)
+            for path in selected_paths
+        ]
+        for path, future in zip(selected_paths, futures, strict=True):
+            try:
+                result = future.result(timeout=args.timeout_seconds + 5)
+            except Exception as error:
+                result = HttpResult(
+                    status=None,
+                    elapsed_ms=None,
+                    first_byte_ms=None,
+                    bytes_read=0,
+                    headers={},
+                    error=str(error),
+                )
+            samples.append(operation_record("parallel_range", path, result, 0))
+
+    wall_ms = (time.perf_counter() - started) * 1000
+    return {
+        "paths": [redact_path(path) for path in selected_paths],
+        "bytes_per_path": byte_count,
+        "wall_ms": round_value(wall_ms),
+        "samples": samples,
+        "passed": all(sample["bytes_read"] > 0 and sample["error"] is None for sample in samples),
+    }
+
+
+def request_file_probe_subprocess(
+    mount_root: str | None,
+    path: str,
+    byte_count: int,
+    timeout_seconds: float,
+) -> HttpResult:
+    started = time.perf_counter()
+    try:
+        file_path = join_filesystem_path(mount_root, path)
+    except Exception as error:
+        return HttpResult(
+            status=None,
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+            first_byte_ms=None,
+            bytes_read=0,
+            headers={},
+            error=str(error),
+        )
+
+    probe_code = """
+import json
+import os
+import sys
+import time
+
+path = sys.argv[1]
+byte_count = int(sys.argv[2])
+started = time.perf_counter()
+fd = os.open(path, os.O_RDONLY)
+try:
+    stat = os.fstat(fd)
+    data = os.pread(fd, byte_count, 0)
+    first_byte_ms = (time.perf_counter() - started) * 1000 if data else None
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    print(json.dumps({
+        "bytes_read": len(data),
+        "elapsed_ms": elapsed_ms,
+        "first_byte_ms": first_byte_ms,
+        "content_length": stat.st_size,
+    }))
+finally:
+    os.close(fd)
+""".strip()
+
+    process = subprocess.Popen(
+        [sys.executable, "-c", probe_code, str(file_path), str(byte_count)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            process.wait(timeout=0.2)
+        except subprocess.TimeoutExpired:
+            pass
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        return HttpResult(
+            status=None,
+            elapsed_ms=elapsed_ms,
+            first_byte_ms=None,
+            bytes_read=0,
+            headers={},
+            error=f"timed out reading {redact_path(path)}",
+        )
+
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    if process.returncode != 0:
+        return HttpResult(
+            status=process.returncode,
+            elapsed_ms=elapsed_ms,
+            first_byte_ms=None,
+            bytes_read=0,
+            headers={},
+            error=stderr.strip() or f"filesystem probe exited {process.returncode}",
+        )
+
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as error:
+        return HttpResult(
+            status=None,
+            elapsed_ms=elapsed_ms,
+            first_byte_ms=None,
+            bytes_read=0,
+            headers={},
+            error=f"invalid filesystem probe output: {error}",
+        )
+
+    headers = {}
+    content_length = payload.get("content_length")
+    if isinstance(content_length, int):
+        headers["content-length"] = str(content_length)
+    bytes_read = int(payload.get("bytes_read") or 0)
+    if bytes_read > 0 and isinstance(content_length, int):
+        headers["content-range"] = f"bytes 0-{bytes_read - 1}/{content_length}"
+
+    return HttpResult(
+        status=0,
+        elapsed_ms=float(payload.get("elapsed_ms") or elapsed_ms),
+        first_byte_ms=payload.get("first_byte_ms"),
+        bytes_read=bytes_read,
+        headers=headers,
+    )
+
+
+def measure_parallel_path(
+    args: argparse.Namespace,
+    path: str,
+    headers: dict[str, str],
+    byte_count: int,
+) -> HttpResult:
+    if args.transport == TRANSPORT_FILESYSTEM:
+        return request_file_probe_subprocess(args.mount_root, path, byte_count, args.timeout_seconds)
+    request_headers = dict(headers)
+    request_headers["Range"] = f"bytes=0-{byte_count - 1}"
+    return request_url(
+        join_url(args.base_url, path),
+        headers=request_headers,
+        timeout_seconds=args.timeout_seconds,
+        max_bytes=byte_count,
+    )
+
+
 def summarize_resources(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
     summary: dict[str, Any] = {"sources": {}, "total": {}}
 
@@ -648,6 +883,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     throughput_samples: list[float] = []
     operation_samples: list[dict[str, Any]] = []
     resource_snapshots: list[dict[str, Any]] = []
+    production_probes: dict[str, Any] = {}
 
     if not paths:
         raise SystemExit("At least one benchmark path is required")
@@ -742,6 +978,60 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             {"status": result.status, "error": result.error},
         )
 
+    if args.rclone_cat:
+        rclone_samples = []
+        for path in paths:
+            result = measure_rclone_cat(
+                args.rclone_binary,
+                args.rclone_remote,
+                path,
+                args.range_probe_bytes,
+                args.timeout_seconds,
+            )
+            rclone_samples.append(operation_record("rclone_cat", path, result, 0))
+            add_check(
+                checks,
+                f"rclone cat {redact_path(path)}",
+                result.status == 0 and result.error is None,
+                {"status": result.status, "elapsed_ms": result.elapsed_ms, "error": result.error},
+            )
+        production_probes["rclone_cat"] = {
+            "bytes_per_path": args.range_probe_bytes,
+            "samples": rclone_samples,
+        }
+
+    if args.plex_part_urls:
+        plex_samples = []
+        for url in args.plex_part_urls:
+            result = request_url(
+                url,
+                timeout_seconds=args.timeout_seconds,
+                max_bytes=args.range_probe_bytes,
+            )
+            plex_samples.append(operation_record("plex_part", url, result, 0))
+            add_check(
+                checks,
+                f"Plex part endpoint {redact_url(url)}",
+                result.status is not None and 200 <= result.status < 400,
+                {"status": result.status, "elapsed_ms": result.elapsed_ms, "error": result.error},
+            )
+        production_probes["plex_part_endpoints"] = {
+            "bytes_per_path": args.range_probe_bytes,
+            "samples": plex_samples,
+        }
+
+    if args.parallel_count > 1:
+        parallel_paths = args.parallel_paths or paths
+        parallel_probe = run_parallel_range_probe(args, parallel_paths, headers, args.range_probe_bytes)
+        if parallel_probe:
+            production_probes["parallel_range"] = parallel_probe
+            add_check(
+                checks,
+                f"parallel {len(parallel_probe['paths'])}-path range probe",
+                parallel_probe["passed"],
+                {"wall_ms": parallel_probe["wall_ms"], "paths": parallel_probe["paths"]},
+            )
+
     document = {
         "schema_version": 1,
         "generated_at": utc_now(),
@@ -759,6 +1049,12 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "nzbdav_pid_configured": bool(args.nzbdav_pid),
             "rclone_pid_configured": bool(args.rclone_pid),
             "fail_closed_paths": [redact_path(path) for path in args.fail_closed_paths],
+            "range_probe_bytes": args.range_probe_bytes,
+            "rclone_cat_enabled": args.rclone_cat,
+            "rclone_remote_configured": bool(args.rclone_remote),
+            "plex_part_urls": [redact_url(url) for url in args.plex_part_urls],
+            "parallel_count": args.parallel_count,
+            "parallel_paths": [redact_path(path) for path in args.parallel_paths],
         },
         "metrics": {
             "first_byte_latency_ms": summarize_latency(first_byte_samples),
@@ -770,6 +1066,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "snapshots": resource_snapshots,
             "summary": summarize_resources(resource_snapshots),
         },
+        "production_probes": production_probes,
         "samples": operation_samples,
     }
 
@@ -1144,6 +1441,27 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--rclone-rc-url", default=os.getenv("RCLONE_RC_URL") or os.getenv("NZBDAV_BENCH_RCLONE_RC_URL"))
     run_parser.add_argument("--rclone-rc-user", default=os.getenv("RCLONE_RC_USER") or os.getenv("NZBDAV_BENCH_RCLONE_RC_USER"))
     run_parser.add_argument("--rclone-rc-pass", default=os.getenv("RCLONE_RC_PASS") or os.getenv("NZBDAV_BENCH_RCLONE_RC_PASS"))
+    run_parser.add_argument("--rclone-binary", default=os.getenv("NZBDAV_BENCH_RCLONE_BINARY", "rclone"))
+    run_parser.add_argument("--rclone-remote", default=os.getenv("NZBDAV_BENCH_RCLONE_REMOTE"))
+    run_parser.add_argument(
+        "--rclone-cat",
+        action="store_true",
+        default=os.getenv("NZBDAV_BENCH_RCLONE_CAT", "").lower() in ("1", "true", "yes"),
+        help="also time rclone cat against the configured remote without FUSE",
+    )
+    run_parser.add_argument("--plex-part-url", action="append", default=[], help="Plex part endpoint URL; repeat or comma-separate")
+    run_parser.add_argument("--parallel-path", action="append", default=[], help="paths for the parallel range probe; defaults to --path")
+    run_parser.add_argument(
+        "--parallel-count",
+        type=int,
+        default=int(os.getenv("NZBDAV_BENCH_PARALLEL_COUNT", "4")),
+        help="number of paths to read concurrently for the parallel range probe; set 0 or 1 to disable",
+    )
+    run_parser.add_argument(
+        "--range-probe-bytes",
+        type=int,
+        default=int(os.getenv("NZBDAV_BENCH_RANGE_PROBE_BYTES", DEFAULT_RANGE_PROBE_BYTES)),
+    )
     run_parser.add_argument("--nzbdav-pid", type=int, default=parse_optional_int(os.getenv("NZBDAV_BENCH_NZBDAV_PID")))
     run_parser.add_argument("--rclone-pid", type=int, default=parse_optional_int(os.getenv("NZBDAV_BENCH_RCLONE_PID")))
     run_parser.add_argument("--runs", type=int, default=int(os.getenv("NZBDAV_BENCH_RUNS", DEFAULT_RUNS)))
@@ -1179,6 +1497,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run":
         args.paths = parse_paths(args.path, os.getenv("NZBDAV_BENCH_PATHS"))
+        args.plex_part_urls = parse_paths(args.plex_part_url, os.getenv("NZBDAV_BENCH_PLEX_PART_URLS"))
+        args.parallel_paths = parse_paths(args.parallel_path, os.getenv("NZBDAV_BENCH_PARALLEL_PATHS"))
         args.seek_offsets = parse_csv_ints(args.seek_offsets)
         args.fail_closed_paths = parse_paths(args.fail_closed_path, os.getenv("NZBDAV_BENCH_FAIL_CLOSED_PATHS"))
         document = run_benchmark(args)

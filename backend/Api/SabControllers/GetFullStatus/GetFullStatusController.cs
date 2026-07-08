@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
+using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Api.SabControllers.GetStatus;
@@ -20,7 +21,8 @@ public class GetFullStatusController(
     QueueManager queueManager,
     ActiveStreamTracker activeStreamTracker,
     HealthCheckService healthCheckService,
-    MountStatusProvider mountStatusProvider
+    MountStatusProvider mountStatusProvider,
+    UsenetStreamingClient usenetClient
 ) : SabApiController.BaseController(httpContext, configManager)
 {
     protected override async Task<IActionResult> Handle()
@@ -70,7 +72,9 @@ public class GetFullStatusController(
                 RcloneInvalidations = RcloneInvalidationStatus.FromStats(rcloneInvalidations),
                 Cache = CacheStatus.FromSnapshot(cacheSnapshot),
                 Mount = MountDiagnosticStatus.FromSnapshot(mountStatusProvider.GetSnapshot(cacheSnapshot)),
-                ProviderDiagnostics = ProviderDiagnosticStatus.FromConfig(ConfigManager.GetUsenetProviderConfig()),
+                ProviderDiagnostics = ProviderDiagnosticStatus.FromSnapshots(
+                    usenetClient.GetProviderSnapshots(),
+                    ConfigManager.GetUsenetProviderConfig()),
                 WorkerQueues = WorkerQueueStatus.FromStats(
                     laneSnapshot.DownloadActive,
                     queuedJobs,

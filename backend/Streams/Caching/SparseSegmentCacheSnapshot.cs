@@ -9,5 +9,8 @@ public sealed record SparseSegmentCacheSnapshot(
     int Files,
     int ActiveReaders,
     int ReadAheadActive,
-    int PendingFetches
+    int PendingFetches,
+    long FirstByteReads,
+    double FirstByteAverageMilliseconds,
+    long ProviderFetchErrors
 );

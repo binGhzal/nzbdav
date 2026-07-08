@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -55,8 +56,23 @@ public sealed class ProviderDiagnosticStatus
     [JsonPropertyName("priority")]
     public int Priority { get; init; }
 
+    [JsonPropertyName("role")]
+    public required string Role { get; init; }
+
     [JsonPropertyName("max_connections")]
     public int MaxConnections { get; init; }
+
+    [JsonPropertyName("live_connections")]
+    public int LiveConnections { get; init; }
+
+    [JsonPropertyName("idle_connections")]
+    public int IdleConnections { get; init; }
+
+    [JsonPropertyName("active_connections")]
+    public int ActiveConnections { get; init; }
+
+    [JsonPropertyName("available_connections")]
+    public int AvailableConnections { get; init; }
 
     [JsonPropertyName("ssl")]
     public bool UseSsl { get; init; }
@@ -70,6 +86,27 @@ public sealed class ProviderDiagnosticStatus
     [JsonPropertyName("stat_pipelining_enabled")]
     public bool StatPipeliningEnabled { get; init; }
 
+    [JsonPropertyName("failure_count")]
+    public int FailureCount { get; init; }
+
+    [JsonPropertyName("circuit_state")]
+    public string CircuitState { get; init; } = "unknown";
+
+    [JsonPropertyName("cooldown_until")]
+    public DateTimeOffset? CooldownUntil { get; init; }
+
+    [JsonPropertyName("last_success_at")]
+    public DateTimeOffset? LastSuccessAt { get; init; }
+
+    [JsonPropertyName("last_failure_at")]
+    public DateTimeOffset? LastFailureAt { get; init; }
+
+    [JsonPropertyName("last_failure_kind")]
+    public string? LastFailureKind { get; init; }
+
+    [JsonPropertyName("probe_in_flight")]
+    public bool ProbeInFlight { get; init; }
+
     public static IReadOnlyList<ProviderDiagnosticStatus> FromConfig(UsenetProviderConfig config)
     {
         return config.Providers
@@ -80,11 +117,53 @@ public sealed class ProviderDiagnosticStatus
                 Port = provider.Port,
                 Type = provider.Type.ToString(),
                 Priority = provider.Priority,
+                Role = provider.Priority <= 0 ? "primary" : "backup",
                 MaxConnections = provider.MaxConnections,
+                AvailableConnections = provider.MaxConnections,
                 UseSsl = provider.GetEffectiveUseSsl(),
                 ConfiguredUseSsl = provider.UseSsl,
                 ImplicitTls = provider.IsImplicitTlsEnabled(),
-                StatPipeliningEnabled = provider.IsStatPipeliningEnabled()
+                StatPipeliningEnabled = provider.IsStatPipeliningEnabled(),
+                CircuitState = "unknown"
+            })
+            .ToList();
+    }
+
+    public static IReadOnlyList<ProviderDiagnosticStatus> FromSnapshots(
+        IReadOnlyList<ProviderPoolSnapshot> snapshots,
+        UsenetProviderConfig config)
+    {
+        if (snapshots.Count == 0) return FromConfig(config);
+
+        return snapshots
+            .Select((snapshot, index) =>
+            {
+                var provider = index < config.Providers.Count ? config.Providers[index] : null;
+                return new ProviderDiagnosticStatus
+                {
+                    Name = $"provider-{index + 1}",
+                    Host = provider?.Host ?? snapshot.Name,
+                    Port = provider?.Port ?? 0,
+                    Type = snapshot.Type,
+                    Priority = snapshot.Priority,
+                    Role = snapshot.Role,
+                    MaxConnections = snapshot.MaxConnections,
+                    LiveConnections = snapshot.LiveConnections,
+                    IdleConnections = snapshot.IdleConnections,
+                    ActiveConnections = snapshot.ActiveConnections,
+                    AvailableConnections = snapshot.AvailableConnections,
+                    UseSsl = provider?.GetEffectiveUseSsl() ?? false,
+                    ConfiguredUseSsl = provider?.UseSsl ?? false,
+                    ImplicitTls = provider?.IsImplicitTlsEnabled() ?? false,
+                    StatPipeliningEnabled = snapshot.StatPipeliningEnabled,
+                    FailureCount = snapshot.Circuit.ConsecutiveFailures,
+                    CircuitState = snapshot.Circuit.CircuitState,
+                    CooldownUntil = snapshot.Circuit.CooldownUntil,
+                    LastSuccessAt = snapshot.Circuit.LastSuccessAt,
+                    LastFailureAt = snapshot.Circuit.LastFailureAt,
+                    LastFailureKind = snapshot.Circuit.LastFailureKind,
+                    ProbeInFlight = snapshot.Circuit.ProbeInFlight
+                };
             })
             .ToList();
     }
@@ -119,6 +198,15 @@ public sealed class CacheStatus
     [JsonPropertyName("pending_fetches")]
     public int PendingFetches { get; init; }
 
+    [JsonPropertyName("first_byte_reads")]
+    public long FirstByteReads { get; init; }
+
+    [JsonPropertyName("first_byte_average_ms")]
+    public double FirstByteAverageMilliseconds { get; init; }
+
+    [JsonPropertyName("provider_fetch_errors")]
+    public long ProviderFetchErrors { get; init; }
+
     public static CacheStatus FromSnapshot(SparseSegmentCacheSnapshot snapshot)
     {
         return new CacheStatus
@@ -131,7 +219,10 @@ public sealed class CacheStatus
             Files = snapshot.Files,
             ActiveReaders = snapshot.ActiveReaders,
             ReadAheadActive = snapshot.ReadAheadActive,
-            PendingFetches = snapshot.PendingFetches
+            PendingFetches = snapshot.PendingFetches,
+            FirstByteReads = snapshot.FirstByteReads,
+            FirstByteAverageMilliseconds = snapshot.FirstByteAverageMilliseconds,
+            ProviderFetchErrors = snapshot.ProviderFetchErrors
         };
     }
 }

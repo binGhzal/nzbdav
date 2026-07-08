@@ -31,8 +31,11 @@ public sealed class SparseSegmentCacheTests
             Assert.Equal([1, 2], first);
             Assert.Equal([2, 3], second);
             Assert.Equal(1, inner.ReadCalls);
-            Assert.Equal(1, manager.GetSnapshot().Hits);
-            Assert.Equal(1, manager.GetSnapshot().Misses);
+            var snapshot = manager.GetSnapshot();
+            Assert.Equal(1, snapshot.Hits);
+            Assert.Equal(1, snapshot.Misses);
+            Assert.Equal(1, snapshot.FirstByteReads);
+            Assert.True(snapshot.FirstByteAverageMilliseconds >= 0);
         }
         finally
         {
@@ -628,7 +631,37 @@ public sealed class SparseSegmentCacheTests
             Assert.Equal(1, await cached.ReadAtAsync(0, buffer, CancellationToken.None));
             Assert.Equal([9], buffer);
             Assert.Equal([1], inner.RequestedByteCounts);
-            Assert.Equal(0, manager.GetSnapshot().Bytes);
+            Assert.Equal(1, manager.GetSnapshot().Bytes);
+        }
+        finally
+        {
+            await DisposeReaderAsync(cached);
+        }
+    }
+
+    [Fact]
+    public async Task RangeLimitedForegroundReadReusesPartialCachedRange()
+    {
+        using var tempDir = new TempDirectory();
+        using var manager = new SparseSegmentCacheManager();
+        var inner = new ByteArrayRangeReader([9, 1, 2, 3, 4, 5, 6, 7]);
+        var options = CreateOptions(tempDir.Path, chunkBytes: 4, maxBytes: 1024);
+        var cached = manager.Open("file-a", inner, options, readLimitExclusive: 1);
+        var first = new byte[1];
+        var second = new byte[1];
+
+        try
+        {
+            Assert.Equal(1, await cached.ReadAtAsync(0, first, CancellationToken.None));
+            Assert.Equal(1, await cached.ReadAtAsync(0, second, CancellationToken.None));
+
+            Assert.Equal([9], first);
+            Assert.Equal([9], second);
+            Assert.Equal(1, inner.ReadCalls);
+            var snapshot = manager.GetSnapshot();
+            Assert.Equal(1, snapshot.Bytes);
+            Assert.Equal(1, snapshot.Hits);
+            Assert.Equal(1, snapshot.Misses);
         }
         finally
         {
@@ -810,6 +843,7 @@ public sealed class SparseSegmentCacheTests
             var exception = await Assert.ThrowsAsync<RetryableDownloadException>(() =>
                 cached.ReadAtAsync(0, buffer, CancellationToken.None).AsTask());
             Assert.Contains("No progress reading cache chunk", exception.Message);
+            Assert.Equal(1, manager.GetSnapshot().ProviderFetchErrors);
         }
         finally
         {
@@ -836,6 +870,7 @@ public sealed class SparseSegmentCacheTests
                 cached.ReadAtAsync(0, buffer, CancellationToken.None).AsTask()
                     .WaitAsync(TimeSpan.FromSeconds(1)));
             Assert.Contains("No progress reading cache direct range", exception.Message);
+            Assert.Equal(1, manager.GetSnapshot().ProviderFetchErrors);
         }
         finally
         {
@@ -858,6 +893,7 @@ public sealed class SparseSegmentCacheTests
             var exception = await Assert.ThrowsAsync<IOException>(() =>
                 cached.ReadAtAsync(0, buffer, CancellationToken.None).AsTask());
             Assert.Contains("No progress reading cache direct range", exception.Message);
+            Assert.Equal(1, manager.GetSnapshot().ProviderFetchErrors);
         }
         finally
         {

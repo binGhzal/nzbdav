@@ -42,6 +42,23 @@ public class MultiConnectionNntpClient(
     public int IdleConnections => connectionPool.IdleConnections;
     public int ActiveConnections => connectionPool.ActiveConnections;
     public int AvailableConnections => connectionPool.AvailableConnections;
+    public int MaxConnections => connectionPool.MaxConnections;
+
+    public ProviderPoolSnapshot GetProviderSnapshot()
+    {
+        return new ProviderPoolSnapshot(
+            Name: providerName,
+            Type: ProviderType.ToString(),
+            Priority: ProviderPriority,
+            Role: ProviderPriority <= 0 ? "primary" : "backup",
+            MaxConnections: MaxConnections,
+            LiveConnections: LiveConnections,
+            IdleConnections: IdleConnections,
+            ActiveConnections: ActiveConnections,
+            AvailableConnections: AvailableConnections,
+            StatPipeliningEnabled: StatPipeliningEnabled,
+            Circuit: circuitBreaker.GetSnapshot());
+    }
 
     public override Task ConnectAsync(string host, int port, bool useSsl, CancellationToken cancellationToken)
     {
