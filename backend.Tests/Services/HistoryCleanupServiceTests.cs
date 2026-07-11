@@ -1,6 +1,8 @@
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using backend.Tests.Services;
+using NzbWebDAV.Clients.Rclone;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
@@ -83,85 +85,111 @@ public sealed class HistoryCleanupServiceTests
     [Fact]
     public async Task DeleteMountedFilesRetainsCleanupUntilRetrySnapshotPersists()
     {
-        var historyItemId = Guid.NewGuid();
-
-        await using (var dbContext = await _fixture.ResetAndCreateMigratedContextAsync())
-        {
-            var historyItem = new HistoryItem
-            {
-                Id = historyItemId,
-                JobName = "Removed",
-                FileName = "Removed.nzb",
-                Category = "tv",
-                CreatedAt = DateTime.UtcNow,
-                DownloadStatus = HistoryItem.DownloadStatusOption.Completed
-            };
-            var directory = CreateDirectory(Guid.NewGuid(), DavItem.ContentFolder.Id, "/content/Removed");
-            var file = CreateFile(Guid.NewGuid(), directory.Id, "/content/Removed/Episode.mkv", historyItemId);
-
-            dbContext.HistoryItems.Add(historyItem);
-            dbContext.Items.AddRange(directory, file);
-            dbContext.NzbFiles.Add(new DavNzbFile
-            {
-                Id = file.Id,
-                SegmentIds = ["segment-1"]
-            });
-            await dbContext.SaveChangesAsync();
-            ContentIndexSnapshotWriterService.RequestSnapshot();
-            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
-
-            dbContext.HistoryCleanupItems.Add(new HistoryCleanupItem
-            {
-                Id = historyItemId,
-                DeleteMountedFiles = true
-            });
-            await dbContext.SaveChangesAsync();
-        }
-
-        var field = typeof(ContentIndexSnapshotWriterService).GetField(
-            "WriteSnapshotCore",
-            BindingFlags.NonPublic | BindingFlags.Static);
-        Assert.NotNull(field);
-        var originalWriter = (Func<long, CancellationToken, Task>)field.GetValue(null)!;
-        var secondFlushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var allowSecondFlush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var attempts = 0;
-
-        field.SetValue(null, new Func<long, CancellationToken, Task>(async (requestCount, cancellationToken) =>
-        {
-            attempts++;
-            if (attempts == 1)
-                throw new IOException("temporary filesystem failure");
-
-            secondFlushStarted.TrySetResult();
-            await allowSecondFlush.Task;
-            await originalWriter(requestCount, cancellationToken);
-        }));
-
-        using var service = new HistoryCleanupService();
+        EnableRcloneRemoteControl();
         try
         {
-            await service.StartAsync(CancellationToken.None);
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await secondFlushStarted.Task.WaitAsync(timeout.Token);
+            var historyItemId = Guid.NewGuid();
 
-            await using (var assertionContext = await _fixture.CreateMigratedContextAsync())
+            await using (var dbContext = await _fixture.ResetAndCreateMigratedContextAsync())
             {
-                Assert.True(await assertionContext.HistoryCleanupItems.AnyAsync(x => x.Id == historyItemId, timeout.Token));
-                Assert.False(await assertionContext.Items.AnyAsync(x => x.HistoryItemId == historyItemId, timeout.Token));
+                var historyItem = new HistoryItem
+                {
+                    Id = historyItemId,
+                    JobName = "Removed",
+                    FileName = "Removed.nzb",
+                    Category = "tv",
+                    CreatedAt = DateTime.UtcNow,
+                    DownloadStatus = HistoryItem.DownloadStatusOption.Completed
+                };
+                var directory = CreateDirectory(Guid.NewGuid(), DavItem.ContentFolder.Id, "/content/Removed");
+                var file = CreateFile(Guid.NewGuid(), directory.Id, "/content/Removed/Episode.mkv", historyItemId);
+
+                dbContext.HistoryItems.Add(historyItem);
+                dbContext.Items.AddRange(directory, file);
+                dbContext.NzbFiles.Add(new DavNzbFile
+                {
+                    Id = file.Id,
+                    SegmentIds = ["segment-1"]
+                });
+                await dbContext.SaveChangesAsync();
+                ContentIndexSnapshotWriterService.RequestSnapshot();
+                await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
+
+                dbContext.HistoryCleanupItems.Add(new HistoryCleanupItem
+                {
+                    Id = historyItemId,
+                    DeleteMountedFiles = true
+                });
+                await dbContext.SaveChangesAsync();
             }
 
-            allowSecondFlush.TrySetResult();
-            await WaitForCleanupQueueToDrainAsync(timeout.Token);
-            Assert.Equal(2, attempts);
+            var field = typeof(ContentIndexSnapshotWriterService).GetField(
+                "WriteSnapshotCore",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(field);
+            var originalWriter = (Func<long, CancellationToken, Task>)field.GetValue(null)!;
+            var secondFlushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var allowSecondFlush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var attempts = 0;
+            var delayCalls = 0;
+
+            field.SetValue(null, new Func<long, CancellationToken, Task>(async (requestCount, cancellationToken) =>
+            {
+                attempts++;
+                if (attempts == 1)
+                    throw new IOException("temporary filesystem failure");
+
+                secondFlushStarted.TrySetResult();
+                await allowSecondFlush.Task;
+                await originalWriter(requestCount, cancellationToken);
+            }));
+
+            using var service = new HistoryCleanupService((delay, cancellationToken) =>
+            {
+                Assert.Equal(TimeSpan.FromSeconds(10), delay);
+                Interlocked.Increment(ref delayCalls);
+                return Task.CompletedTask;
+            });
+            try
+            {
+                await service.StartAsync(CancellationToken.None);
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                await secondFlushStarted.Task.WaitAsync(timeout.Token);
+
+                await using (var assertionContext = await _fixture.CreateMigratedContextAsync())
+                {
+                    Assert.True(await assertionContext.HistoryCleanupItems.AnyAsync(x => x.Id == historyItemId, timeout.Token));
+                    Assert.False(await assertionContext.Items.AnyAsync(x => x.HistoryItemId == historyItemId, timeout.Token));
+                    Assert.NotEmpty(await assertionContext.RcloneInvalidationItems.ToListAsync(timeout.Token));
+                }
+
+                Assert.Equal(1, Volatile.Read(ref delayCalls));
+                allowSecondFlush.TrySetResult();
+                await WaitForCleanupQueueToDrainAsync(timeout.Token);
+                Assert.Equal(2, attempts);
+            }
+            finally
+            {
+                allowSecondFlush.TrySetResult();
+                await service.StopAsync(CancellationToken.None);
+                field.SetValue(null, originalWriter);
+                await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
+            }
         }
         finally
         {
-            allowSecondFlush.TrySetResult();
-            await service.StopAsync(CancellationToken.None);
-            field.SetValue(null, originalWriter);
-            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
+            RcloneClient.Initialize(new ConfigManager());
         }
+    }
+
+    private static void EnableRcloneRemoteControl()
+    {
+        var configManager = new ConfigManager();
+        configManager.UpdateValues([
+            new ConfigItem { ConfigName = "rclone.rc-enabled", ConfigValue = "true" },
+            new ConfigItem { ConfigName = "rclone.host", ConfigValue = "http://127.0.0.1:5572" }
+        ]);
+        RcloneClient.Initialize(configManager);
     }
 
     private async Task WaitForCleanupQueueToDrainAsync(CancellationToken ct)

@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Database;
@@ -10,6 +11,17 @@ namespace NzbWebDAV.Services;
 public class HistoryCleanupService : BackgroundService
 {
     private const int BatchSize = 100;
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(10);
+    private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
+
+    public HistoryCleanupService() : this(static (delay, cancellationToken) => Task.Delay(delay, cancellationToken))
+    {
+    }
+
+    public HistoryCleanupService(Func<TimeSpan, CancellationToken, Task> delayAsync)
+    {
+        _delayAsync = delayAsync ?? throw new ArgumentNullException(nameof(delayAsync));
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -27,55 +39,65 @@ public class HistoryCleanupService : BackgroundService
                 // If no items in queue, wait 10 seconds before checking again
                 if (cleanupItems.Count == 0)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
+                    await _delayAsync(RetryDelay, stoppingToken).ConfigureAwait(false);
                     continue;
                 }
 
-                var deleteMountedFileIds = cleanupItems
-                    .Where(x => x.DeleteMountedFiles)
-                    .Select(x => x.Id)
-                    .ToList();
-                var contentIndexChanged = deleteMountedFileIds.Count > 0;
-                if (deleteMountedFileIds.Count > 0)
+                var contentIndexChanged = false;
+                await using (var transaction = await dbContext.Database
+                                 .BeginTransactionAsync(IsolationLevel.Serializable, stoppingToken)
+                                 .ConfigureAwait(false))
                 {
-                    // Collect items to delete for vfs/forget
-                    var deletedItems = await dbContext.Items
-                        .Where(x => x.HistoryItemId != null && deleteMountedFileIds.Contains(x.HistoryItemId.Value))
-                        .Select(x => new DavItem { Id = x.Id, Type = x.Type, Path = x.Path })
-                        .ToListAsync(stoppingToken);
+                    var deleteMountedFileIds = cleanupItems
+                        .Where(x => x.DeleteMountedFiles)
+                        .Select(x => x.Id)
+                        .ToList();
+                    contentIndexChanged = deleteMountedFileIds.Count > 0;
+                    if (deleteMountedFileIds.Count > 0)
+                    {
+                        // Collect items to delete for vfs/forget
+                        var deletedItems = await dbContext.Items
+                            .Where(x => x.HistoryItemId != null && deleteMountedFileIds.Contains(x.HistoryItemId.Value))
+                            .Select(x => new DavItem { Id = x.Id, Type = x.Type, Path = x.Path })
+                            .ToListAsync(stoppingToken);
 
-                    // Delete the corresponding dav-items
-                    await dbContext.Items
-                        .Where(x => x.HistoryItemId != null && deleteMountedFileIds.Contains(x.HistoryItemId.Value))
-                        .ExecuteDeleteAsync(stoppingToken);
+                        // Delete the corresponding dav-items
+                        await dbContext.Items
+                            .Where(x => x.HistoryItemId != null && deleteMountedFileIds.Contains(x.HistoryItemId.Value))
+                            .ExecuteDeleteAsync(stoppingToken);
 
-                    // Queue rclone vfs/forget for deleted items
-                    dbContext.EnqueueRcloneVfsForget(deletedItems);
+                        // Queue rclone vfs/forget for deleted items
+                        dbContext.EnqueueRcloneVfsForget(deletedItems);
+                    }
+
+                    var unlinkHistoryIds = cleanupItems
+                        .Where(x => !x.DeleteMountedFiles)
+                        .Select(x => x.Id)
+                        .ToList();
+                    if (unlinkHistoryIds.Count > 0)
+                    {
+                        // Mark the corresponding dav-items as no longer in History
+                        await dbContext.Items
+                            .Where(x => x.HistoryItemId != null && unlinkHistoryIds.Contains(x.HistoryItemId.Value))
+                            .ExecuteUpdateAsync(
+                                x => x.SetProperty(p => p.HistoryItemId, (Guid?)null),
+                                stoppingToken
+                            );
+                        contentIndexChanged = true;
+                    }
+
+                    // Persist DAV changes and rclone invalidations before writing the recovery snapshot.
+                    await dbContext.SaveChangesAsync(stoppingToken).ConfigureAwait(false);
+                    await transaction.CommitAsync(stoppingToken).ConfigureAwait(false);
                 }
-
-                var unlinkHistoryIds = cleanupItems
-                    .Where(x => !x.DeleteMountedFiles)
-                    .Select(x => x.Id)
-                    .ToList();
-                if (unlinkHistoryIds.Count > 0)
-                {
-                    // Mark the corresponding dav-items as no longer in History
-                    await dbContext.Items
-                        .Where(x => x.HistoryItemId != null && unlinkHistoryIds.Contains(x.HistoryItemId.Value))
-                        .ExecuteUpdateAsync(
-                            x => x.SetProperty(p => p.HistoryItemId, (Guid?)null),
-                            stoppingToken
-                        );
-                    contentIndexChanged = true;
-                }
-
-                // Persist DAV changes and rclone invalidations before writing the recovery snapshot.
-                await dbContext.SaveChangesAsync(stoppingToken).ConfigureAwait(false);
                 if (contentIndexChanged)
                 {
                     ContentIndexSnapshotWriterService.RequestSnapshot();
                     if (!await ContentIndexSnapshotWriterService.FlushNowAsync(stoppingToken).ConfigureAwait(false))
+                    {
+                        await _delayAsync(RetryDelay, stoppingToken).ConfigureAwait(false);
                         continue;
+                    }
                 }
 
                 // Only drain cleanup rows after the recovery snapshot is durable.
@@ -93,7 +115,7 @@ public class HistoryCleanupService : BackgroundService
                 Log.Error(e, $"Error processing history cleanup queue: {e.Message}");
 
                 // Wait 10 seconds before continuing on exception
-                await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
+                await _delayAsync(RetryDelay, stoppingToken).ConfigureAwait(false);
             }
         }
     }

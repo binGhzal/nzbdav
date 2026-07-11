@@ -440,6 +440,55 @@ public sealed class ContentIndexRecoveryServiceTests
     }
 
     [Fact]
+    public async Task SnapshotWriter_BoundsManualFlushAndLetsHostedWriterPersistSustainedRequests()
+    {
+        await _fixture.ResetAsync();
+        await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
+
+        var field = typeof(ContentIndexSnapshotWriterService).GetField(
+            "WriteSnapshotCore",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(field);
+        var originalWriter = (Func<long, CancellationToken, Task>)field.GetValue(null)!;
+        var writeCount = 0;
+        var sustainRequests = 1;
+
+        field.SetValue(null, new Func<long, CancellationToken, Task>(async (requestCount, cancellationToken) =>
+        {
+            Interlocked.Increment(ref writeCount);
+            if (Volatile.Read(ref sustainRequests) != 0)
+                ContentIndexSnapshotWriterService.RequestSnapshot();
+            await Task.Delay(20, cancellationToken);
+        }));
+
+        using var service = new ContentIndexSnapshotWriterService();
+        try
+        {
+            await service.StartAsync(CancellationToken.None);
+            ContentIndexSnapshotWriterService.RequestSnapshot();
+
+            var manualFlush = ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+
+            Assert.True(await manualFlush.WaitAsync(timeout.Token));
+            Assert.Equal(1, Volatile.Read(ref writeCount));
+
+            Volatile.Write(ref sustainRequests, 0);
+            await service.StopAsync(CancellationToken.None);
+
+            Assert.Equal(2, Volatile.Read(ref writeCount));
+            Assert.True(await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None));
+        }
+        finally
+        {
+            Volatile.Write(ref sustainRequests, 0);
+            await service.StopAsync(CancellationToken.None);
+            field.SetValue(null, originalWriter);
+            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public async Task SnapshotWriter_CoalescesManyRequestsIntoSingleWakeSignal()
     {
         await _fixture.ResetAsync();

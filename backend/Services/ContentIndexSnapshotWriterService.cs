@@ -20,12 +20,15 @@ public sealed class ContentIndexSnapshotWriterService : BackgroundService
     private static readonly SemaphoreSlim FlushGate = new(1, 1);
     private static bool _wakeSignalQueued;
     private static long _pendingRequestCount;
+    private static long _requestedGeneration;
+    private static long _persistedGeneration;
     private static Func<long, CancellationToken, Task> WriteSnapshotCore = WriteSnapshotCoreAsync;
 
     public static void RequestSnapshot()
     {
         lock (RequestStateLock)
         {
+            _requestedGeneration++;
             _pendingRequestCount++;
             QueueWakeSignalUnderLock();
         }
@@ -33,27 +36,32 @@ public sealed class ContentIndexSnapshotWriterService : BackgroundService
 
     public static async Task<bool> FlushNowAsync(CancellationToken cancellationToken)
     {
+        var targetGeneration = GetRequestedGeneration();
+        if (IsPersistedThrough(targetGeneration)) return true;
+
         await FlushGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            while (true)
+            if (IsPersistedThrough(targetGeneration)) return true;
+
+            var batch = TakePendingRequestsForFlush();
+            if (batch.RequestCount <= 0) return IsPersistedThrough(targetGeneration);
+
+            try
             {
-                var requestCount = TakePendingRequestsForFlush();
-                if (requestCount <= 0) return true;
-
-                try
+                if (!await TryWriteSnapshotAsync(batch.RequestCount, cancellationToken).ConfigureAwait(false))
                 {
-                    var persisted = await TryWriteSnapshotAsync(requestCount, cancellationToken).ConfigureAwait(false);
-                    if (persisted) continue;
-
-                    RestorePendingRequests(requestCount);
+                    RestorePendingRequests(batch);
                     return false;
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    RestorePendingRequests(requestCount);
-                    throw;
-                }
+
+                RecordPersistedGeneration(batch.Generation);
+                return IsPersistedThrough(targetGeneration);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                RestorePendingRequests(batch);
+                throw;
             }
         }
         finally
@@ -124,25 +132,43 @@ public sealed class ContentIndexSnapshotWriterService : BackgroundService
         }
     }
 
-    private static void RestorePendingRequests(long requestCount)
+    private static long GetRequestedGeneration()
     {
-        if (requestCount <= 0) return;
+        lock (RequestStateLock)
+            return _requestedGeneration;
+    }
+
+    private static bool IsPersistedThrough(long targetGeneration)
+    {
+        lock (RequestStateLock)
+            return _persistedGeneration >= targetGeneration;
+    }
+
+    private static void RecordPersistedGeneration(long generation)
+    {
+        lock (RequestStateLock)
+            _persistedGeneration = Math.Max(_persistedGeneration, generation);
+    }
+
+    private static void RestorePendingRequests(FlushBatch batch)
+    {
+        if (batch.RequestCount <= 0) return;
         lock (RequestStateLock)
         {
-            _pendingRequestCount += requestCount;
+            _pendingRequestCount += batch.RequestCount;
             QueueWakeSignalUnderLock();
         }
     }
 
-    private static long TakePendingRequestsForFlush()
+    private static FlushBatch TakePendingRequestsForFlush()
     {
         lock (RequestStateLock)
         {
-            var requestCount = _pendingRequestCount;
+            var batch = new FlushBatch(_pendingRequestCount, _requestedGeneration);
             _pendingRequestCount = 0;
             DrainRequestsUnderLock();
             _wakeSignalQueued = false;
-            return requestCount;
+            return batch;
         }
     }
 
@@ -188,4 +214,6 @@ public sealed class ContentIndexSnapshotWriterService : BackgroundService
             sw.ElapsedMilliseconds,
             requestCount);
     }
+
+    private readonly record struct FlushBatch(long RequestCount, long Generation);
 }
