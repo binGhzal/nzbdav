@@ -669,6 +669,7 @@ git commit -m "feat: enforce worker lease ownership and renewal"
 - Modify: `backend/Database/DavDatabaseContext.cs`
 - Modify: `backend/Database/DatabaseTransferService.cs`
 - Modify: `backend/Database/DavDatabaseClient.cs:609-640`
+- Modify: `backend/Queue/QueueItemProcessor.cs:194-224,424-440`
 - Modify: `backend/WebDav/DatabaseStoreSymlinkCollection.cs:19-145`
 - Modify: `backend/Services/ArrOperationsService.cs:253-350`
 - Modify: `backend/Api/SabControllers/RemoveFromHistory/RemoveFromHistoryController.cs`
@@ -679,7 +680,7 @@ git commit -m "feat: enforce worker lease ownership and renewal"
 - Modify: `backend.Tests/Api/GetHistoryControllerTests.cs`
 
 **Interfaces:**
-- Produces: `ImportReceipt`, `ImportReceiptState`, and `ImportReceiptService.ClaimAsync(ImportClaimRequest request, CancellationToken ct)`.
+- Produces: `ImportReceipt`, `ImportReceiptState`, `ImportClaimRequest`, `ImportReceiptService.StageAvailableReceiptsAsync(Guid historyItemId, DateTimeOffset now, CancellationToken ct)`, and `ImportReceiptService.ClaimAsync(ImportClaimRequest request, CancellationToken ct)`.
 
 - [ ] **Step 1: Write durable and idempotent claim tests**
 
@@ -687,8 +688,10 @@ git commit -m "feat: enforce worker lease ownership and renewal"
 [Fact]
 public async Task ClaimPersistsAcrossContextsAndIsIdempotent()
 {
-    var first = await service.ClaimAsync(davItem.Id, history.Id, now, CancellationToken.None);
-    var second = await service.ClaimAsync(davItem.Id, history.Id, now.AddSeconds(1), CancellationToken.None);
+    var first = await service.ClaimAsync(
+        new ImportClaimRequest(davItem.Id, history.Id, now), CancellationToken.None);
+    var second = await service.ClaimAsync(
+        new ImportClaimRequest(davItem.Id, history.Id, now.AddSeconds(1)), CancellationToken.None);
 
     Assert.Equal(ImportReceiptState.UnlinkClaimed, first.State);
     Assert.Equal(first.Id, second.Id);
@@ -763,7 +766,22 @@ public sealed record ImportReceiptResult(
     Guid Id,
     ImportReceiptState State,
     bool Changed);
+
+public sealed record ImportClaimRequest(
+    Guid DavItemId,
+    Guid HistoryItemId,
+    DateTimeOffset Now);
 ```
+
+`StageAvailableReceiptsAsync` gathers non-deleted `UsenetFile` entries with the
+matching `HistoryItemId` from both the current change tracker and the database,
+deduplicates by `DavItem.Id`, queries existing receipts once, and adds only the
+missing `Available` rows to the current context without calling `SaveChanges`.
+In `QueueItemProcessor.MarkQueueItemCompleted`, call it for a successful history
+item after aggregation/post-processing and immediately before the existing
+`SaveChangesAsync`. The history row, DAV items, worker-job enqueue, rclone
+invalidation, and available receipts therefore commit atomically in one EF
+transaction. Failed history items do not stage available receipts.
 
 - [ ] **Step 5: Replace the 30-second memory cache**
 
