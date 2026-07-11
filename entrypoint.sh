@@ -3,24 +3,64 @@
 wait_either() {
     local pid1=$1
     local pid2=$2
+    local child_status
 
     while true; do
         if ! kill -0 "$pid1" 2>/dev/null; then
             wait "$pid1"
+            child_status=$?
             EXITED_PID=$pid1
             REMAINING_PID=$pid2
-            return $?
+            return "$child_status"
         fi
 
         if ! kill -0 "$pid2" 2>/dev/null; then
             wait "$pid2"
+            child_status=$?
             EXITED_PID=$pid2
             REMAINING_PID=$pid1
-            return $?
+            return "$child_status"
         fi
 
         sleep 0.5
     done
+}
+
+maintenance_usage() {
+    echo "Usage: /entrypoint.sh [--db-migration [target] | --db-export-json PATH | --db-import-json PATH [--replace]]" >&2
+}
+
+validate_maintenance_args() {
+    case "${1:-}" in
+        --db-migration)
+            [ "$#" -eq 1 ] || {
+                [ "$#" -eq 2 ] && [ -n "$2" ] && [ "${2#--}" = "$2" ]
+            } || return 64
+            ;;
+        --db-export-json)
+            [ "$#" -eq 2 ] && [ -n "$2" ] && [ "${2#--}" = "$2" ] || return 64
+            ;;
+        --db-import-json)
+            [ "$#" -eq 2 ] || {
+                [ "$#" -eq 3 ] && [ "$3" = "--replace" ]
+            } || return 64
+            [ -n "$2" ] && [ "${2#--}" = "$2" ] || return 64
+            ;;
+        *)
+            return 64
+            ;;
+    esac
+}
+
+run_maintenance() {
+    if ! validate_maintenance_args "$@"; then
+        maintenance_usage
+        return 64
+    fi
+
+    umask 077
+    cd /app/backend || return 70
+    exec su-exec "$USER_NAME" ./NzbWebDAV "$@"
 }
 
 # Signal handling for graceful shutdown
@@ -36,6 +76,8 @@ terminate() {
     wait
     exit 0
 }
+
+main() {
 trap terminate TERM INT
 
 # Use env vars or default to 1000
@@ -107,6 +149,11 @@ if [ -f "$CONFIG_PATH/db.sqlite" ]; then
     fi
 fi
 
+if [ "$#" -gt 0 ]; then
+    run_maintenance "$@"
+    return $?
+fi
+
 # Run backend database migration
 cd /app/backend
 echo "Running database maintenance."
@@ -157,19 +204,19 @@ cd /app/frontend
 su-exec "$USER_NAME" npm run start &
 FRONTEND_PID=$!
 
-# Wait for either to exit
-wait_either $BACKEND_PID $FRONTEND_PID
-EXIT_CODE=$?
+    wait_either "$BACKEND_PID" "$FRONTEND_PID"
+    EXIT_CODE=$?
+    if [ "$EXITED_PID" -eq "$FRONTEND_PID" ]; then
+        echo "The web-frontend has exited. Shutting down the web-backend..."
+    else
+        echo "The web-backend has exited. Shutting down the web-frontend..."
+    fi
+    kill "$REMAINING_PID" 2>/dev/null || true
+    wait "$REMAINING_PID" 2>/dev/null || true
+    return "$EXIT_CODE"
+}
 
-# Determine which process exited
-if [ "$EXITED_PID" -eq "$FRONTEND_PID" ]; then
-    echo "The web-frontend has exited. Shutting down the web-backend..."
-else
-    echo "The web-backend has exited. Shutting down the web-frontend..."
+if [ "${NZBDAV_ENTRYPOINT_SOURCE_ONLY:-0}" != "1" ]; then
+    main "$@"
+    exit $?
 fi
-
-# Kill the remaining process
-kill $REMAINING_PID
-
-# Exit with the code of the process that died first
-exit $EXIT_CODE

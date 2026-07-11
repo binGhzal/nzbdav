@@ -66,4 +66,5 @@ ENV LOG_LEVEL=warning
 # Default is 0.0.0.0 (all interfaces). Set to a specific IP to restrict binding.
 ENV LISTEN_ADDRESS=0.0.0.0
 
-CMD ["/entrypoint.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
+CMD []
