@@ -35,7 +35,7 @@ public class HistoryCleanupService : BackgroundService
                     .Where(x => x.DeleteMountedFiles)
                     .Select(x => x.Id)
                     .ToList();
-                var contentIndexChanged = false;
+                var contentIndexChanged = deleteMountedFileIds.Count > 0;
                 if (deleteMountedFileIds.Count > 0)
                 {
                     // Collect items to delete for vfs/forget
@@ -51,11 +51,6 @@ public class HistoryCleanupService : BackgroundService
 
                     // Queue rclone vfs/forget for deleted items
                     dbContext.EnqueueRcloneVfsForget(deletedItems);
-                    if (deletedItems.Count > 0)
-                    {
-                        contentIndexChanged = true;
-                        ContentIndexSnapshotWriterService.RequestSnapshot();
-                    }
                 }
 
                 var unlinkHistoryIds = cleanupItems
@@ -72,14 +67,20 @@ public class HistoryCleanupService : BackgroundService
                             stoppingToken
                         );
                     contentIndexChanged = true;
-                    ContentIndexSnapshotWriterService.RequestSnapshot();
                 }
 
-                // Remove the cleanup items from the database
-                dbContext.HistoryCleanupItems.RemoveRange(cleanupItems);
+                // Persist DAV changes and rclone invalidations before writing the recovery snapshot.
                 await dbContext.SaveChangesAsync(stoppingToken).ConfigureAwait(false);
                 if (contentIndexChanged)
-                    await ContentIndexSnapshotWriterService.FlushNowAsync(stoppingToken).ConfigureAwait(false);
+                {
+                    ContentIndexSnapshotWriterService.RequestSnapshot();
+                    if (!await ContentIndexSnapshotWriterService.FlushNowAsync(stoppingToken).ConfigureAwait(false))
+                        continue;
+                }
+
+                // Only drain cleanup rows after the recovery snapshot is durable.
+                dbContext.HistoryCleanupItems.RemoveRange(cleanupItems);
+                await dbContext.SaveChangesAsync(stoppingToken).ConfigureAwait(false);
 
                 // Continue immediately to next iteration to process more items
             }

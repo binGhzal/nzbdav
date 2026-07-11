@@ -328,7 +328,7 @@ public sealed class ContentIndexRecoveryServiceTests
     }
 
     [Fact]
-    public async Task SnapshotWriter_RetainsPendingRequestAfterTransientWriteFailure()
+    public async Task SnapshotWriter_ReturnsFalseAfterTransientWriteFailureAndTrueAfterRetry()
     {
         await _fixture.ResetAsync();
         await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
@@ -370,18 +370,70 @@ public sealed class ContentIndexRecoveryServiceTests
         {
             ContentIndexSnapshotWriterService.RequestSnapshot();
 
-            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
+            Assert.False(await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None));
 
             Assert.Equal(1, attempts);
             Assert.False(File.Exists(ContentIndexSnapshotStore.SnapshotFilePath));
 
-            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
+            Assert.True(await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None));
 
             Assert.Equal(2, attempts);
             Assert.True(File.Exists(ContentIndexSnapshotStore.SnapshotFilePath));
         }
         finally
         {
+            field.SetValue(null, originalWriter);
+            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task SnapshotWriter_SerializesConcurrentFlushesAndRetriesRestoredRequest()
+    {
+        await _fixture.ResetAsync();
+        await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
+
+        var field = typeof(ContentIndexSnapshotWriterService).GetField(
+            "WriteSnapshotCore",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(field);
+        var originalWriter = (Func<long, CancellationToken, Task>)field.GetValue(null)!;
+        var firstWriteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = 0;
+
+        field.SetValue(null, new Func<long, CancellationToken, Task>(async (requestCount, cancellationToken) =>
+        {
+            attempts++;
+            if (attempts == 1)
+            {
+                firstWriteStarted.TrySetResult();
+                await releaseFirstWrite.Task;
+                throw new IOException("temporary filesystem failure");
+            }
+
+            await originalWriter(requestCount, cancellationToken);
+        }));
+
+        try
+        {
+            ContentIndexSnapshotWriterService.RequestSnapshot();
+            var firstFlush = ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await firstWriteStarted.Task.WaitAsync(timeout.Token);
+
+            var secondFlush = ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
+            Assert.False(secondFlush.IsCompleted);
+
+            releaseFirstWrite.TrySetResult();
+
+            Assert.False(await firstFlush);
+            Assert.True(await secondFlush);
+            Assert.Equal(2, attempts);
+        }
+        finally
+        {
+            releaseFirstWrite.TrySetResult();
             field.SetValue(null, originalWriter);
             await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken.None);
         }

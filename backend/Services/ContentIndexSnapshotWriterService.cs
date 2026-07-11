@@ -17,6 +17,7 @@ public sealed class ContentIndexSnapshotWriterService : BackgroundService
     });
 
     private static readonly object RequestStateLock = new();
+    private static readonly SemaphoreSlim FlushGate = new(1, 1);
     private static bool _wakeSignalQueued;
     private static long _pendingRequestCount;
     private static Func<long, CancellationToken, Task> WriteSnapshotCore = WriteSnapshotCoreAsync;
@@ -30,21 +31,34 @@ public sealed class ContentIndexSnapshotWriterService : BackgroundService
         }
     }
 
-    public static async Task FlushNowAsync(CancellationToken cancellationToken)
+    public static async Task<bool> FlushNowAsync(CancellationToken cancellationToken)
     {
-        var requestCount = TakePendingRequestsForFlush();
-        if (requestCount <= 0) return;
-
+        await FlushGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var persisted = await TryWriteSnapshotAsync(requestCount, cancellationToken).ConfigureAwait(false);
-            if (!persisted)
-                RestorePendingRequests(requestCount);
+            while (true)
+            {
+                var requestCount = TakePendingRequestsForFlush();
+                if (requestCount <= 0) return true;
+
+                try
+                {
+                    var persisted = await TryWriteSnapshotAsync(requestCount, cancellationToken).ConfigureAwait(false);
+                    if (persisted) continue;
+
+                    RestorePendingRequests(requestCount);
+                    return false;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    RestorePendingRequests(requestCount);
+                    throw;
+                }
+            }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        finally
         {
-            RestorePendingRequests(requestCount);
-            throw;
+            FlushGate.Release();
         }
     }
 
