@@ -872,7 +872,12 @@ def checks_passed(checks: list[dict[str, Any]]) -> bool:
     return bool(checks) and all(check.get("passed") is True for check in checks)
 
 
+def rclone_cat_enabled(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "rclone_cat", False))
+
+
 def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
+    include_rclone_cat = rclone_cat_enabled(args)
     headers = auth_headers(args.webdav_user, args.webdav_pass)
     rc_headers = auth_headers(args.rclone_rc_user, args.rclone_rc_pass)
     paths = args.paths
@@ -978,7 +983,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             {"status": result.status, "error": result.error},
         )
 
-    if args.rclone_cat:
+    if include_rclone_cat:
         rclone_samples = []
         for path in paths:
             result = measure_rclone_cat(
@@ -1050,7 +1055,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "rclone_pid_configured": bool(args.rclone_pid),
             "fail_closed_paths": [redact_path(path) for path in args.fail_closed_paths],
             "range_probe_bytes": args.range_probe_bytes,
-            "rclone_cat_enabled": args.rclone_cat,
+            "rclone_cat_enabled": include_rclone_cat,
             "rclone_remote_configured": bool(args.rclone_remote),
             "plex_part_urls": [redact_url(url) for url in args.plex_part_urls],
             "parallel_count": args.parallel_count,

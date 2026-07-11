@@ -243,6 +243,12 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         self.assertTrue(checks[0]["passed"])
         self.assertEqual(seek_samples, [5])
 
+    def test_rclone_cat_defaults_false_for_programmatic_namespace(self):
+        self.assertFalse(nzbdav_benchmark.rclone_cat_enabled(Namespace()))
+
+    def test_rclone_cat_reads_explicit_namespace_value(self):
+        self.assertTrue(nzbdav_benchmark.rclone_cat_enabled(Namespace(rclone_cat=True)))
+
     def test_run_benchmark_reads_filesystem_mount_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -263,6 +269,11 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
                 rclone_rc_url=None,
                 rclone_rc_user=None,
                 rclone_rc_pass=None,
+                rclone_remote=None,
+                range_probe_bytes=1024 * 1024,
+                plex_part_urls=[],
+                parallel_count=1,
+                parallel_paths=[],
                 nzbdav_pid=None,
                 rclone_pid=None,
                 runs=1,
