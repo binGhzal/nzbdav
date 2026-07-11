@@ -8,9 +8,159 @@
 | Production host | `10.10.5.119` |
 | Production media-stack checkout | `/opt/media-stack` |
 | Current local branch | `codex/single-host-role-separation-design` |
-| Last clean implementation checkpoint | `9de8399a` (`fix: make import receipts concurrency safe`) |
+| Last clean implementation checkpoint | `d7395a5` (`fix: preserve container maintenance contract`) |
 | Current `main` | `86af7b81` (`docs: record first-byte remediation`) |
 | Remote tracking | `main` tracks `origin/main`; the current architecture branch is local and not pushed |
+
+## 0. 2026-07-11 Continuation Addendum
+
+This addendum is the authoritative continuation state. It supersedes Sections
+2, 7, 8, 9.1, 9.2, 15, 17, and 20 wherever their interrupted-Task-5 status,
+commit ledger, test matrix, or combined-Task-6 sequence conflicts with the
+verified results below. The historical sections remain intact as evidence of
+what was inherited and why the repair was narrowed.
+
+### 0.1 Verified Current State
+
+| Area | Current result | Evidence |
+| --- | --- | --- |
+| Foundation Task 5 second-review repair | Complete and committed | `dd153c0a` isolates test state; `986a29a2` completes history/receipt atomicity |
+| Task 5 focused SQLite gate | 60 passed, 0 failed | `.superpowers/sdd/foundation-task-5-report.md` |
+| Task 5 focused live PostgreSQL gate | 4 passed, 0 failed | Receipt concurrency plus isolated native-schema savepoint coverage |
+| Required complete backend gate | 694 passed, 0 failed, 0 skipped in one testhost with PostgreSQL enabled | Disposable PostgreSQL 16 container; removed after the run |
+| Cross-process test isolation | Reproduced and fixed | Two old-path testhosts failed independently; two unique-root testhosts passed; no fixture roots remained |
+| Root container maintenance contract | Complete and committed | `d7395a5`; shell contract and rebuilt-image smoke passed |
+| Current branch relation to `main` | 26 commits ahead, 0 behind at this checkpoint | `main` and `origin/main` both `86af7b81` |
+| Remote architecture branch / PR | None found | `git ls-remote` found no branch and `gh pr list` returned `[]` for this head on 2026-07-11 |
+| Production deployment | Not performed or independently verified in this continuation | No deployment claim |
+
+The entrypoint repair makes Docker arguments reach an explicit maintenance
+allowlist, rejects option-looking transfer paths, applies `umask 077`, preserves
+the first child exit status, and keeps normal automatic migration plus
+backend/frontend startup intact. Real-image tests covered migration, export,
+mode `0600`, arbitrary-command rejection, health, TERM shutdown, and cleanup.
+
+### 0.2 Verified Blockers And Sanity Findings
+
+1. **PostgreSQL physical-schema compatibility is a release blocker.** The
+   shared migration history was scaffolded with SQLite store types. A fresh
+   PostgreSQL 16 migration leaves at least 28 identifier-like columns as `text`
+   while the current model and newer tables use UUIDs. A history predicate
+   reproduces PostgreSQL `42883` (`text = uuid`), and a seeded export fails
+   reading `text` as `Guid`. Date, boolean, and integer mismatches remain too.
+   The 694-test gate does not prove migrated history CRUD because that focused
+   savepoint test intentionally uses `EnsureCreated` in an isolated schema.
+2. **The SQLite-to-PostgreSQL helper is not yet a safe executable migration.**
+   The former Docker invocation treated maintenance flags as the container
+   executable; that transport bug is fixed by `d7395a5`. Snapshot security,
+   explicit Docker networking, immutable image selection, canonical content
+   verification, redacted manifests, retention, and real transfer smoke remain
+   planned in
+   `docs/superpowers/plans/2026-07-11-nzbdav-runtime-migration-safety.md`.
+   The reviewed plan now also forbids mounting **or opening** the rollback
+   SQLite source through SQLite. It first byte-copies the stopped database and
+   exact existing WAL/SHM set, proves the source fingerprint is unchanged, and
+   normalizes only that private raw copy into a verified WAL-correct backup. It
+   also requires an explicit non-root migration identity for the mode-`0700`
+   tree, a separate private PostgreSQL maintenance config so the real target
+   config cannot be container-chowned, final source/database/blob stability
+   checks, ownership-proven named-container/atomic-temp cleanup, explicit
+   forced-recovery state if cleanup misses its deadline, and immediate runbook
+   secret cleanup. Its default executable path is restricted
+   to an empty, offline, disposable PostgreSQL target; any failed target mutation
+   taints that target until drop/recreate/schema-reset. Do not implement or
+   advertise the real transfer until the PostgreSQL schema decision below is
+   resolved.
+3. **The public proxy does not yet match the allowlist decision in Section
+   3.7.** Current frontend proxy behavior broadly exposes `/api` and WebDAV
+   roots/methods. Treat explicit route/method allowlisting as a pre-release
+   security task, not optional hardening.
+4. **Mount fail-closed behavior is overstated in current documentation.** A
+   Docker health status and Compose startup dependency do not automatically
+   stop a running consumer when the mount degrades. The deployment design needs
+   an explicit watchdog and pause/unmount/recreate/verify/resume procedure.
+5. **The safe-rclone updater persists too much state.** Its state file can retain
+   rendered Compose configuration and secret material with ordinary file
+   permissions. Replace it with an atomic mode-`0600` digest/minimal-state
+   record before relying on it as a security boundary.
+6. **Release gates are incomplete.** The current workflows do not run the Python
+   suite or a PostgreSQL-backed complete backend gate, and their clean-diff check
+   is not a PR-range validation. Node versions also differ across CI, frontend
+   build, runtime, and type packages. These are Foundation Task 8/release
+   blockers.
+7. **Repository metadata is not fully clean.** `.git/refs/.DS_Store` is an
+   invalid ref and makes `git fsck --full` exit 8. Finder `.DS_Store` files and
+   an unrelated untracked `artifacts/` directory were deliberately not staged,
+   deleted, or claimed as evidence. Remove or quarantine them only as an
+   explicit cleanup action.
+8. **The Product Design audit is not complete.** The in-app Browser reached the
+   existing `/health` and `/queue` flows, but the local mock remained in a
+   permanent `Usenet Connections Loading...` state because it accepted the
+   websocket subscription without returning connection state. Loading-state
+   screenshots were rejected as audit evidence. Use a stable fixture or live
+   target before making visual conclusions.
+
+### 0.3 Architecture Contract Corrections Before Task 6
+
+- Section 3.8 already resolves credential ownership: provider credentials are
+  gateway-only secrets; control stores non-secret metadata. Amend any plan text
+  that has control loading provider secrets or building credential-bearing
+  gateway snapshots.
+- Split Foundation Task 6 into **6A manifest durability** and **6B ARR command
+  outbox**. Do not combine them into one review surface.
+- PostgreSQL sequences are not gapless because `nextval` is not rolled back.
+  Do not require strictly contiguous replay from a plain sequence; design an
+  explicitly locked transactional sequence state or a gap-tolerant protocol.
+- Define manifest coverage for completed-symlink receipt visibility, tombstones,
+  queue/config-derived `/nzbs`, and upload/cancel/delete semantics.
+- Replace an unbounded unary whole-tree snapshot with a framed/streaming snapshot
+  carrying a consistent high-water mark, count, and content digest.
+- ARR outbox execution needs owner/token/generation or equivalent lease fencing
+  so stale `Executing` rows can be recovered safely.
+- Use role-scoped authentication and server time; a shared token, caller time,
+  or unauthenticated `worker_id` is not an ownership protocol.
+- Rollback must stop split roles before starting `all`, and must account for
+  image/schema compatibility. Role heartbeats should include immutable image and
+  protocol versions. Aggregate performance baselines must include the Node UI
+  process used by the monolith.
+
+### 0.4 Revised Immediate Sequence
+
+1. Obtain the two PostgreSQL decisions in Section 0.5.
+2. Author and independently review a dedicated provider-migration design,
+   rehearsal, validation, and rollback plan. It must inventory every mismatched
+   column/index/trigger, invalid/colliding UUID behavior, timestamp conversion,
+   greenfield and existing-data paths, clone testing, and cutover reversal.
+3. Only after that plan is approved, implement provider-specific migration
+   sets. Use a native PostgreSQL baseline only for greenfield/test databases; if
+   real data exists, rehearse an offline dump/restore into a clone, apply the
+   full-schema compatibility bridge there, validate, and cut over by connection
+   switch while retaining the source for rollback.
+4. Complete the secure transfer-helper task and its real networked container
+   smoke only after the target PostgreSQL schema is valid.
+5. Implement and test the explicit public proxy route/method allowlist and the
+   minimal mode-`0600` rclone state record.
+6. Amend the Task 6 contract as above, then implement 6A and 6B separately.
+7. Complete Foundation Tasks 7 and 8, including PostgreSQL/Python/release gates.
+8. Repeat the Product Design audit against a stable fixture or user-selected
+   live flow.
+9. Push/open a PR only after the full foundation and release gates are green;
+   do not begin gateway/worker extraction or deploy split roles earlier.
+
+### 0.5 Required User Inputs
+
+1. Is any real NZBDav deployment currently backed by PostgreSQL with data, or
+   is PostgreSQL still greenfield/test-only?
+2. For legacy `DavItems`, `QueueItems`, and `HistoryItems` timestamps, should
+   values represent UTC instants or deployment-local wall-clock time? If they
+   must become UTC, provide the actual timezone used by each existing
+   deployment; do not infer it from the workstation timezone.
+3. For the Product Design audit, identify the priority stable flow/live URL, or
+   approve repairing the local websocket fixture so `/health` and `/queue`
+   reach a non-loading state.
+4. Approve or decline explicit cleanup/quarantine of `.git/refs/.DS_Store` and
+   the workspace `.DS_Store` files. The unrelated `artifacts/` directory remains
+   out of scope unless its owner/source is confirmed.
 
 ## 1. Purpose
 
@@ -716,7 +866,7 @@ npm --prefix frontend test
 npm --prefix frontend run build
 npm --prefix frontend run build:server
 npm --prefix frontend run test:e2e
-python3 -m unittest discover -s scripts/tests
+python3 -m unittest discover -s tests
 git diff --check
 ```
 
@@ -829,6 +979,15 @@ docker stop nzbdav-test-postgres
 
 ## 20. Final Handoff State
 
-The architecture direction is approved and documented. Foundation Tasks 1-4 and the clean portion of Task 5 are committed locally with strong SQLite/PostgreSQL evidence. The current worktree is intentionally preserved because it contains an interrupted second Task 5 fix wave, but that wave currently fails EF migration validation and must not be committed or deployed.
+The architecture direction remains approved. Foundation Tasks 1-5, the
+cross-process test-isolation repair, and the root container maintenance contract
+are committed locally with a final 694/694 PostgreSQL-enabled backend gate. The
+interrupted Task 5 wave described in the historical sections has been repaired,
+reviewed, and closed.
 
-The next engineer should finish Task 5 narrowly, verify it on both database providers, complete the remaining foundation tasks, and only then begin extracting gateway and workers. Rclone stays in production throughout the initial split. Native FUSE remains a measured replacement candidate, not an assumption.
+The next implementation blocker is the provider-specific PostgreSQL migration
+decision, not Task 6 code. Do not claim migrated PostgreSQL compatibility, run a
+real SQLite-to-PostgreSQL cutover, expose the broad proxy publicly, or begin
+gateway/worker extraction until the addendum sequence is satisfied. Rclone stays
+the production mount. Native FUSE remains a measured replacement candidate, not
+an assumption.
