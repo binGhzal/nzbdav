@@ -687,6 +687,14 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
 
     public async Task RemoveHistoryItemsAsync(List<Guid> ids, bool deleteFiles, CancellationToken ct = default)
     {
+        var receiptService = new ImportReceiptService(Ctx);
+        foreach (var historyItemId in ids)
+        {
+            await receiptService
+                .MarkRemovedAsync(historyItemId, DateTimeOffset.UtcNow, ct)
+                .ConfigureAwait(false);
+        }
+
         if (deleteFiles)
         {
             var results = await (

@@ -46,7 +46,8 @@ public static class DatabaseTransferService
             ArrDownloadCorrelations = await dbContext.ArrDownloadCorrelations.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
             QueuePriorityHints = await dbContext.QueuePriorityHints.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
             ArrSearchNudgeCommands = await dbContext.ArrSearchNudgeCommands.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
-            ArrDownloadLifecycleEvents = await dbContext.ArrDownloadLifecycleEvents.AsNoTracking().ToListAsync(ct).ConfigureAwait(false)
+            ArrDownloadLifecycleEvents = await dbContext.ArrDownloadLifecycleEvents.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
+            ImportReceipts = await dbContext.ImportReceipts.AsNoTracking().ToListAsync(ct).ConfigureAwait(false)
         };
 
         var directory = Path.GetDirectoryName(Path.GetFullPath(outputPath));
@@ -110,6 +111,7 @@ public static class DatabaseTransferService
             await AddAndSaveAsync(dbContext, snapshot.QueuePriorityHints, ct).ConfigureAwait(false);
             await AddAndSaveAsync(dbContext, snapshot.ArrSearchNudgeCommands, ct).ConfigureAwait(false);
             await AddAndSaveAsync(dbContext, snapshot.ArrDownloadLifecycleEvents, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.ImportReceipts, ct).ConfigureAwait(false);
 
             await tx.CommitAsync(ct).ConfigureAwait(false);
             return new DatabaseTransferImportResult(snapshot.TotalRows);
@@ -139,6 +141,7 @@ public static class DatabaseTransferService
         return await dbContext.Items.AnyAsync(ct).ConfigureAwait(false)
                || await dbContext.QueueItems.AnyAsync(ct).ConfigureAwait(false)
                || await dbContext.HistoryItems.AnyAsync(ct).ConfigureAwait(false)
+               || await dbContext.ImportReceipts.AnyAsync(ct).ConfigureAwait(false)
                || await dbContext.ConfigItems.AnyAsync(ct).ConfigureAwait(false)
                || await dbContext.Accounts.AnyAsync(ct).ConfigureAwait(false);
     }
@@ -146,6 +149,7 @@ public static class DatabaseTransferService
     private static async Task ClearApplicationTablesAsync(DavDatabaseContext dbContext, CancellationToken ct)
     {
         await ClearGeneratedOperationalTablesAsync(dbContext, ct).ConfigureAwait(false);
+        await dbContext.ImportReceipts.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.ArrDownloadLifecycleEvents.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.ArrSearchNudgeCommands.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.QueuePriorityHints.ExecuteDeleteAsync(ct).ConfigureAwait(false);
@@ -210,6 +214,7 @@ public sealed class DatabaseTransferSnapshot
     public List<QueuePriorityHint> QueuePriorityHints { get; set; } = [];
     public List<ArrSearchNudgeCommand> ArrSearchNudgeCommands { get; set; } = [];
     public List<ArrDownloadLifecycleEvent> ArrDownloadLifecycleEvents { get; set; } = [];
+    public List<ImportReceipt> ImportReceipts { get; set; } = [];
 
     public int TotalRows =>
         Accounts.Count + Items.Count + NzbFiles.Count + RarFiles.Count + MultipartFiles.Count
@@ -218,7 +223,7 @@ public sealed class DatabaseTransferSnapshot
         + DavCleanupItems.Count + NzbNames.Count + NzbBlobCleanupItems.Count + RcloneInvalidationItems.Count
         + WorkerJobs.Count + RepairRuns.Count + RepairEntryHealth.Count + RepairBrokenFiles.Count
         + ArrDownloadCorrelations.Count + QueuePriorityHints.Count + ArrSearchNudgeCommands.Count
-        + ArrDownloadLifecycleEvents.Count;
+        + ArrDownloadLifecycleEvents.Count + ImportReceipts.Count;
 }
 
 public sealed record DatabaseTransferImportResult(int ImportedRows);

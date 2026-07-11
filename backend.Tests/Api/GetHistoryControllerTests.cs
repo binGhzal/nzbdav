@@ -67,6 +67,53 @@ public sealed class GetHistoryControllerTests
         Assert.Equal(0, interceptor.Count);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RemoveHistoryItems_MarksReceiptRemovedBeforeHistoryCleanup(bool deleteFiles)
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var historyId = Guid.NewGuid();
+        var directory = DavItem.New(
+            Guid.NewGuid(), DavItem.ContentFolder, "Example", null,
+            DavItem.ItemType.Directory, DavItem.ItemSubType.Directory, null, null, historyId, null);
+        var file = DavItem.New(
+            Guid.NewGuid(), directory, "Example.mkv", 1024,
+            DavItem.ItemType.UsenetFile, DavItem.ItemSubType.MultipartFile, null, null, historyId, Guid.NewGuid());
+        dbContext.Items.AddRange(directory, file);
+        dbContext.HistoryItems.Add(new HistoryItem
+        {
+            Id = historyId,
+            CreatedAt = DateTime.UtcNow,
+            FileName = "Example.nzb",
+            JobName = "Example",
+            Category = "movies",
+            DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+            TotalSegmentBytes = 1024,
+            DownloadTimeSeconds = 1,
+            DownloadDirId = directory.Id
+        });
+        dbContext.ImportReceipts.Add(new ImportReceipt
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = file.Id,
+            HistoryItemId = historyId,
+            State = ImportReceiptState.Imported,
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+        });
+        await dbContext.SaveChangesAsync();
+
+        await new DavDatabaseClient(dbContext).RemoveHistoryItemsAsync([historyId], deleteFiles);
+        await dbContext.SaveChangesAsync();
+
+        Assert.Null(await dbContext.HistoryItems.SingleOrDefaultAsync(x => x.Id == historyId));
+        var receipt = await dbContext.ImportReceipts.SingleAsync(x => x.HistoryItemId == historyId);
+        Assert.Equal(ImportReceiptState.Removed, receipt.State);
+        Assert.NotNull(receipt.RemovedAt);
+        Assert.Equal(deleteFiles, (await dbContext.HistoryCleanupItems.SingleAsync(x => x.Id == historyId)).DeleteMountedFiles);
+    }
+
     [Fact]
     public async Task GetHistory_HidesCompletedRowsWithActivePostDownloadVerifyJobs()
     {

@@ -161,6 +161,9 @@ class Program
                     .IsWebdavAuthDisabled();
             });
 
+        if (role is NzbdavRole.Control or NzbdavRole.All)
+            builder.Services.AddHostedService<ImportReceiptReconciliationService>();
+
         // run
         var app = builder.Build();
         app.UseMiddleware<ExceptionMiddleware>();

@@ -329,6 +329,7 @@ public sealed class ArrOperationsService(ConfigManager configManager)
         correlation.UpdatedAt = now;
         correlation.LastSeenAt = now;
 
+        var lifecycleState = MapEventState(eventType);
         dbContext.ArrDownloadLifecycleEvents.Add(new ArrDownloadLifecycleEvent
         {
             Id = Guid.NewGuid(),
@@ -338,11 +339,17 @@ public sealed class ArrOperationsService(ConfigManager configManager)
             InstanceKey = instanceKey,
             DownloadId = downloadId,
             MediaKey = mediaKey,
-            State = MapEventState(eventType),
+            State = lifecycleState,
             StateReason = eventType,
             CreatedAt = now
         });
 
+        if (historyItemId.HasValue && lifecycleState == "Imported")
+        {
+            await new ImportReceiptService(dbContext)
+                .MarkImportedAsync(historyItemId.Value, now, ct)
+                .ConfigureAwait(false);
+        }
         await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
         return new ArrEventResponse
         {

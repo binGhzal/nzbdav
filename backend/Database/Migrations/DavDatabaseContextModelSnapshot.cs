@@ -472,6 +472,39 @@ namespace NzbWebDAV.Database.Migrations
                     b.ToTable("NzbBlobCleanupItems", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.ImportReceipt", b =>
+                {
+                    b.Property<Guid>("Id");
+
+                    b.Property<long>("CreatedAt");
+
+                    b.Property<Guid>("DavItemId");
+
+                    b.Property<string>("Detail")
+                        .HasMaxLength(1024);
+
+                    b.Property<Guid>("HistoryItemId");
+
+                    b.Property<long?>("ImportedAt");
+
+                    b.Property<long?>("RemovedAt");
+
+                    b.Property<int>("State");
+
+                    b.Property<long>("UpdatedAt");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("State");
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.HasIndex("DavItemId", "HistoryItemId")
+                        .IsUnique();
+
+                    b.ToTable("ImportReceipts", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.NzbName", b =>
                 {
                     b.Property<Guid>("Id");

@@ -109,6 +109,52 @@ public sealed class ArrOperationsServiceTests
         Assert.Equal("Grabbed", (await dbContext.ArrDownloadLifecycleEvents.SingleAsync()).State);
     }
 
+    [Theory]
+    [InlineData("Import")]
+    [InlineData("Download")]
+    public async Task IngestCustomScriptEvent_MarksCorrelatedReceiptImported(string eventType)
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var historyId = Guid.NewGuid();
+        var davItemId = Guid.NewGuid();
+        dbContext.HistoryItems.Add(new HistoryItem
+        {
+            Id = historyId,
+            CreatedAt = DateTime.UtcNow,
+            FileName = "Example.nzb",
+            JobName = "Example",
+            Category = "movies",
+            DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+            TotalSegmentBytes = 1024,
+            DownloadTimeSeconds = 1
+        });
+        dbContext.ImportReceipts.Add(new ImportReceipt
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = davItemId,
+            HistoryItemId = historyId,
+            State = ImportReceiptState.UnlinkClaimed,
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+        });
+        await dbContext.SaveChangesAsync();
+
+        await new ArrOperationsService(_fixture.CreateConfigManager()).IngestCustomScriptEventAsync(
+            dbContext,
+            "radarr",
+            new Dictionary<string, string>
+            {
+                ["event_type"] = eventType,
+                ["history_item_id"] = historyId.ToString(),
+                ["instance_host"] = "http://radarr:7878"
+            });
+
+        var receipt = await dbContext.ImportReceipts.SingleAsync(x => x.DavItemId == davItemId);
+        Assert.Equal(ImportReceiptState.Imported, receipt.State);
+        Assert.NotNull(receipt.ImportedAt);
+        Assert.Equal("Imported", (await dbContext.ArrDownloadLifecycleEvents.SingleAsync(x => x.HistoryItemId == historyId)).State);
+    }
+
     [Fact]
     public async Task IngestCustomScriptEvent_TreatsTestEventAsNoOpSuccess()
     {

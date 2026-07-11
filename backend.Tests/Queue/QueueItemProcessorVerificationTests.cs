@@ -51,6 +51,46 @@ public sealed class QueueItemProcessorVerificationTests
         Assert.Equal(HistoryItem.DownloadStatusOption.Failed, historyItem.DownloadStatus);
         Assert.Equal("The NZB file is missing from the queue store.", historyItem.FailMessage);
         Assert.Null(queueItem.PauseUntil);
+        Assert.Empty(await dbContext.ImportReceipts.Where(x => x.HistoryItemId == historyItem.Id).ToListAsync());
+    }
+
+    [Fact]
+    public async Task MarkQueueItemCompleted_StagesAvailableReceiptInCompletionTransaction()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var queueItem = CreateQueueItem();
+        dbContext.QueueItems.Add(queueItem);
+        await dbContext.SaveChangesAsync();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var configManager = _fixture.CreateConfigManager();
+        using var usenetClient = new FakeNntpClient();
+        var processor = new QueueItemProcessor(
+            queueItem,
+            Stream.Null,
+            dbClient,
+            usenetClient,
+            configManager,
+            new WebsocketManager(),
+            new ArrDownloadReportService(configManager),
+            new Progress<int>(),
+            CancellationToken.None);
+        DavItem? outputFile = null;
+
+        await InvokeMarkQueueItemCompletedAsync(processor, async () =>
+        {
+            var mountFolder = CreateDavItem(
+                "Example Movie", DavItem.ItemType.Directory, DavItem.ItemSubType.Directory, queueItem.Id);
+            outputFile = CreateDavItem(
+                "Example.mkv", DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile, queueItem.Id);
+            dbContext.Items.AddRange(mountFolder, outputFile);
+            await Task.Yield();
+            return mountFolder;
+        });
+
+        var history = await dbContext.HistoryItems.SingleAsync(x => x.Id == queueItem.Id);
+        var receipt = await dbContext.ImportReceipts.SingleAsync(x => x.HistoryItemId == history.Id);
+        Assert.Equal(outputFile!.Id, receipt.DavItemId);
+        Assert.Equal(ImportReceiptState.Available, receipt.State);
     }
 
     [Fact]
@@ -256,6 +296,18 @@ public sealed class QueueItemProcessorVerificationTests
             BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.NotNull(method);
         var task = (Task)method.Invoke(processor, [mountFolder])!;
+        await task.ConfigureAwait(false);
+    }
+
+    private static async Task InvokeMarkQueueItemCompletedAsync(
+        QueueItemProcessor processor,
+        Func<Task<DavItem?>> databaseOperations)
+    {
+        var method = typeof(QueueItemProcessor).GetMethod(
+            "MarkQueueItemCompleted",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+        var task = (Task)method.Invoke(processor, [DateTime.Now, null, databaseOperations])!;
         await task.ConfigureAwait(false);
     }
 

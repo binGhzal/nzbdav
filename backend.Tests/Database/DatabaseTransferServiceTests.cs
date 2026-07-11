@@ -21,6 +21,7 @@ public sealed class DatabaseTransferServiceTests
     {
         var leaseToken = Guid.NewGuid();
         var leaseTimestamp = DateTimeOffset.UtcNow;
+        var receiptId = Guid.NewGuid();
         await using (var source = await _fixture.ResetAndCreateMigratedContextAsync())
         {
             var queueItem = new QueueItem
@@ -102,6 +103,16 @@ public sealed class DatabaseTransferServiceTests
                 ResultJson = "{\"result\":\"pending\"}",
                 PayloadJson = "{\"source\":\"test\"}"
             });
+            source.ImportReceipts.Add(new ImportReceipt
+            {
+                Id = receiptId,
+                DavItemId = Guid.NewGuid(),
+                HistoryItemId = Guid.NewGuid(),
+                State = ImportReceiptState.NeedsReview,
+                CreatedAt = leaseTimestamp,
+                UpdatedAt = leaseTimestamp,
+                Detail = "transfer test"
+            });
             await source.SaveChangesAsync();
         }
 
@@ -109,6 +120,7 @@ public sealed class DatabaseTransferServiceTests
         await using (var source = await _fixture.CreateMigratedContextAsync())
         {
             await DatabaseTransferService.ExportJsonAsync(source, exportPath);
+            await source.ImportReceipts.Where(x => x.Id == receiptId).ExecuteDeleteAsync();
         }
 
         await _fixture.ResetAsync();
@@ -135,6 +147,8 @@ public sealed class DatabaseTransferServiceTests
         Assert.Equal("{\"completed\":42}", workerJob.ProgressJson);
         Assert.Equal(leaseTimestamp, workerJob.ProgressUpdatedAt);
         Assert.Equal("{\"result\":\"pending\"}", workerJob.ResultJson);
+        var receipt = await imported.ImportReceipts.SingleAsync(x => x.Id == receiptId);
+        Assert.Equal(ImportReceiptState.NeedsReview, receipt.State);
     }
 
     [Fact]

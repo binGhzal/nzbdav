@@ -435,6 +435,12 @@ public class QueueItemProcessor(
         dbClient.Ctx.QueueItems.Remove(queueItem);
         dbClient.Ctx.HistoryItems.Add(historyItem);
         dbClient.Ctx.EnqueueRcloneVfsForgetPaths(["/nzbs"]);
+        if (error == null)
+        {
+            await new ImportReceiptService(dbClient.Ctx)
+                .StageAvailableReceiptsAsync(historyItem.Id, DateTimeOffset.UtcNow, ct)
+                .ConfigureAwait(false);
+        }
         await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
         await arrDownloadReportService
             .RecordHistoryLifecycleAsync(

@@ -1,5 +1,5 @@
 ﻿using System.Text.RegularExpressions;
-using Microsoft.Extensions.Caching.Memory;
+using Microsoft.EntityFrameworkCore;
 using NWebDav.Server;
 using NWebDav.Server.Stores;
 using NzbWebDAV.Config;
@@ -7,6 +7,8 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.WebDav.Base;
 using NzbWebDAV.WebDav.Requests;
+using NzbWebDAV.Services;
+using Serilog;
 
 namespace NzbWebDAV.WebDav;
 
@@ -21,20 +23,23 @@ public class DatabaseStoreSymlinkCollection(
     public override DateTime CreatedAt => davDirectory.CreatedAt;
 
     private Guid TargetId => davDirectory.Id == DavItem.SymlinkFolder.Id ? DavItem.ContentFolder.Id : davDirectory.Id;
-    private DeletedFileManager DeletedFiles => new(davDirectory.Id);
-
     protected override async Task<IStoreItem?> GetItemAsync(GetItemRequest request)
     {
-        // return deleted file
-        if (DeletedFiles.IsDeleted(request.Name))
-            return null;
-
         // return database item
         var name = Regex.Replace(request.Name, @"\.rclonelink$", "");
         var child = await dbClient
             .GetDirectoryChildAsync(TargetId, name, request.CancellationToken)
             .ConfigureAwait(false);
-        if (child is not null) return GetItem(child);
+        if (child is not null)
+        {
+            var hidden = await dbClient.Ctx.ImportReceipts
+                .AsNoTracking()
+                .AnyAsync(
+                    x => x.DavItemId == child.Id && x.State != ImportReceiptState.Available,
+                    request.CancellationToken)
+                .ConfigureAwait(false);
+            return hidden ? null : GetItem(child);
+        }
 
         // return empty category folder
         var isSymlinkFolder = davDirectory.Id == DavItem.SymlinkFolder.Id;
@@ -61,8 +66,19 @@ public class DatabaseStoreSymlinkCollection(
                 .ConfigureAwait(false)
             : await dbClient.GetDirectoryChildrenAsync(TargetId, cancellationToken).ConfigureAwait(false);
 
+        var childIds = children.Select(x => x.Id).ToList();
+        var hiddenIds = childIds.Count == 0
+            ? []
+            : await dbClient.Ctx.ImportReceipts
+                .AsNoTracking()
+                .Where(x => childIds.Contains(x.DavItemId) && x.State != ImportReceiptState.Available)
+                .Select(x => x.DavItemId)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
         // map DavItems to IStoreItems
-        var result = children.Select(GetItem);
+        var hiddenIdSet = hiddenIds.ToHashSet();
+        var result = children.Where(x => !hiddenIdSet.Contains(x.Id)).Select(GetItem);
 
         // include any missing category folders
         var isSymlinkFolder = davDirectory.Id == DavItem.SymlinkFolder.Id;
@@ -73,16 +89,14 @@ public class DatabaseStoreSymlinkCollection(
                 .Select(x => new BaseStoreEmptyCollection(x)));
         }
 
-        return result
-            .Where(x => !DeletedFiles.IsDeleted(x.Name)) // must appear after Select(GetItem) for correct Name.
-            .ToArray();
+        return result.ToArray();
     }
 
-    protected override Task<DavStatusCode> DeleteItemAsync(DeleteItemRequest request)
+    protected override async Task<DavStatusCode> DeleteItemAsync(DeleteItemRequest request)
     {
         // Cannot delete from symlink root folder
         var isSymlinkFolder = davDirectory.Id == DavItem.SymlinkFolder.Id;
-        if (isSymlinkFolder) return base.DeleteItemAsync(request);
+        if (isSymlinkFolder) return await base.DeleteItemAsync(request).ConfigureAwait(false);
 
         // Items cannot be deleted from the '/completed-symlinks' folder.
         // This path simply mirrors the '/content' folder, except with symlinks.
@@ -101,20 +115,37 @@ public class DatabaseStoreSymlinkCollection(
         // But in this request, we only want to "delete" the symlink. We don't want
         // to delete the underlying media within the '/content' directory.
         //
-        // Instead, we store the filename in a temporary cache (for 30 seconds).
-        // While the filename is in the cache, we will no longer create that
-        // symlink on-the-fly in subsequent webdav requests. It essentially
-        // mimics a deletion even though there was nothing to delete in the first
-        // place, since everything is created on the fly, mirroring the '/content'
-        // directory.
-        //
         // (204 No Content) is the correct status code to return for a successful
         // deletion of a file. This status code means the server has successfully
         // processed the request, and there is no additional content to send in the
         // response body. (200 OK) is also acceptable, but more appropriate for when
         // the server also returns a response body with the status of the operation.
-        DeletedFiles.AddDeletedFile(request.Name, TimeSpan.FromSeconds(30));
-        return Task.FromResult(DavStatusCode.NoContent);
+        var name = Regex.Replace(request.Name, @"\.rclonelink$", "");
+        var child = await dbClient
+            .GetDirectoryChildAsync(TargetId, name, request.CancellationToken)
+            .ConfigureAwait(false);
+        if (child?.HistoryItemId == null || child.Type != DavItem.ItemType.UsenetFile)
+            return DavStatusCode.NotFound;
+
+        try
+        {
+            await new ImportReceiptService(dbClient.Ctx)
+                .ClaimAsync(
+                    new ImportClaimRequest(child.Id, child.HistoryItemId.Value, DateTimeOffset.UtcNow),
+                    request.CancellationToken)
+                .ConfigureAwait(false);
+            return DavStatusCode.NoContent;
+        }
+        catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            Log.Warning(exception, "Unable to persist completed-symlink import claim for {DavItemId}.", child.Id);
+            dbClient.Ctx.ChangeTracker.Clear();
+            return DavStatusCode.ServiceUnavailable;
+        }
     }
 
     private IStoreItem GetItem(DavItem davItem)
@@ -133,25 +164,4 @@ public class DatabaseStoreSymlinkCollection(
         };
     }
 
-    private class DeletedFileManager(Guid directoryId)
-    {
-        private static readonly MemoryCache DeletedFiles = new(new MemoryCacheOptions());
-
-        public void AddDeletedFile(string filename, TimeSpan? expiry = null)
-        {
-            using var entry = DeletedFiles.CreateEntry(GetKey(filename));
-            entry.SlidingExpiration = expiry ?? TimeSpan.FromSeconds(30);
-            entry.Value = true;
-        }
-
-        public bool IsDeleted(string filename)
-        {
-            return (bool)(DeletedFiles.Get(GetKey(filename)) ?? false);
-        }
-
-        private string GetKey(string filename)
-        {
-            return $"{directoryId}/{filename}";
-        }
-    }
 }

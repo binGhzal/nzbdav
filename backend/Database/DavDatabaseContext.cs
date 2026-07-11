@@ -174,6 +174,7 @@ public sealed class DavDatabaseContext : DbContext
     public DbSet<QueuePriorityHint> QueuePriorityHints => Set<QueuePriorityHint>();
     public DbSet<ArrSearchNudgeCommand> ArrSearchNudgeCommands => Set<ArrSearchNudgeCommand>();
     public DbSet<ArrDownloadLifecycleEvent> ArrDownloadLifecycleEvents => Set<ArrDownloadLifecycleEvent>();
+    public DbSet<ImportReceipt> ImportReceipts => Set<ImportReceipt>();
 
     // blob items
     public List<DavNzbFile> BlobNzbFiles = [];
@@ -712,6 +713,33 @@ public sealed class DavDatabaseContext : DbContext
             e.HasIndex(i => new { i.Status, i.LeaseExpiresAt, i.LeaseGeneration })
                 .HasDatabaseName("IX_WorkerJobs_Status_LeaseExpiresAt_LeaseGeneration")
                 .IsUnique(false);
+        });
+
+        // ImportReceipt
+        b.Entity<ImportReceipt>(e =>
+        {
+            e.ToTable("ImportReceipts");
+            e.HasKey(i => i.Id);
+            e.Property(i => i.Id).ValueGeneratedNever();
+            e.Property(i => i.DavItemId).ValueGeneratedNever().IsRequired();
+            e.Property(i => i.HistoryItemId).ValueGeneratedNever().IsRequired();
+            e.Property(i => i.State).HasConversion<int>().IsRequired();
+            e.Property(i => i.CreatedAt).ValueGeneratedNever().HasConversion(
+                x => x.UtcTicks,
+                x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))).IsRequired();
+            e.Property(i => i.UpdatedAt).ValueGeneratedNever().HasConversion(
+                x => x.UtcTicks,
+                x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))).IsRequired();
+            e.Property(i => i.ImportedAt).ValueGeneratedNever().HasConversion(
+                x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null);
+            e.Property(i => i.RemovedAt).ValueGeneratedNever().HasConversion(
+                x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null);
+            e.Property(i => i.Detail).HasMaxLength(1024);
+            e.HasIndex(i => new { i.DavItemId, i.HistoryItemId }).IsUnique();
+            e.HasIndex(i => i.State);
+            e.HasIndex(i => i.UpdatedAt);
         });
 
         // ArrDownloadCorrelation
