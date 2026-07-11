@@ -7,6 +7,7 @@ using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
+using NzbWebDAV.Coordination;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
@@ -17,6 +18,7 @@ using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
+using Microsoft.Extensions.Options;
 
 namespace NzbWebDAV.Services;
 
@@ -27,7 +29,6 @@ public class HealthCheckService : BackgroundService
 {
     private static readonly TimeSpan AutoRepairRetryDelay = TimeSpan.FromHours(6);
     private static readonly TimeSpan ProviderErrorRetryDelay = TimeSpan.FromMinutes(15);
-    private static readonly TimeSpan WorkerLeaseDuration = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan MissingSegmentCacheTtl = TimeSpan.FromHours(6);
     private static readonly TimeSpan RecentlyVerifiedSegmentCacheTtl = TimeSpan.FromHours(6);
     private const int WorkerMaxAttempts = 3;
@@ -42,6 +43,8 @@ public class HealthCheckService : BackgroundService
     private readonly INntpClient _usenetClient;
     private readonly QueueWorkLaneCoordinator _queueWorkLaneCoordinator;
     private readonly WebsocketManager _websocketManager;
+    private readonly IWorkerJobCoordinator _workerJobCoordinator;
+    private readonly WorkerLeaseOptions _workerLeaseOptions;
     private readonly object _activeHealthChecksLock = new();
     private readonly HashSet<Guid> _activeHealthChecks = [];
     private readonly object _inFlightSegmentChecksLock = new();
@@ -71,13 +74,19 @@ public class HealthCheckService : BackgroundService
         ConfigManager configManager,
         UsenetStreamingClient usenetClient,
         QueueWorkLaneCoordinator queueWorkLaneCoordinator,
-        WebsocketManager websocketManager
+        WebsocketManager websocketManager,
+        IWorkerJobCoordinator? workerJobCoordinator = null,
+        IOptions<WorkerLeaseOptions>? workerLeaseOptions = null
     )
     {
         _configManager = configManager;
         _usenetClient = usenetClient;
         _queueWorkLaneCoordinator = queueWorkLaneCoordinator;
         _websocketManager = websocketManager;
+        _workerLeaseOptions = workerLeaseOptions?.Value ?? new WorkerLeaseOptions();
+        _workerJobCoordinator = workerJobCoordinator ?? new DatabaseWorkerJobCoordinator(
+            new ConfigWorkerLaneCapacityPolicy(configManager),
+            Options.Create(_workerLeaseOptions));
 
         _configManager.OnConfigChanged += (_, configEventArgs) =>
         {
@@ -257,7 +266,7 @@ public class HealthCheckService : BackgroundService
         return Math.Max(1, Math.Max(1, segmentConcurrency) / plannedWorkers);
     }
 
-    private async Task<WorkerJob?> LeaseNextVerificationJobAsync(
+    private async Task<WorkerLease?> LeaseNextVerificationJobAsync(
         IReadOnlyCollection<Guid> activeHealthCheckIds,
         bool autoEnqueueDueItems,
         CancellationToken ct)
@@ -266,14 +275,8 @@ public class HealthCheckService : BackgroundService
         var dbClient = new DavDatabaseClient(dbContext);
         var currentDateTime = DateTimeOffset.UtcNow;
 
-        var existingJob = await dbClient.LeaseNextWorkerJobAsync(
-                WorkerJob.JobKind.Verify,
-                owner: $"{Environment.MachineName}:{Environment.ProcessId}:verify",
-                leaseDuration: WorkerLeaseDuration,
-                now: currentDateTime,
-                ct: ct,
-                excludeTargetIds: activeHealthCheckIds)
-            .ConfigureAwait(false);
+        var existingJob = await LeaseNextHealthJobAsync(
+            WorkerJob.JobKind.Verify, activeHealthCheckIds, currentDateTime, ct).ConfigureAwait(false);
         if (existingJob != null) return existingJob;
 
         if (!autoEnqueueDueItems) return null;
@@ -298,53 +301,67 @@ public class HealthCheckService : BackgroundService
                 ct: ct)
             .ConfigureAwait(false);
 
-        return await dbClient.LeaseNextWorkerJobAsync(
-                WorkerJob.JobKind.Verify,
-                owner: $"{Environment.MachineName}:{Environment.ProcessId}:verify",
-                leaseDuration: WorkerLeaseDuration,
-                now: currentDateTime,
-                ct: ct,
-                excludeTargetIds: activeHealthCheckIds)
-            .ConfigureAwait(false);
+        return await LeaseNextHealthJobAsync(
+            WorkerJob.JobKind.Verify, activeHealthCheckIds, currentDateTime, ct).ConfigureAwait(false);
     }
 
-    private static async Task<WorkerJob?> LeaseNextRepairJobAsync(
+    private async Task<WorkerLease?> LeaseNextRepairJobAsync(
         IReadOnlyCollection<Guid> activeHealthCheckIds,
         CancellationToken ct)
     {
-        await using var dbContext = new DavDatabaseContext();
-        var dbClient = new DavDatabaseClient(dbContext);
-        return await dbClient.LeaseNextWorkerJobAsync(
-                WorkerJob.JobKind.Repair,
-                owner: $"{Environment.MachineName}:{Environment.ProcessId}:repair",
-                leaseDuration: WorkerLeaseDuration,
-                ct: ct,
-                excludeTargetIds: activeHealthCheckIds)
-            .ConfigureAwait(false);
+        return await LeaseNextHealthJobAsync(
+            WorkerJob.JobKind.Repair, activeHealthCheckIds, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
     }
 
-    private static async Task ReleaseLeasedWorkerJobAsync(WorkerJob workerJob, CancellationToken ct)
+    private async Task<WorkerLease?> LeaseNextHealthJobAsync(
+        WorkerJob.JobKind kind,
+        IReadOnlyCollection<Guid> excludedTargetIds,
+        DateTimeOffset now,
+        CancellationToken ct)
     {
-        await using var dbContext = new DavDatabaseContext();
-        dbContext.WorkerJobs.Attach(workerJob);
-        var dbClient = new DavDatabaseClient(dbContext);
-        await dbClient.ReleaseWorkerJobLeaseAsync(workerJob, ct: ct).ConfigureAwait(false);
+        var excluded = excludedTargetIds.Count == 0 ? null : excludedTargetIds.ToHashSet();
+        for (var attempt = 0; attempt <= excludedTargetIds.Count; attempt++)
+        {
+            var leases = await _workerJobCoordinator.LeaseAsync(
+                kind,
+                $"{Environment.MachineName}:{Environment.ProcessId}:{kind.ToString().ToLowerInvariant()}",
+                1,
+                now,
+                ct).ConfigureAwait(false);
+            if (leases.Count == 0) return null;
+
+            var lease = leases[0];
+            if (excluded is null || !excluded.Contains(lease.TargetId)) return lease;
+
+            await _workerJobCoordinator.ReleaseAsync(
+                lease.Identity, now.AddMilliseconds(attempt + 1), ct).ConfigureAwait(false);
+        }
+
+        return null;
+    }
+
+    private Task<bool> ReleaseLeasedWorkerJobAsync(WorkerLease workerLease, CancellationToken ct)
+    {
+        return _workerJobCoordinator.ReleaseAsync(workerLease.Identity, DateTimeOffset.UtcNow, ct);
     }
 
     private async Task RunVerificationWorkerAsync(
-        WorkerJob workerJob,
+        WorkerLease workerJob,
         int segmentConcurrency,
         IDisposable verifyLease,
         CancellationToken ct)
     {
+        using var workerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var renewalStop = new CancellationTokenSource();
+        var renewalState = new LeaseRenewalState();
+        var renewalTask = RenewLeaseAsync(workerJob.Identity, workerCts, renewalState, renewalStop.Token);
         try
         {
             await using var dbContext = new DavDatabaseContext();
             var dbClient = new DavDatabaseClient(dbContext);
             var davItem = await dbContext.Items
-                .FirstOrDefaultAsync(x => x.Id == workerJob.TargetId, ct)
+                .FirstOrDefaultAsync(x => x.Id == workerJob.TargetId, workerCts.Token)
                 .ConfigureAwait(false);
-            dbContext.WorkerJobs.Attach(workerJob);
             var repairRunId = DavDatabaseClient.TryGetRepairRunId(workerJob.PayloadJson);
             if (davItem == null)
             {
@@ -353,7 +370,7 @@ public class HealthCheckService : BackgroundService
                     var path = await dbContext.RepairEntryHealth
                         .Where(x => x.RepairRunId == repairRunId.Value && x.DavItemId == workerJob.TargetId)
                         .Select(x => x.Path)
-                        .FirstOrDefaultAsync(ct)
+                        .FirstOrDefaultAsync(workerCts.Token)
                         .ConfigureAwait(false) ?? "";
                     await dbClient.UpsertRepairEntryAsync(
                             repairRunId.Value,
@@ -361,11 +378,12 @@ public class HealthCheckService : BackgroundService
                             path,
                             RepairEntryHealth.RepairEntryState.Deleted,
                             "File no longer exists.",
-                            ct: ct)
+                            ct: workerCts.Token)
                         .ConfigureAwait(false);
-                    await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+                    await dbContext.SaveChangesAsync(workerCts.Token).ConfigureAwait(false);
                 }
-                await dbClient.CompleteWorkerJobAsync(workerJob, ct: ct).ConfigureAwait(false);
+                await _workerJobCoordinator.CompleteAsync(
+                    workerJob.Identity, null, DateTimeOffset.UtcNow, workerCts.Token).ConfigureAwait(false);
                 return;
             }
 
@@ -377,9 +395,9 @@ public class HealthCheckService : BackgroundService
                         davItem.Path,
                         RepairEntryHealth.RepairEntryState.Checking,
                         "Checking file articles.",
-                        ct: ct)
+                        ct: workerCts.Token)
                     .ConfigureAwait(false);
-                await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+                await dbContext.SaveChangesAsync(workerCts.Token).ConfigureAwait(false);
             }
 
             var isPostDownloadVerification = IsPostDownloadVerificationJob(workerJob);
@@ -387,16 +405,17 @@ public class HealthCheckService : BackgroundService
                     davItem,
                     dbClient,
                     segmentConcurrency,
-                    ct,
+                    workerCts.Token,
                     repairRunId,
                     skipReleaseDateProbe: isPostDownloadVerification,
                     useRecentlyVerifiedSegmentCache: isPostDownloadVerification)
                 .ConfigureAwait(false);
-            await dbClient.CompleteWorkerJobAsync(workerJob, ct: ct).ConfigureAwait(false);
+            await _workerJobCoordinator.CompleteAsync(
+                workerJob.Identity, null, DateTimeOffset.UtcNow, workerCts.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
+        catch (OperationCanceledException) when (workerCts.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
         {
-            await ReleaseWorkerJobAfterCancellationAsync(workerJob, WorkerJob.JobKind.Verify)
+            await FinishWorkerCancellationAsync(workerJob, WorkerJob.JobKind.Verify, renewalState.Rejected)
                 .ConfigureAwait(false);
         }
         catch (Exception e)
@@ -416,18 +435,20 @@ public class HealthCheckService : BackgroundService
         }
         finally
         {
+            await renewalStop.CancelAsync().ConfigureAwait(false);
+            await renewalTask.ConfigureAwait(false);
             Interlocked.Decrement(ref _activeVerificationJobs);
             verifyLease.Dispose();
             ClearHealthCheckActive(workerJob.TargetId);
         }
     }
 
-    private static bool IsPostDownloadVerificationJob(WorkerJob workerJob)
+    private static bool IsPostDownloadVerificationJob(WorkerLease workerJob)
     {
         return workerJob.Priority > 0 || DavDatabaseClient.IsPostDownloadVerifyPayload(workerJob.PayloadJson);
     }
 
-    private async Task<bool> TryStartRepairWorkerAsync(WorkerJob workerJob, CancellationToken ct)
+    private async Task<bool> TryStartRepairWorkerAsync(WorkerLease workerJob, CancellationToken ct)
     {
         if (!TryMarkHealthCheckActive(workerJob.TargetId))
         {
@@ -440,29 +461,34 @@ public class HealthCheckService : BackgroundService
         return true;
     }
 
-    private async Task RunRepairWorkerAsync(WorkerJob workerJob, CancellationToken ct)
+    private async Task RunRepairWorkerAsync(WorkerLease workerJob, CancellationToken ct)
     {
+        using var workerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var renewalStop = new CancellationTokenSource();
+        var renewalState = new LeaseRenewalState();
+        var renewalTask = RenewLeaseAsync(workerJob.Identity, workerCts, renewalState, renewalStop.Token);
         try
         {
             await using var dbContext = new DavDatabaseContext();
             var dbClient = new DavDatabaseClient(dbContext);
             var davItem = await dbContext.Items
-                .FirstOrDefaultAsync(x => x.Id == workerJob.TargetId, ct)
+                .FirstOrDefaultAsync(x => x.Id == workerJob.TargetId, workerCts.Token)
                 .ConfigureAwait(false);
-            dbContext.WorkerJobs.Attach(workerJob);
             var repairRunId = DavDatabaseClient.TryGetRepairRunId(workerJob.PayloadJson);
             if (davItem == null)
             {
-                await dbClient.CompleteWorkerJobAsync(workerJob, ct: ct).ConfigureAwait(false);
+                await _workerJobCoordinator.CompleteAsync(
+                    workerJob.Identity, null, DateTimeOffset.UtcNow, workerCts.Token).ConfigureAwait(false);
                 return;
             }
 
-            await Repair(davItem, dbClient, ct, repairRunId).ConfigureAwait(false);
-            await dbClient.CompleteWorkerJobAsync(workerJob, ct: ct).ConfigureAwait(false);
+            await Repair(davItem, dbClient, workerCts.Token, repairRunId).ConfigureAwait(false);
+            await _workerJobCoordinator.CompleteAsync(
+                workerJob.Identity, null, DateTimeOffset.UtcNow, workerCts.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
+        catch (OperationCanceledException) when (workerCts.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
         {
-            await ReleaseWorkerJobAfterCancellationAsync(workerJob, WorkerJob.JobKind.Repair)
+            await FinishWorkerCancellationAsync(workerJob, WorkerJob.JobKind.Repair, renewalState.Rejected)
                 .ConfigureAwait(false);
         }
         catch (Exception e)
@@ -472,14 +498,16 @@ public class HealthCheckService : BackgroundService
         }
         finally
         {
+            await renewalStop.CancelAsync().ConfigureAwait(false);
+            await renewalTask.ConfigureAwait(false);
             Interlocked.Decrement(ref _activeRepairJobs);
             ClearHealthCheckActive(workerJob.TargetId);
         }
     }
 
-    private static async Task<WorkerJob.JobStatus?> FailLeasedWorkerJobAsync
+    private async Task<WorkerJob.JobStatus?> FailLeasedWorkerJobAsync
     (
-        WorkerJob workerJob,
+        WorkerLease workerJob,
         Exception exception,
         WorkerJob.JobKind kind,
         CancellationToken ct
@@ -487,17 +515,18 @@ public class HealthCheckService : BackgroundService
     {
         try
         {
-            await using var dbContext = new DavDatabaseContext();
-            dbContext.WorkerJobs.Attach(workerJob);
-            var dbClient = new DavDatabaseClient(dbContext);
-            await dbClient.FailWorkerJobAsync(
-                    workerJob,
-                    error: exception.Message,
-                    nextAttemptAt: DateTimeOffset.UtcNow.AddMinutes(kind == WorkerJob.JobKind.Repair ? 15 : 5),
-                    maxAttempts: WorkerMaxAttempts,
-                    ct: ct)
+            await _workerJobCoordinator.FailAsync(
+                    workerJob.Identity,
+                    WorkerJob.FailureClass.Retryable,
+                    exception.Message,
+                    DateTimeOffset.UtcNow.AddMinutes(kind == WorkerJob.JobKind.Repair ? 15 : 5),
+                    WorkerMaxAttempts,
+                    DateTimeOffset.UtcNow,
+                    ct)
                 .ConfigureAwait(false);
-            return workerJob.Status;
+            return workerJob.Attempt >= WorkerMaxAttempts
+                ? WorkerJob.JobStatus.Quarantined
+                : WorkerJob.JobStatus.Retry;
         }
         catch (Exception e)
         {
@@ -506,15 +535,28 @@ public class HealthCheckService : BackgroundService
         }
     }
 
-    private static async Task ReleaseWorkerJobAfterCancellationAsync(WorkerJob workerJob, WorkerJob.JobKind kind)
+    private async Task FinishWorkerCancellationAsync(
+        WorkerLease workerJob,
+        WorkerJob.JobKind kind,
+        bool renewalRejected)
     {
         try
         {
-            await using var dbContext = new DavDatabaseContext();
-            dbContext.WorkerJobs.Attach(workerJob);
-            var dbClient = new DavDatabaseClient(dbContext);
-            await dbClient.ReleaseWorkerJobLeaseAsync(workerJob, ct: CancellationToken.None)
-                .ConfigureAwait(false);
+            if (renewalRejected)
+            {
+                var acknowledged = await _workerJobCoordinator.FailAsync(
+                    workerJob.Identity,
+                    WorkerJob.FailureClass.Cancelled,
+                    "Cancelled by request.",
+                    DateTimeOffset.UtcNow,
+                    WorkerMaxAttempts,
+                    DateTimeOffset.UtcNow,
+                    CancellationToken.None).ConfigureAwait(false);
+                if (acknowledged) return;
+            }
+
+            await _workerJobCoordinator.ReleaseAsync(
+                workerJob.Identity, DateTimeOffset.UtcNow, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception e)
         {
@@ -522,9 +564,44 @@ public class HealthCheckService : BackgroundService
                 e,
                 "Failed to release cancelled {WorkerKind} worker job {WorkerJobId}: {Message}",
                 kind,
-                workerJob.Id,
+                workerJob.Identity.JobId,
                 e.Message);
         }
+    }
+
+    private async Task RenewLeaseAsync(
+        WorkerLeaseIdentity identity,
+        CancellationTokenSource workerCts,
+        LeaseRenewalState state,
+        CancellationToken ct)
+    {
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(_workerLeaseOptions.RenewalInterval, ct).ConfigureAwait(false);
+                if (await _workerJobCoordinator.RenewAsync(
+                        identity, DateTimeOffset.UtcNow, ct).ConfigureAwait(false))
+                    continue;
+
+                state.Rejected = true;
+                await workerCts.CancelAsync().ConfigureAwait(false);
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception e)
+        {
+            Log.Warning(e, "Worker lease renewal failed for {WorkerJobId}: {Message}", identity.JobId, e.Message);
+            await workerCts.CancelAsync().ConfigureAwait(false);
+        }
+    }
+
+    private sealed class LeaseRenewalState
+    {
+        public volatile bool Rejected;
     }
 
     private static async Task MarkRepairVerificationFailureAsync

@@ -1,5 +1,6 @@
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
+using NzbWebDAV.Coordination;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
@@ -8,12 +9,12 @@ using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
 using System.Runtime;
+using Microsoft.Extensions.Options;
 
 namespace NzbWebDAV.Queue;
 
 public class QueueManager : IDisposable
 {
-    private static readonly TimeSpan DownloadWorkerLeaseDuration = TimeSpan.FromMinutes(15);
     private const int DownloadWorkerRetryMaxAttempts = int.MaxValue;
 
     private readonly Dictionary<Guid, InProgressQueueItem> _inProgressQueueItems = new();
@@ -25,6 +26,8 @@ public class QueueManager : IDisposable
     private readonly QueueWorkLaneCoordinator _queueWorkLaneCoordinator;
     private readonly WebsocketManager _websocketManager;
     private readonly ArrDownloadReportService _arrDownloadReportService;
+    private readonly IWorkerJobCoordinator _workerJobCoordinator;
+    private readonly WorkerLeaseOptions _workerLeaseOptions;
     private readonly Lock _inProgressQueueItemsLock = new();
     private long _lastMemoryCompactionTicks;
 
@@ -36,7 +39,9 @@ public class QueueManager : IDisposable
         ConfigManager configManager,
         QueueWorkLaneCoordinator queueWorkLaneCoordinator,
         WebsocketManager websocketManager,
-        ArrDownloadReportService arrDownloadReportService
+        ArrDownloadReportService arrDownloadReportService,
+        IWorkerJobCoordinator? workerJobCoordinator = null,
+        IOptions<WorkerLeaseOptions>? workerLeaseOptions = null
     )
     {
         _usenetClient = usenetClient;
@@ -44,6 +49,10 @@ public class QueueManager : IDisposable
         _queueWorkLaneCoordinator = queueWorkLaneCoordinator;
         _websocketManager = websocketManager;
         _arrDownloadReportService = arrDownloadReportService;
+        _workerLeaseOptions = workerLeaseOptions?.Value ?? new WorkerLeaseOptions();
+        _workerJobCoordinator = workerJobCoordinator ?? new DatabaseWorkerJobCoordinator(
+            new ConfigWorkerLaneCapacityPolicy(configManager),
+            Options.Create(_workerLeaseOptions));
         _cancellationTokenSource = CancellationTokenSource
             .CreateLinkedTokenSource(SigtermUtil.GetCancellationToken());
         _ = ProcessQueueAsync(_cancellationTokenSource.Token);
@@ -191,7 +200,6 @@ public class QueueManager : IDisposable
         await _queueLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var activeIds = GetInProgressQueueItemIds();
             var laneSnapshot = GetLaneSnapshot();
             var maxDownloadWorkers = _configManager.GetAdaptiveMaxConcurrentQueueDownloads();
             var maxVerifyWorkers = _configManager.GetAdaptiveMaxConcurrentVerifyJobs();
@@ -201,16 +209,25 @@ public class QueueManager : IDisposable
             if (laneSnapshot.TotalActive >= maxDownloadWorkers + maxVerifyWorkers)
                 return false;
 
+            var lease = await _workerJobCoordinator.LeaseAsync(
+                    WorkerJob.JobKind.Download,
+                    owner: $"{Environment.MachineName}:{Environment.ProcessId}:download",
+                    capacity: 1,
+                    now: DateTimeOffset.UtcNow,
+                    ct)
+                .ConfigureAwait(false);
+            if (lease.Count == 0)
+                return false;
+
+            var workerLease = lease[0];
             var dbContext = new DavDatabaseContext();
             var dbClient = new DavDatabaseClient(dbContext);
-            var topItem = await dbClient.LeaseTopQueueItemAsync(
-                    activeIds,
-                    owner: $"{Environment.MachineName}:{Environment.ProcessId}:download",
-                    leaseDuration: DownloadWorkerLeaseDuration,
-                    ct: ct)
+            var topItem = await dbClient.GetQueueItemForWorkerAsync(workerLease.TargetId, ct)
                 .ConfigureAwait(false);
             if (topItem.queueItem is null)
             {
+                await _workerJobCoordinator.CompleteAsync(
+                    workerLease.Identity, null, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
                 await dbContext.DisposeAsync().ConfigureAwait(false);
                 return false;
             }
@@ -226,7 +243,7 @@ public class QueueManager : IDisposable
                 cachingUsenetClient,
                 topItem.queueItem,
                 topItem.queueNzbStream,
-                topItem.workerJob!,
+                workerLease.Identity,
                 queueItemCancellationTokenSource);
 
             lock (_inProgressQueueItemsLock)
@@ -242,14 +259,6 @@ public class QueueManager : IDisposable
         }
     }
 
-    private List<Guid> GetInProgressQueueItemIds()
-    {
-        lock (_inProgressQueueItemsLock)
-        {
-            return _inProgressQueueItems.Keys.ToList();
-        }
-    }
-
     private InProgressQueueItem BeginProcessingQueueItem
     (
         DavDatabaseContext dbContext,
@@ -257,7 +266,7 @@ public class QueueManager : IDisposable
         ArticleCachingNntpClient usenetClient,
         QueueItem queueItem,
         Stream? queueNzbStream,
-        WorkerJob workerJob,
+        WorkerLeaseIdentity workerLease,
         CancellationTokenSource cts
     )
     {
@@ -269,7 +278,7 @@ public class QueueManager : IDisposable
             DbContext = dbContext,
             NzbStream = queueNzbStream,
             UsenetClient = usenetClient,
-            WorkerJob = workerJob
+            WorkerLease = workerLease
         };
         var debounce = DebounceUtil.CreateDebounce();
         var progressHook = ProgressExtensions.FromAction(progress =>
@@ -290,6 +299,8 @@ public class QueueManager : IDisposable
         IProgress<int> progressHook
     )
     {
+        using var renewalStop = new CancellationTokenSource();
+        var renewalTask = RenewLeaseAsync(inProgressQueueItem, renewalStop.Token);
         try
         {
             var outcome = await new QueueItemProcessor(
@@ -304,11 +315,13 @@ public class QueueManager : IDisposable
                 inProgressQueueItem.CancellationTokenSource.Token,
                 stage => inProgressQueueItem.Stage = stage
             ).ProcessAsync().ConfigureAwait(false);
-            await UpdateDownloadWorkerJobAsync(inProgressQueueItem, dbClient, outcome)
+            await UpdateDownloadWorkerJobAsync(_workerJobCoordinator, inProgressQueueItem, outcome)
                 .ConfigureAwait(false);
         }
         finally
         {
+            await renewalStop.CancelAsync().ConfigureAwait(false);
+            await renewalTask.ConfigureAwait(false);
             lock (_inProgressQueueItemsLock)
             {
                 _inProgressQueueItems.Remove(inProgressQueueItem.QueueItem.Id);
@@ -339,16 +352,44 @@ public class QueueManager : IDisposable
         GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
     }
 
+    private async Task RenewLeaseAsync(InProgressQueueItem item, CancellationToken ct)
+    {
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(_workerLeaseOptions.RenewalInterval, ct).ConfigureAwait(false);
+                var renewed = await _workerJobCoordinator.RenewAsync(
+                    item.WorkerLease, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+                if (renewed) continue;
+
+                Volatile.Write(ref item.LeaseRenewalRejected, 1);
+                await item.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception e)
+        {
+            Log.Warning(e, "Download worker lease renewal failed: {Message}", e.Message);
+            await item.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
+        }
+    }
+
     private static async Task UpdateDownloadWorkerJobAsync
     (
+        IWorkerJobCoordinator workerJobCoordinator,
         InProgressQueueItem inProgressQueueItem,
-        DavDatabaseClient dbClient,
         QueueItemProcessor.ProcessingOutcome outcome
     )
     {
+        var now = DateTimeOffset.UtcNow;
         if (outcome == QueueItemProcessor.ProcessingOutcome.Completed)
         {
-            await dbClient.CompleteWorkerJobAsync(inProgressQueueItem.WorkerJob).ConfigureAwait(false);
+            await workerJobCoordinator.CompleteAsync(
+                inProgressQueueItem.WorkerLease, null, now, CancellationToken.None).ConfigureAwait(false);
             return;
         }
 
@@ -357,18 +398,35 @@ public class QueueManager : IDisposable
             var nextAttemptAt = inProgressQueueItem.QueueItem.PauseUntil.HasValue
                 ? new DateTimeOffset(inProgressQueueItem.QueueItem.PauseUntil.Value)
                 : DateTimeOffset.UtcNow.AddMinutes(1);
-            await dbClient.FailWorkerJobAsync(
-                    inProgressQueueItem.WorkerJob,
-                    error: "Download retry scheduled.",
-                    nextAttemptAt: nextAttemptAt,
-                    maxAttempts: DownloadWorkerRetryMaxAttempts)
+            await workerJobCoordinator.FailAsync(
+                    inProgressQueueItem.WorkerLease,
+                    WorkerJob.FailureClass.Retryable,
+                    "Download retry scheduled.",
+                    nextAttemptAt,
+                    DownloadWorkerRetryMaxAttempts,
+                    now,
+                    CancellationToken.None)
                 .ConfigureAwait(false);
             return;
         }
 
         if (outcome == QueueItemProcessor.ProcessingOutcome.Cancelled)
         {
-            await dbClient.ReleaseWorkerJobLeaseAsync(inProgressQueueItem.WorkerJob).ConfigureAwait(false);
+            if (Volatile.Read(ref inProgressQueueItem.LeaseRenewalRejected) != 0)
+            {
+                var acknowledged = await workerJobCoordinator.FailAsync(
+                    inProgressQueueItem.WorkerLease,
+                    WorkerJob.FailureClass.Cancelled,
+                    "Cancelled by request.",
+                    now,
+                    DownloadWorkerRetryMaxAttempts,
+                    now,
+                    CancellationToken.None).ConfigureAwait(false);
+                if (acknowledged) return;
+            }
+
+            await workerJobCoordinator.ReleaseAsync(
+                inProgressQueueItem.WorkerLease, now, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -395,7 +453,8 @@ public class QueueManager : IDisposable
         public required DavDatabaseContext DbContext { get; init; }
         public Stream? NzbStream { get; init; }
         public required ArticleCachingNntpClient UsenetClient { get; init; }
-        public required WorkerJob WorkerJob { get; init; }
+        public required WorkerLeaseIdentity WorkerLease { get; init; }
+        public int LeaseRenewalRejected;
         private int _stage;
 
         public QueueProcessingStage Stage

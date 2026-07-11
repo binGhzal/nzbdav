@@ -2,6 +2,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using NzbWebDAV.Coordination;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
@@ -310,6 +312,12 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             workerJob.LeaseExpiresAt = leaseExpiresAt;
             workerJob.Attempts += 1;
             workerJob.UpdatedAt = referenceTime;
+            workerJob.LeaseToken = Guid.NewGuid();
+            workerJob.LeaseGeneration += 1;
+            workerJob.LastHeartbeatAt = referenceTime;
+            workerJob.StartedAt = referenceTime;
+            workerJob.CancelRequestedAt = null;
+            workerJob.FailureKind = null;
             workerJob.LastError = null;
 
             await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -344,6 +352,19 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         return queueNzbContents != null
             ? new MemoryStream(Encoding.UTF8.GetBytes(queueNzbContents.NzbContents))
             : null;
+    }
+
+    public async Task<(QueueItem? queueItem, Stream? queueNzbStream)> GetQueueItemForWorkerAsync(
+        Guid queueItemId,
+        CancellationToken ct = default)
+    {
+        var queueItem = await Ctx.QueueItems
+            .FirstOrDefaultAsync(item => item.Id == queueItemId, ct)
+            .ConfigureAwait(false);
+        var queueNzbStream = queueItem is null
+            ? null
+            : await ReadQueueNzbStreamAsync(queueItemId, ct).ConfigureAwait(false);
+        return (queueItem, queueNzbStream);
     }
 
     public Task<QueueItem[]> GetQueueItems
@@ -1966,14 +1987,10 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         CancellationToken ct = default
     )
     {
-        var referenceTime = now ?? DateTimeOffset.UtcNow;
-        AttachWorkerJobIfDetached(job);
-        job.Status = WorkerJob.JobStatus.Completed;
-        job.UpdatedAt = referenceTime;
-        job.CompletedAt = referenceTime;
-        job.LeaseOwner = null;
-        job.LeaseExpiresAt = null;
-        await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        if (TryGetLeaseIdentity(job, out var identity))
+            await CreateCompatibilityCoordinator().CompleteAsync(
+                identity, null, now ?? DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+        await RefreshWorkerJobAsync(job, ct).ConfigureAwait(false);
     }
 
     public async Task ReleaseWorkerJobLeaseAsync
@@ -1983,16 +2000,10 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         CancellationToken ct = default
     )
     {
-        var referenceTime = now ?? DateTimeOffset.UtcNow;
-        AttachWorkerJobIfDetached(job);
-        job.Status = WorkerJob.JobStatus.Pending;
-        job.UpdatedAt = referenceTime;
-        job.LeaseOwner = null;
-        job.LeaseExpiresAt = null;
-        if (job.Attempts > 0)
-            job.Attempts -= 1;
-
-        await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        if (TryGetLeaseIdentity(job, out var identity))
+            await CreateCompatibilityCoordinator().ReleaseAsync(
+                identity, now ?? DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+        await RefreshWorkerJobAsync(job, ct).ConfigureAwait(false);
     }
 
     public async Task FailWorkerJobAsync
@@ -2005,31 +2016,77 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         CancellationToken ct = default
     )
     {
-        var referenceTime = now ?? DateTimeOffset.UtcNow;
-        AttachWorkerJobIfDetached(job);
-        job.Status = job.Attempts >= maxAttempts
-            ? WorkerJob.JobStatus.Quarantined
-            : WorkerJob.JobStatus.Retry;
-        job.UpdatedAt = referenceTime;
-        job.AvailableAt = nextAttemptAt;
-        job.LeaseOwner = null;
-        job.LeaseExpiresAt = null;
-        job.LastError = TruncateWorkerJobError(error);
-
-        await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        if (TryGetLeaseIdentity(job, out var identity))
+            await CreateCompatibilityCoordinator().FailAsync(
+                identity,
+                WorkerJob.FailureClass.Retryable,
+                error,
+                nextAttemptAt,
+                maxAttempts,
+                now ?? DateTimeOffset.UtcNow,
+                ct).ConfigureAwait(false);
+        await RefreshWorkerJobAsync(job, ct).ConfigureAwait(false);
     }
 
-    private void AttachWorkerJobIfDetached(WorkerJob job)
+    private DatabaseWorkerJobCoordinator CreateCompatibilityCoordinator()
     {
-        if (Ctx.Entry(job).State == EntityState.Detached)
-            Ctx.WorkerJobs.Attach(job);
+        return new DatabaseWorkerJobCoordinator(
+            Ctx,
+            CompatibilityCapacityPolicy.Instance,
+            Options.Create(new WorkerLeaseOptions()));
     }
 
-    private static string TruncateWorkerJobError(string error)
+    private static bool TryGetLeaseIdentity(WorkerJob job, out WorkerLeaseIdentity identity)
     {
-        return error.Length <= MaxWorkerJobErrorLength
-            ? error
-            : error[..MaxWorkerJobErrorLength];
+        if (job.LeaseOwner is not null && job.LeaseToken.HasValue)
+        {
+            identity = new WorkerLeaseIdentity(
+                job.Id, job.LeaseOwner, job.LeaseToken.Value, job.LeaseGeneration);
+            return true;
+        }
+
+        identity = default;
+        return false;
+    }
+
+    private async Task RefreshWorkerJobAsync(WorkerJob destination, CancellationToken ct)
+    {
+        var saved = await Ctx.WorkerJobs.AsNoTracking()
+            .SingleOrDefaultAsync(job => job.Id == destination.Id, ct)
+            .ConfigureAwait(false);
+        if (saved is null) return;
+
+        var entry = Ctx.Entry(destination);
+        if (entry.State != EntityState.Detached)
+        {
+            entry.OriginalValues.SetValues(saved);
+            entry.CurrentValues.SetValues(saved);
+            return;
+        }
+
+        destination.Status = saved.Status;
+        destination.Attempts = saved.Attempts;
+        destination.UpdatedAt = saved.UpdatedAt;
+        destination.AvailableAt = saved.AvailableAt;
+        destination.LeaseExpiresAt = saved.LeaseExpiresAt;
+        destination.CompletedAt = saved.CompletedAt;
+        destination.LeaseOwner = saved.LeaseOwner;
+        destination.LeaseToken = saved.LeaseToken;
+        destination.LeaseGeneration = saved.LeaseGeneration;
+        destination.LastHeartbeatAt = saved.LastHeartbeatAt;
+        destination.CancelRequestedAt = saved.CancelRequestedAt;
+        destination.FailureKind = saved.FailureKind;
+        destination.ProgressJson = saved.ProgressJson;
+        destination.ProgressUpdatedAt = saved.ProgressUpdatedAt;
+        destination.ResultJson = saved.ResultJson;
+        destination.LastError = saved.LastError;
+    }
+
+    private sealed class CompatibilityCapacityPolicy : IWorkerLaneCapacityPolicy
+    {
+        public static CompatibilityCapacityPolicy Instance { get; } = new();
+
+        public int GetMaximum(WorkerJob.JobKind kind) => 128;
     }
 
     private static string? TruncateRepairMessage(string? message)

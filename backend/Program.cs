@@ -9,6 +9,7 @@ using NzbWebDAV.Auth;
 using NzbWebDAV.Clients.Rclone;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
+using NzbWebDAV.Coordination;
 using NzbWebDAV.Database;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Hosting;
@@ -119,6 +120,10 @@ class Program
             .AddSingleton<MountStatusProvider>()
             .AddSingleton<StreamingConnectionLimiter>()
             .AddSingleton<QueueWorkLaneCoordinator>()
+            .AddOptions<WorkerLeaseOptions>()
+            .Services
+            .AddSingleton<IWorkerLaneCapacityPolicy, ConfigWorkerLaneCapacityPolicy>()
+            .AddSingleton<IWorkerJobCoordinator, DatabaseWorkerJobCoordinator>()
             .AddSingleton<ArrDownloadReportService>()
             .AddSingleton<ArrOperationsService>()
             .AddSingleton<UsenetStreamingClient>()

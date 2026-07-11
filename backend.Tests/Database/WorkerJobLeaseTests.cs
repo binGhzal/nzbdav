@@ -3,6 +3,8 @@ using backend.Tests.Services;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Options;
+using NzbWebDAV.Coordination;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
@@ -626,7 +628,11 @@ public sealed class WorkerJobLeaseTests
         Assert.NotNull(type);
         var value = Activator.CreateInstance(type, nonPublic: true);
         Assert.NotNull(value);
-        type.GetProperty("WorkerJob")!.SetValue(value, workerJob);
+        type.GetProperty("WorkerLease")!.SetValue(value, new WorkerLeaseIdentity(
+            workerJob.Id,
+            workerJob.LeaseOwner!,
+            workerJob.LeaseToken!.Value,
+            workerJob.LeaseGeneration));
         return value;
     }
 
@@ -640,9 +646,18 @@ public sealed class WorkerJobLeaseTests
         var method = typeof(QueueManager).GetMethod("UpdateDownloadWorkerJobAsync",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
         Assert.NotNull(method);
+        var coordinator = new DatabaseWorkerJobCoordinator(
+            dbClient.Ctx,
+            new TestWorkerCapacityPolicy(),
+            Options.Create(new WorkerLeaseOptions()));
         var task = Assert.IsAssignableFrom<Task>(method.Invoke(null,
-            [inProgressQueueItem, dbClient, outcome]));
+            [coordinator, inProgressQueueItem, outcome]));
         await task;
+    }
+
+    private sealed class TestWorkerCapacityPolicy : IWorkerLaneCapacityPolicy
+    {
+        public int GetMaximum(WorkerJob.JobKind kind) => 128;
     }
 
     private sealed class CountingCommandInterceptor(Func<string, bool> predicate) : DbCommandInterceptor

@@ -7,6 +7,7 @@ using System.Reflection;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
+using NzbWebDAV.Coordination;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Models;
@@ -1613,7 +1614,14 @@ public class HealthCheckRepairPolicyTests
         await dbClient.EnqueueWorkerJobAsync(WorkerJob.JobKind.Repair, activeTargetId, priority: 100, now: now);
         await dbClient.EnqueueWorkerJobAsync(WorkerJob.JobKind.Repair, nextTargetId, priority: 10, now: now);
 
-        var leasedJob = await InvokeLeaseNextRepairJobAsync([activeTargetId], CancellationToken.None);
+        using var usenetClient = new RecordingSegmentCheckStreamingClient(new ConfigManager(), new WebsocketManager());
+        var service = new HealthCheckService(
+            new ConfigManager(),
+            usenetClient,
+            new QueueWorkLaneCoordinator(),
+            new WebsocketManager());
+        var leasedJob = await InvokeLeaseNextRepairJobAsync(
+            service, [activeTargetId], CancellationToken.None);
 
         Assert.NotNull(leasedJob);
         Assert.Equal(nextTargetId, leasedJob.TargetId);
@@ -1769,7 +1777,7 @@ public class HealthCheckRepairPolicyTests
         Assert.NotNull(method);
         var task = (Task)method.Invoke(
             service,
-            [workerJob, 1, new NoopDisposable(), ct])!;
+            [ToWorkerLease(workerJob), 1, new NoopDisposable(), ct])!;
         await task.ConfigureAwait(false);
     }
 
@@ -1782,19 +1790,20 @@ public class HealthCheckRepairPolicyTests
             "RunRepairWorkerAsync",
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(method);
-        var task = (Task)method.Invoke(service, [workerJob, ct])!;
+        var task = (Task)method.Invoke(service, [ToWorkerLease(workerJob), ct])!;
         await task.ConfigureAwait(false);
     }
 
-    private static async Task<WorkerJob?> InvokeLeaseNextRepairJobAsync(
+    private static async Task<WorkerLease?> InvokeLeaseNextRepairJobAsync(
+        HealthCheckService service,
         IReadOnlyCollection<Guid> activeHealthCheckIds,
         CancellationToken ct)
     {
         var method = typeof(HealthCheckService).GetMethod(
             "LeaseNextRepairJobAsync",
-            BindingFlags.Static | BindingFlags.NonPublic);
+            BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(method);
-        var task = (Task<WorkerJob?>)method.Invoke(null, [activeHealthCheckIds, ct])!;
+        var task = (Task<WorkerLease?>)method.Invoke(service, [activeHealthCheckIds, ct])!;
         return await task.ConfigureAwait(false);
     }
 
@@ -1807,8 +1816,25 @@ public class HealthCheckRepairPolicyTests
             "TryStartRepairWorkerAsync",
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(method);
-        var task = (Task<bool>)method.Invoke(service, [workerJob, ct])!;
+        var task = (Task<bool>)method.Invoke(service, [ToWorkerLease(workerJob), ct])!;
         return await task.ConfigureAwait(false);
+    }
+
+    private static WorkerLease ToWorkerLease(WorkerJob job)
+    {
+        return new WorkerLease(
+            new WorkerLeaseIdentity(
+                job.Id,
+                job.LeaseOwner!,
+                job.LeaseToken!.Value,
+                job.LeaseGeneration),
+            job.Kind,
+            job.TargetId,
+            job.Priority,
+            job.Attempts,
+            job.PayloadJson,
+            job.LeaseExpiresAt!.Value,
+            job.CancelRequestedAt != null);
     }
 
     private static void MarkHealthCheckActive(HealthCheckService service, Guid targetId)
