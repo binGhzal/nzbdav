@@ -231,6 +231,9 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct)
             .ConfigureAwait(false);
 
+        await TerminalizeExpiredCancellationRequestsAsync(
+            WorkerJob.JobKind.Download, referenceTime, ct).ConfigureAwait(false);
+
         var queueItems = Ctx.QueueItems.AsQueryable();
         if (excludeIds is { Count: > 0 })
             queueItems = queueItems.Where(q => !excludeIds.Contains(q.Id));
@@ -247,7 +250,8 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                 x => x.workerJobs.DefaultIfEmpty(),
                 (x, workerJob) => new { x.queueItem, workerJob })
             .Where(x => x.workerJob == null
-                        || (x.workerJob.Status == WorkerJob.JobStatus.Pending
+                        || x.workerJob.CancelRequestedAt == null
+                        && (x.workerJob.Status == WorkerJob.JobStatus.Pending
                             || x.workerJob.Status == WorkerJob.JobStatus.Retry
                             || x.workerJob.Status == WorkerJob.JobStatus.Leased
                             && x.workerJob.LeaseExpiresAt <= referenceTime)
@@ -317,7 +321,6 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             workerJob.LeaseGeneration += 1;
             workerJob.LastHeartbeatAt = referenceTime;
             workerJob.StartedAt = referenceTime;
-            workerJob.CancelRequestedAt = null;
             workerJob.FailureKind = null;
             workerJob.LastError = null;
 
@@ -427,10 +430,10 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
 
     public async Task RemoveQueueItemsAsync(List<Guid> ids, CancellationToken ct = default)
     {
+        await CancelWorkerJobsAsync(WorkerJob.JobKind.Download, ids, ct).ConfigureAwait(false);
         await Ctx.QueueItems
             .Where(x => ids.Contains(x.Id))
             .ExecuteDeleteAsync(ct).ConfigureAwait(false);
-        await CancelWorkerJobsAsync(WorkerJob.JobKind.Download, ids, ct).ConfigureAwait(false);
     }
 
     public async Task UpdateQueueItemsPriorityAsync
@@ -1855,12 +1858,13 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                 continue;
             }
 
-            if (existingJob.Status is WorkerJob.JobStatus.Completed or WorkerJob.JobStatus.Cancelled)
+            var wasTerminal = existingJob.Status is WorkerJob.JobStatus.Completed or WorkerJob.JobStatus.Cancelled;
+            if (wasTerminal)
                 ResetWorkerJobForEnqueue(existingJob, referenceTime);
 
             existingJob.Priority = priority;
             existingJob.UpdatedAt = referenceTime;
-            if (payloadJson is not null) existingJob.PayloadJson = payloadJson;
+            if (wasTerminal || payloadJson is not null) existingJob.PayloadJson = payloadJson;
             changed++;
         }
 
@@ -1922,6 +1926,27 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             await entry.ReloadAsync(ct).ConfigureAwait(false);
     }
 
+    private async Task TerminalizeExpiredCancellationRequestsAsync(
+        WorkerJob.JobKind kind,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        await Ctx.WorkerJobs
+            .Where(job => job.Kind == kind
+                          && job.Status == WorkerJob.JobStatus.Leased
+                          && job.LeaseExpiresAt <= now
+                          && job.CancelRequestedAt != null)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(job => job.Status, WorkerJob.JobStatus.Cancelled)
+                .SetProperty(job => job.UpdatedAt, now)
+                .SetProperty(job => job.CompletedAt, now)
+                .SetProperty(job => job.LeaseExpiresAt, (DateTimeOffset?)null)
+                .SetProperty(job => job.FailureKind, WorkerJob.FailureClass.Cancelled)
+                .SetProperty(job => job.LastError,
+                    "Cancellation request expired before acknowledgement."), ct)
+            .ConfigureAwait(false);
+    }
+
     public Task<WorkerJob?> LeaseNextWorkerJobAsync
     (
         WorkerJob.JobKind kind,
@@ -1954,8 +1979,11 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct)
             .ConfigureAwait(false);
 
+        await TerminalizeExpiredCancellationRequestsAsync(kind, referenceTime, ct).ConfigureAwait(false);
+
         var query = Ctx.WorkerJobs
             .Where(x => x.Kind == kind)
+            .Where(x => x.CancelRequestedAt == null)
             .Where(x => x.Status == WorkerJob.JobStatus.Pending
                         || x.Status == WorkerJob.JobStatus.Retry
                         || x.Status == WorkerJob.JobStatus.Leased && x.LeaseExpiresAt <= referenceTime)
@@ -1990,7 +2018,6 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         job.LeaseGeneration += 1;
         job.LastHeartbeatAt = referenceTime;
         job.StartedAt = referenceTime;
-        job.CancelRequestedAt = null;
         job.FailureKind = null;
         job.ProgressJson = null;
         job.ProgressUpdatedAt = null;

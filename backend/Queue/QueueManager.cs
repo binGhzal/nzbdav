@@ -124,11 +124,11 @@ public class QueueManager : IDisposable
                     .ToList();
             }
 
-            foreach (var inProgressQueueItem in inProgressQueueItems)
-                inProgressQueueItem.CancellationTokenSource.Cancel();
-
             await dbClient.RemoveQueueItemsAsync(queueItemIds, ct).ConfigureAwait(false);
             await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+
+            foreach (var inProgressQueueItem in inProgressQueueItems)
+                inProgressQueueItem.CancellationTokenSource.Cancel();
         }
         finally
         {
@@ -369,7 +369,6 @@ public class QueueManager : IDisposable
                     item.WorkerLease, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
                 if (renewed) continue;
 
-                Volatile.Write(ref item.LeaseRenewalRejected, 1);
                 await item.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
                 return;
             }
@@ -416,18 +415,15 @@ public class QueueManager : IDisposable
 
         if (outcome == QueueItemProcessor.ProcessingOutcome.Cancelled)
         {
-            if (Volatile.Read(ref inProgressQueueItem.LeaseRenewalRejected) != 0)
-            {
-                var acknowledged = await workerJobCoordinator.FailAsync(
-                    inProgressQueueItem.WorkerLease,
-                    WorkerJob.FailureClass.Cancelled,
-                    "Cancelled by request.",
-                    now,
-                    DownloadWorkerRetryMaxAttempts,
-                    now,
-                    CancellationToken.None).ConfigureAwait(false);
-                return acknowledged;
-            }
+            var acknowledged = await workerJobCoordinator.FailAsync(
+                inProgressQueueItem.WorkerLease,
+                WorkerJob.FailureClass.Cancelled,
+                "Cancelled by request.",
+                now,
+                DownloadWorkerRetryMaxAttempts,
+                now,
+                CancellationToken.None).ConfigureAwait(false);
+            if (acknowledged) return true;
 
             return await workerJobCoordinator.ReleaseAsync(
                 inProgressQueueItem.WorkerLease, now, CancellationToken.None).ConfigureAwait(false);
@@ -460,7 +456,6 @@ public class QueueManager : IDisposable
         public Stream? NzbStream { get; init; }
         public required ArticleCachingNntpClient UsenetClient { get; init; }
         public required WorkerLeaseIdentity WorkerLease { get; init; }
-        public int LeaseRenewalRejected;
         private int _stage;
 
         public QueueProcessingStage Stage

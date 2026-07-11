@@ -4,10 +4,14 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Options;
+using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Config;
 using NzbWebDAV.Coordination;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Services;
+using NzbWebDAV.Websocket;
 
 namespace backend.Tests.Database;
 
@@ -338,8 +342,9 @@ public sealed class WorkerJobLeaseTests
         var now = DateTimeOffset.UtcNow;
         var firstTarget = Guid.NewGuid();
         var secondTarget = Guid.NewGuid();
+        var oldPayload = DavDatabaseClient.CreatePostDownloadVerifyPayloadJson();
         await dbClient.EnqueueWorkerJobsAsync(
-            WorkerJob.JobKind.Repair, [firstTarget, secondTarget], 1, now);
+            WorkerJob.JobKind.Repair, [firstTarget, secondTarget], 1, now, payloadJson: oldPayload);
         var coordinator = CreateCoordinator(dbContext, repairCapacity: 2);
         var leases = await coordinator.LeaseAsync(
             WorkerJob.JobKind.Repair, "worker-a", 2, now, CancellationToken.None);
@@ -353,12 +358,23 @@ public sealed class WorkerJobLeaseTests
             await SetTerminalStaleStateAsync(dbContext, lease.Identity.JobId, "stale-result");
 
         var changed = await dbClient.EnqueueWorkerJobsAsync(
-            WorkerJob.JobKind.Repair, [firstTarget, secondTarget], 9, now.AddMinutes(4));
+            WorkerJob.JobKind.Repair, [firstTarget, secondTarget], 9, now.AddMinutes(4), payloadJson: null);
 
         Assert.Equal(2, changed);
         dbContext.ChangeTracker.Clear();
         var jobs = await dbContext.WorkerJobs.OrderBy(job => job.TargetId).ToListAsync();
         Assert.All(jobs, job => AssertFreshPendingJob(job, now.AddMinutes(4), attempts: 0));
+        Assert.All(jobs, job => Assert.Null(job.PayloadJson));
+        Assert.Equal(
+            leases.Select(lease => lease.Identity.Generation).OrderBy(value => value),
+            jobs.Select(job => job.LeaseGeneration).OrderBy(value => value));
+
+        var reLeased = await coordinator.LeaseAsync(
+            WorkerJob.JobKind.Repair, "worker-c", 2, now.AddMinutes(5), CancellationToken.None);
+        Assert.Equal(2, reLeased.Count);
+        Assert.All(reLeased, newLease => Assert.Contains(leases, oldLease =>
+            oldLease.Identity.JobId == newLease.Identity.JobId
+            && newLease.Identity.Generation == oldLease.Identity.Generation + 1));
     }
 
     [Fact]
@@ -389,6 +405,63 @@ public sealed class WorkerJobLeaseTests
         Assert.Equal(0, coordinator.CompleteCalls);
         Assert.Equal(1, coordinator.FailCalls);
         Assert.Equal(0, coordinator.ReleaseCalls);
+    }
+
+    [Fact]
+    public async Task ActiveQueueRemovalPersistsCancellationBeforeStoppingWorkerAndAcknowledgesPromptly()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var now = DateTimeOffset.UtcNow;
+        var queueItem = CreateQueueItem("Active removal", QueueItem.PriorityOption.Normal, DateTime.UtcNow);
+        dbContext.QueueItems.Add(queueItem);
+        await dbClient.EnqueueWorkerJobAsync(WorkerJob.JobKind.Download, queueItem.Id, 1, now);
+        await dbContext.SaveChangesAsync();
+        var coordinator = new DatabaseWorkerJobCoordinator(
+            new TestWorkerCapacityPolicy(), Options.Create(new WorkerLeaseOptions()));
+        var lease = Assert.Single(await coordinator.LeaseAsync(
+            WorkerJob.JobKind.Download, "worker-a", 1, now, CancellationToken.None));
+        var configManager = new ConfigManager();
+        configManager.UpdateValues([
+            new ConfigItem { ConfigName = "queue.paused", ConfigValue = "true" }
+        ]);
+        var websocketManager = new WebsocketManager();
+        using var usenetClient = new UsenetStreamingClient(configManager, websocketManager);
+        using var queueManager = new QueueManager(
+            usenetClient,
+            configManager,
+            new QueueWorkLaneCoordinator(),
+            websocketManager,
+            new ArrDownloadReportService(configManager),
+            coordinator);
+        var workerCts = new CancellationTokenSource();
+        var inProgress = CreateDownloadInProgressQueueItem(lease.Identity, queueItem);
+        var workerStopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requestWasVisible = false;
+        var terminalAccepted = false;
+        using var registration = workerCts.Token.Register(() =>
+        {
+            using var callbackContext = new DavDatabaseContext();
+            requestWasVisible = callbackContext.WorkerJobs.AsNoTracking()
+                .Single(job => job.Id == lease.Identity.JobId).CancelRequestedAt != null;
+            terminalAccepted = InvokeUpdateDownloadWorkerJobAsync(
+                    inProgress, coordinator, QueueItemProcessor.ProcessingOutcome.Cancelled)
+                .GetAwaiter().GetResult();
+            workerStopped.SetResult();
+        });
+        SetInProgressCancellation(inProgress, workerCts, workerStopped.Task);
+        AddInProgressQueueItem(queueManager, queueItem.Id, inProgress);
+
+        await queueManager.RemoveQueueItemsAsync([queueItem.Id], dbClient);
+
+        Assert.True(requestWasVisible);
+        Assert.True(terminalAccepted);
+        dbContext.ChangeTracker.Clear();
+        var saved = await dbContext.WorkerJobs.AsNoTracking().SingleAsync();
+        Assert.Equal(WorkerJob.JobStatus.Cancelled, saved.Status);
+        Assert.Equal(lease.Identity.Owner, saved.LeaseOwner);
+        Assert.Equal(lease.Identity.Token, saved.LeaseToken);
+        Assert.Equal(lease.Identity.Generation, saved.LeaseGeneration);
     }
 
     [Fact]
@@ -443,6 +516,58 @@ public sealed class WorkerJobLeaseTests
         Assert.NotNull(expiredLease.workerJob);
         Assert.Equal("download-worker-c", expiredLease.workerJob.LeaseOwner);
         Assert.Equal(2, expiredLease.workerJob.Attempts);
+    }
+
+    [Fact]
+    public async Task LeaseTopQueueItemAsync_TerminalizesExpiredCancellationInsteadOfReLeasing()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var queueItem = CreateQueueItem("Cancelled", QueueItem.PriorityOption.Normal, DateTime.UtcNow);
+        dbContext.QueueItems.Add(queueItem);
+        dbContext.QueueNzbContents.Add(CreateQueueNzbContents(queueItem.Id));
+        await dbContext.SaveChangesAsync();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var now = DateTimeOffset.UtcNow;
+        await dbClient.EnqueueWorkerJobAsync(WorkerJob.JobKind.Download, queueItem.Id, 1, now);
+        var coordinator = CreateCoordinator(dbContext);
+        var lease = Assert.Single(await coordinator.LeaseAsync(
+            WorkerJob.JobKind.Download, "worker-a", 1, now, CancellationToken.None));
+        Assert.True(await coordinator.RequestCancellationAsync(
+            lease.Identity.JobId, now.AddSeconds(1), CancellationToken.None));
+
+        var result = await dbClient.LeaseTopQueueItemAsync(
+            [], "worker-b", TimeSpan.FromMinutes(2), now.AddMinutes(3));
+
+        Assert.Null(result.queueItem);
+        Assert.Null(result.workerJob);
+        dbContext.ChangeTracker.Clear();
+        var saved = await dbContext.WorkerJobs.AsNoTracking().SingleAsync();
+        Assert.Equal(WorkerJob.JobStatus.Cancelled, saved.Status);
+        Assert.Equal(lease.Identity.Generation, saved.LeaseGeneration);
+    }
+
+    [Fact]
+    public async Task LeaseNextWorkerJobAsync_TerminalizesExpiredCancellationInsteadOfReLeasing()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var now = DateTimeOffset.UtcNow;
+        var targetId = Guid.NewGuid();
+        await dbClient.EnqueueWorkerJobAsync(WorkerJob.JobKind.Repair, targetId, 1, now);
+        var coordinator = CreateCoordinator(dbContext);
+        var lease = Assert.Single(await coordinator.LeaseAsync(
+            WorkerJob.JobKind.Repair, "worker-a", 1, now, CancellationToken.None));
+        Assert.True(await coordinator.RequestCancellationAsync(
+            lease.Identity.JobId, now.AddSeconds(1), CancellationToken.None));
+
+        var result = await dbClient.LeaseNextWorkerJobAsync(
+            WorkerJob.JobKind.Repair, "worker-b", TimeSpan.FromMinutes(2), now.AddMinutes(3));
+
+        Assert.Null(result);
+        dbContext.ChangeTracker.Clear();
+        var saved = await dbContext.WorkerJobs.AsNoTracking().SingleAsync();
+        Assert.Equal(WorkerJob.JobStatus.Cancelled, saved.Status);
+        Assert.Equal(lease.Identity.Generation, saved.LeaseGeneration);
     }
 
     [Fact]
@@ -814,6 +939,39 @@ public sealed class WorkerJobLeaseTests
         type.GetProperty("QueueItem")!.SetValue(value, CreateQueueItem(
             "Lease test", QueueItem.PriorityOption.Normal, DateTime.UtcNow));
         return value;
+    }
+
+    private static object CreateDownloadInProgressQueueItem(
+        WorkerLeaseIdentity identity,
+        QueueItem queueItem)
+    {
+        var type = typeof(QueueManager).GetNestedType("InProgressQueueItem",
+            System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(type);
+        var value = Activator.CreateInstance(type, nonPublic: true);
+        Assert.NotNull(value);
+        type.GetProperty("WorkerLease")!.SetValue(value, identity);
+        type.GetProperty("QueueItem")!.SetValue(value, queueItem);
+        return value;
+    }
+
+    private static void SetInProgressCancellation(
+        object inProgress,
+        CancellationTokenSource cts,
+        Task processingTask)
+    {
+        var type = inProgress.GetType();
+        type.GetProperty("CancellationTokenSource")!.SetValue(inProgress, cts);
+        type.GetProperty("ProcessingTask")!.SetValue(inProgress, processingTask);
+    }
+
+    private static void AddInProgressQueueItem(QueueManager queueManager, Guid id, object inProgress)
+    {
+        var field = typeof(QueueManager).GetField("_inProgressQueueItems",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        var dictionary = Assert.IsAssignableFrom<System.Collections.IDictionary>(field.GetValue(queueManager));
+        dictionary.Add(id, inProgress);
     }
 
     private static WorkerLeaseIdentity ToIdentity(WorkerJob job) => new(

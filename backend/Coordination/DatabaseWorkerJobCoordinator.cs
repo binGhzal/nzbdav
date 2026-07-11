@@ -10,6 +10,7 @@ namespace NzbWebDAV.Coordination;
 
 public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
 {
+    private const long PostgreSqlLaneLockNamespace = 0x4E5A424400000000;
     private const int MaxJsonUtf8Bytes = 16 * 1024;
     private const int MaxErrorLength = 1024;
     private readonly Func<DavDatabaseContext> _contextFactory;
@@ -220,6 +221,13 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
         await using var transaction = await db.Database
             .BeginTransactionAsync(IsolationLevel.Serializable, ct)
             .ConfigureAwait(false);
+
+        if (db.Database.IsNpgsql())
+        {
+            var laneLockKey = PostgreSqlLaneLockNamespace + (int)kind;
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock({laneLockKey})", ct).ConfigureAwait(false);
+        }
 
         await db.WorkerJobs
             .Where(job => job.Status == WorkerJob.JobStatus.Leased

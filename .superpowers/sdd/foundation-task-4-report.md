@@ -244,3 +244,69 @@ git diff --check
 ```
 
 Result: clean.
+
+## Second Review Fix Wave
+
+### Status
+
+Closed the remaining active-removal, terminal payload, legacy acquisition, and deterministic PostgreSQL proof findings.
+
+### RED Evidence
+
+Focused cancellation, payload, and legacy acquisition filter:
+
+```bash
+dotnet test backend.Tests/backend.Tests.csproj \
+  --filter "FullyQualifiedName~ActiveQueueRemoval|FullyQualifiedName~ResetsAllStaleStateAfterExpiredCancellation|FullyQualifiedName~TerminalizesExpiredCancellationInsteadOfReLeasing" \
+  --no-restore
+```
+
+Initial result: 4 failed. Both legacy APIs re-leased expired cancellation requests, batch terminal re-enqueue retained the old post-download payload, and the active-removal test exposed a test-owned CTS disposal issue while exercising the pre-cancellation callback. The fixture lifetime was corrected before the protocol GREEN run.
+
+Deterministic PostgreSQL filter before per-lane locking:
+
+```bash
+NZBDAV_TEST_POSTGRES_CONNECTION_STRING='Host=localhost;Port=55434;Database=nzbdav;Username=nzbdav;Password=nzbdav' \
+  dotnet test backend.Tests/backend.Tests.csproj \
+  --filter FullyQualifiedName~DatabaseWorkerJobCoordinatorPostgreSqlTests --no-restore
+```
+
+Result: 2 passed, 1 failed. The sequence-backed forced `40001` retry and two-candidate shared-capacity proofs passed; the Verify acquisition did not wait on the externally held Verify lane key and the advisory-lock proof timed out as expected.
+
+### Fixes
+
+- Queue removal now persists worker cancellation through `DavDatabaseClient.RemoveQueueItemsAsync` before deleting the queue row and before cancelling the local worker CTS.
+- A cancelled queue outcome first attempts authenticated `FailAsync(Cancelled)` and falls back to `ReleaseAsync` only when acknowledgement is rejected because no request exists.
+- End-to-end active-removal coverage observes `CancelRequestedAt` synchronously when the local CTS fires, executes the real queue terminal mutation, and verifies prompt `Cancelled` state with owner/token/generation retained.
+- Batch re-enqueue assigns `PayloadJson` for every terminal reset even when the requested value is null. Coverage starts with cancelled Repair jobs carrying a post-download payload, verifies payload removal and generation preservation, then re-leases and verifies generation increment.
+- `LeaseTopQueueItemAsync` and `LeaseNextWorkerJobAsync` terminalize expired requested cancellations before selection, exclude every requested-cancellation row, and no longer clear cancellation during acquisition.
+- PostgreSQL acquisition takes a transaction-scoped advisory lock keyed by Download, Verify, or Repair before cancellation cleanup, capacity count, and candidate acquisition. There is no global acquisition key.
+- The deterministic retry trigger advances a non-transactional sequence and raises SQLSTATE `40001` exactly once; sequence value 2 proves the whole acquisition was retried once before returning a renewable/completable lease.
+- The two-owner same-lane test leases two distinct candidate rows under configured capacity 2, verifies both owners and active count, and renews/completes every return.
+- The lane-independence test externally holds only the Verify advisory key, observes Verify waiting through `pg_stat_activity`, proves Download still leases, then releases Verify and validates both leases.
+
+### Final Required Verification
+
+Focused cancellation/re-enqueue/legacy set:
+
+```text
+Passed: 5, Failed: 0, Skipped: 0, Total: 5
+```
+
+Deterministic live PostgreSQL set:
+
+```text
+Passed: 3, Failed: 0, Skipped: 0, Total: 3
+```
+
+Complete backend suite with live PostgreSQL:
+
+```text
+Passed: 623, Failed: 0, Skipped: 0, Total: 623
+```
+
+`git diff --check`: clean.
+
+### Concerns
+
+- No blocking concerns remain. PostgreSQL advisory-lock behavior, forced retry evidence, same-lane capacity, distinct candidates, and cross-lane independence are all exercised against the supplied live database.

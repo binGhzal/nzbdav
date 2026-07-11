@@ -1,17 +1,116 @@
+using backend.Tests.Database;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using NzbWebDAV.Coordination;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
-using backend.Tests.Database;
 
 namespace backend.Tests.Coordination;
 
 public sealed class DatabaseWorkerJobCoordinatorPostgreSqlTests
 {
+    private const long LaneLockNamespace = 0x4E5A424400000000;
+
     [PostgreSqlFact]
-    public async Task SerializableAcquisitionRetriesContentionWithoutOversubscribingOrReturningStaleLeases()
+    public async Task SerializableAcquisitionRetriesAForced40001ExactlyOnceAndReturnsUsableLease()
+    {
+        await WithSchemaAsync(async (adminConnection, schemaName, options) =>
+        {
+            await SeedJobsAsync(options, WorkerJob.JobKind.Verify, 1);
+            await InstallForcedSerializationFailureAsync(adminConnection, schemaName);
+            await using var context = new DavDatabaseContext(options);
+            var coordinator = CreateCoordinator(context, capacity: 1);
+            var now = DateTimeOffset.UtcNow;
+
+            var lease = Assert.Single(await coordinator.LeaseAsync(
+                WorkerJob.JobKind.Verify, "worker-a", 1, now, CancellationToken.None));
+
+            Assert.Equal(2L, await ReadSequenceValueAsync(
+                adminConnection, schemaName, "lease_retry_attempts"));
+            await AssertUsableLeaseAsync(coordinator, lease, now);
+        });
+    }
+
+    [PostgreSqlFact]
+    public async Task SameLaneDistinctCandidatesShareCapacityAcrossOwners()
+    {
+        await WithSchemaAsync(async (_, _, options) =>
+        {
+            await SeedJobsAsync(options, WorkerJob.JobKind.Verify, 2);
+            await using var firstContext = new DavDatabaseContext(options);
+            await using var secondContext = new DavDatabaseContext(options);
+            var firstCoordinator = CreateCoordinator(firstContext, capacity: 2);
+            var secondCoordinator = CreateCoordinator(secondContext, capacity: 2);
+            var now = DateTimeOffset.UtcNow;
+            var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var firstTask = AcquireAfterGateAsync(firstCoordinator, "worker-a", now, gate.Task);
+            var secondTask = AcquireAfterGateAsync(secondCoordinator, "worker-b", now, gate.Task);
+            gate.SetResult();
+            var results = await Task.WhenAll(firstTask, secondTask);
+            var leases = results.SelectMany(result => result).ToArray();
+
+            Assert.All(results, result => Assert.Single(result));
+            Assert.Equal(2, leases.Select(lease => lease.Identity.JobId).Distinct().Count());
+            Assert.Equal(new[] { "worker-a", "worker-b" },
+                leases.Select(lease => lease.Identity.Owner).OrderBy(owner => owner).ToArray());
+            await using var verificationContext = new DavDatabaseContext(options);
+            Assert.Equal(2, await verificationContext.WorkerJobs.CountAsync(job =>
+                job.Kind == WorkerJob.JobKind.Verify
+                && job.Status == WorkerJob.JobStatus.Leased
+                && job.LeaseExpiresAt > now));
+            var verificationCoordinator = CreateCoordinator(verificationContext, capacity: 2);
+            foreach (var lease in leases)
+                await AssertUsableLeaseAsync(verificationCoordinator, lease, now);
+        });
+    }
+
+    [PostgreSqlFact]
+    public async Task PostgreSqlLaneLocksKeepDownloadIndependentFromBlockedVerifyLane()
+    {
+        await WithSchemaAsync(async (adminConnection, schemaName, baseOptions) =>
+        {
+            await SeedJobsAsync(baseOptions, WorkerJob.JobKind.Verify, 1);
+            await SeedJobsAsync(baseOptions, WorkerJob.JobKind.Download, 1, clearExisting: false);
+            var baseConnectionString = baseOptions.Extensions
+                .OfType<Microsoft.EntityFrameworkCore.Infrastructure.RelationalOptionsExtension>()
+                .Single().ConnectionString!;
+            var verifyApplicationName = $"verify_lane_{Guid.NewGuid():N}";
+            var verifyOptions = CreateOptions(baseConnectionString, verifyApplicationName);
+            var downloadOptions = CreateOptions(baseConnectionString, $"download_lane_{Guid.NewGuid():N}");
+            await using var blockerConnection = new NpgsqlConnection(baseConnectionString);
+            await blockerConnection.OpenAsync();
+            await using var blockerTransaction = await blockerConnection.BeginTransactionAsync();
+            await ExecuteNonQueryAsync(blockerConnection,
+                $"SELECT pg_advisory_xact_lock({GetLaneLockKey(WorkerJob.JobKind.Verify)})");
+            await using var verifyContext = new DavDatabaseContext(verifyOptions);
+            await using var downloadContext = new DavDatabaseContext(downloadOptions);
+            var policy = new FixedCapacityPolicy(1);
+            var leaseOptions = Options.Create(new WorkerLeaseOptions());
+            var verifyCoordinator = new DatabaseWorkerJobCoordinator(verifyContext, policy, leaseOptions);
+            var downloadCoordinator = new DatabaseWorkerJobCoordinator(downloadContext, policy, leaseOptions);
+            var now = DateTimeOffset.UtcNow;
+
+            var verifyTask = verifyCoordinator.LeaseAsync(
+                WorkerJob.JobKind.Verify, "verify-worker", 1, now, CancellationToken.None);
+            await WaitForAdvisoryLockAsync(adminConnection, verifyApplicationName, CancellationToken.None);
+            Assert.False(verifyTask.IsCompleted);
+
+            var downloadLease = Assert.Single(await downloadCoordinator.LeaseAsync(
+                    WorkerJob.JobKind.Download, "download-worker", 1, now, CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(2)));
+            Assert.False(verifyTask.IsCompleted);
+
+            await blockerTransaction.CommitAsync();
+            var verifyLease = Assert.Single(await verifyTask.WaitAsync(TimeSpan.FromSeconds(2)));
+            await AssertUsableLeaseAsync(downloadCoordinator, downloadLease, now);
+            await AssertUsableLeaseAsync(verifyCoordinator, verifyLease, now);
+        });
+    }
+
+    private static async Task WithSchemaAsync(
+        Func<NpgsqlConnection, string, DbContextOptions<DavDatabaseContext>, Task> test)
     {
         var connectionString = Environment.GetEnvironmentVariable(
             PostgreSqlFactAttribute.TestConnectionStringVariable);
@@ -27,15 +126,10 @@ public sealed class DatabaseWorkerJobCoordinatorPostgreSqlTests
             {
                 SearchPath = schemaName
             }.ConnectionString;
-            var options = new DbContextOptionsBuilder<DavDatabaseContext>()
-                .UseNpgsql(schemaConnectionString)
-                .Options;
+            var options = CreateOptions(schemaConnectionString, $"schema_setup_{Guid.NewGuid():N}");
             await using (var migrationContext = new DavDatabaseContext(options))
                 await migrationContext.Database.MigrateAsync();
-            await InstallContentionTriggerAsync(adminConnection, schemaName);
-
-            await AssertContentionAsync(options, candidateCount: 1, capacity: 1);
-            await AssertContentionAsync(options, candidateCount: 2, capacity: 2);
+            await test(adminConnection, schemaName, options);
         }
         finally
         {
@@ -43,96 +137,134 @@ public sealed class DatabaseWorkerJobCoordinatorPostgreSqlTests
         }
     }
 
-    private static async Task AssertContentionAsync(
+    private static DbContextOptions<DavDatabaseContext> CreateOptions(
+        string connectionString,
+        string applicationName)
+    {
+        var namedConnectionString = new NpgsqlConnectionStringBuilder(connectionString)
+        {
+            ApplicationName = applicationName
+        }.ConnectionString;
+        return new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseNpgsql(namedConnectionString)
+            .Options;
+    }
+
+    private static async Task SeedJobsAsync(
         DbContextOptions<DavDatabaseContext> options,
-        int candidateCount,
+        WorkerJob.JobKind kind,
+        int count,
+        bool clearExisting = true)
+    {
+        await using var context = new DavDatabaseContext(options);
+        if (clearExisting) await context.WorkerJobs.ExecuteDeleteAsync();
+        var now = DateTimeOffset.UtcNow;
+        context.WorkerJobs.AddRange(Enumerable.Range(0, count).Select(index => new WorkerJob
+        {
+            Id = Guid.NewGuid(),
+            Kind = kind,
+            Status = WorkerJob.JobStatus.Pending,
+            TargetId = Guid.NewGuid(),
+            Priority = count - index,
+            CreatedAt = now,
+            UpdatedAt = now,
+            AvailableAt = now
+        }));
+        await context.SaveChangesAsync();
+    }
+
+    private static DatabaseWorkerJobCoordinator CreateCoordinator(
+        DavDatabaseContext context,
         int capacity)
     {
-        await using (var resetContext = new DavDatabaseContext(options))
-        {
-            await resetContext.WorkerJobs.ExecuteDeleteAsync();
-            var now = DateTimeOffset.UtcNow;
-            resetContext.WorkerJobs.AddRange(Enumerable.Range(0, candidateCount).Select(index =>
-                new WorkerJob
-                {
-                    Id = Guid.NewGuid(),
-                    Kind = WorkerJob.JobKind.Verify,
-                    Status = WorkerJob.JobStatus.Pending,
-                    TargetId = Guid.NewGuid(),
-                    Priority = candidateCount - index,
-                    CreatedAt = now,
-                    UpdatedAt = now,
-                    AvailableAt = now
-                }));
-            await resetContext.SaveChangesAsync();
-        }
-
-        await using var firstContext = new DavDatabaseContext(options);
-        await using var secondContext = new DavDatabaseContext(options);
-        var policy = new FixedCapacityPolicy(capacity);
-        var leaseOptions = Options.Create(new WorkerLeaseOptions());
-        var firstCoordinator = new DatabaseWorkerJobCoordinator(firstContext, policy, leaseOptions);
-        var secondCoordinator = new DatabaseWorkerJobCoordinator(secondContext, policy, leaseOptions);
-        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var nowForLease = DateTimeOffset.UtcNow;
-
-        var firstTask = AcquireAfterGateAsync(firstCoordinator, "worker-a", capacity, nowForLease, gate.Task);
-        var secondTask = AcquireAfterGateAsync(secondCoordinator, "worker-b", capacity, nowForLease, gate.Task);
-        gate.SetResult();
-        var results = await Task.WhenAll(firstTask, secondTask);
-        var leases = results.SelectMany(result => result).ToArray();
-
-        Assert.Equal(capacity, leases.Length);
-        Assert.Equal(capacity, leases.Select(lease => lease.Identity.JobId).Distinct().Count());
-        Assert.All(leases, lease => Assert.Contains(lease.Identity.Owner, new[] { "worker-a", "worker-b" }));
-
-        await using var verificationContext = new DavDatabaseContext(options);
-        Assert.Equal(capacity, await verificationContext.WorkerJobs.CountAsync(job =>
-            job.Kind == WorkerJob.JobKind.Verify
-            && job.Status == WorkerJob.JobStatus.Leased
-            && job.LeaseExpiresAt > nowForLease));
-        var verificationCoordinator = new DatabaseWorkerJobCoordinator(
-            verificationContext, policy, leaseOptions);
-        foreach (var lease in leases)
-        {
-            Assert.True(await verificationCoordinator.RenewAsync(
-                lease.Identity, nowForLease.AddSeconds(10), CancellationToken.None));
-            Assert.True(await verificationCoordinator.CompleteAsync(
-                lease.Identity, null, nowForLease.AddSeconds(11), CancellationToken.None));
-        }
+        return new DatabaseWorkerJobCoordinator(
+            context,
+            new FixedCapacityPolicy(capacity),
+            Options.Create(new WorkerLeaseOptions()));
     }
 
     private static async Task<IReadOnlyList<WorkerLease>> AcquireAfterGateAsync(
         IWorkerJobCoordinator coordinator,
         string owner,
-        int capacity,
         DateTimeOffset now,
         Task gate)
     {
         await gate;
         return await coordinator.LeaseAsync(
-            WorkerJob.JobKind.Verify, owner, capacity, now, CancellationToken.None);
+            WorkerJob.JobKind.Verify, owner, 1, now, CancellationToken.None);
     }
 
-    private static async Task InstallContentionTriggerAsync(
+    private static async Task AssertUsableLeaseAsync(
+        IWorkerJobCoordinator coordinator,
+        WorkerLease lease,
+        DateTimeOffset now)
+    {
+        Assert.True(await coordinator.RenewAsync(
+            lease.Identity, now.AddSeconds(10), CancellationToken.None));
+        Assert.True(await coordinator.CompleteAsync(
+            lease.Identity, null, now.AddSeconds(11), CancellationToken.None));
+    }
+
+    private static async Task InstallForcedSerializationFailureAsync(
         NpgsqlConnection connection,
         string schemaName)
     {
         await ExecuteNonQueryAsync(connection, $$"""
-            CREATE OR REPLACE FUNCTION "{{schemaName}}".delay_worker_lease_update()
+            CREATE SEQUENCE "{{schemaName}}".lease_retry_attempts;
+            CREATE OR REPLACE FUNCTION "{{schemaName}}".force_one_serialization_failure()
             RETURNS trigger LANGUAGE plpgsql AS $$
+            DECLARE attempt bigint;
             BEGIN
-                PERFORM pg_sleep(0.15);
+                attempt := nextval('"{{schemaName}}".lease_retry_attempts');
+                IF attempt = 1 THEN
+                    RAISE EXCEPTION 'forced serialization failure' USING ERRCODE = '40001';
+                END IF;
                 RETURN NEW;
             END;
             $$;
-            CREATE TRIGGER delay_worker_lease_update
+            CREATE TRIGGER force_one_serialization_failure
             BEFORE UPDATE ON "{{schemaName}}"."WorkerJobs"
             FOR EACH ROW
             WHEN (OLD."Status" <> 1 AND NEW."Status" = 1)
-            EXECUTE FUNCTION "{{schemaName}}".delay_worker_lease_update();
+            EXECUTE FUNCTION "{{schemaName}}".force_one_serialization_failure();
             """);
     }
+
+    private static async Task<long> ReadSequenceValueAsync(
+        NpgsqlConnection connection,
+        string schemaName,
+        string sequenceName)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT last_value FROM \"{schemaName}\".\"{sequenceName}\"";
+        return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    private static async Task WaitForAdvisoryLockAsync(
+        NpgsqlConnection connection,
+        string applicationName,
+        CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        while (true)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_stat_activity
+                    WHERE application_name = @applicationName
+                      AND wait_event_type = 'Lock'
+                      AND wait_event = 'advisory')
+                """;
+            command.Parameters.AddWithValue("applicationName", applicationName);
+            if ((bool)(await command.ExecuteScalarAsync(timeout.Token))!) return;
+            await Task.Delay(20, timeout.Token);
+        }
+    }
+
+    private static long GetLaneLockKey(WorkerJob.JobKind kind) => LaneLockNamespace + (int)kind;
 
     private static async Task ExecuteNonQueryAsync(NpgsqlConnection connection, string commandText)
     {
