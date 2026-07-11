@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Threading.Channels;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -18,6 +19,39 @@ public sealed class ContentIndexRecoveryServiceTests
     public ContentIndexRecoveryServiceTests(ContentIndexDatabaseFixture fixture)
     {
         _fixture = fixture;
+    }
+
+    [Fact]
+    public async Task DatabaseFixtureDisposeRestoresAmbientDatabaseEnvironment()
+    {
+        var originalConfigPath = Environment.GetEnvironmentVariable("CONFIG_PATH");
+        var originalProvider = Environment.GetEnvironmentVariable("NZBDAV_DATABASE_PROVIDER");
+        var originalConnectionString = Environment.GetEnvironmentVariable("NZBDAV_DATABASE_CONNECTION_STRING");
+        const string sentinelConfigPath = "/tmp/nzbdav-ambient-config";
+        const string sentinelProvider = "postgres";
+        const string sentinelConnectionString = "Host=ambient.invalid";
+
+        Environment.SetEnvironmentVariable("CONFIG_PATH", sentinelConfigPath);
+        Environment.SetEnvironmentVariable("NZBDAV_DATABASE_PROVIDER", sentinelProvider);
+        Environment.SetEnvironmentVariable("NZBDAV_DATABASE_CONNECTION_STRING", sentinelConnectionString);
+        try
+        {
+            var nestedFixture = new ContentIndexDatabaseFixture();
+            await nestedFixture.InitializeAsync();
+            await nestedFixture.DisposeAsync();
+
+            Assert.Equal(sentinelConfigPath, Environment.GetEnvironmentVariable("CONFIG_PATH"));
+            Assert.Equal(sentinelProvider, Environment.GetEnvironmentVariable("NZBDAV_DATABASE_PROVIDER"));
+            Assert.Equal(
+                sentinelConnectionString,
+                Environment.GetEnvironmentVariable("NZBDAV_DATABASE_CONNECTION_STRING"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CONFIG_PATH", originalConfigPath);
+            Environment.SetEnvironmentVariable("NZBDAV_DATABASE_PROVIDER", originalProvider);
+            Environment.SetEnvironmentVariable("NZBDAV_DATABASE_CONNECTION_STRING", originalConnectionString);
+        }
     }
 
     [Fact]
@@ -855,10 +889,20 @@ public sealed class ContentIndexRecoveryServiceTests
 
 public sealed class ContentIndexDatabaseFixture : IAsyncLifetime
 {
-    private readonly string _configPath = Path.Join(Path.GetTempPath(), "nzbdav-tests", "content-index-recovery");
+    private readonly string _configPath = Path.Join(
+        Path.GetTempPath(),
+        "nzbdav-tests",
+        $"content-index-recovery-{Guid.NewGuid():N}");
+    private readonly string? _previousConfigPath;
+    private readonly string? _previousDatabaseProvider;
+    private readonly string? _previousDatabaseConnectionString;
 
     public ContentIndexDatabaseFixture()
     {
+        _previousConfigPath = Environment.GetEnvironmentVariable("CONFIG_PATH");
+        _previousDatabaseProvider = Environment.GetEnvironmentVariable("NZBDAV_DATABASE_PROVIDER");
+        _previousDatabaseConnectionString = Environment.GetEnvironmentVariable(
+            "NZBDAV_DATABASE_CONNECTION_STRING");
         RestoreEnvironment();
     }
 
@@ -869,9 +913,28 @@ public sealed class ContentIndexDatabaseFixture : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
-        return ResetAsync();
+        try
+        {
+            await ResetAsync();
+        }
+        finally
+        {
+            try
+            {
+                SqliteConnection.ClearAllPools();
+                DeleteDirectoryIfExists(_configPath);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("CONFIG_PATH", _previousConfigPath);
+                Environment.SetEnvironmentVariable("NZBDAV_DATABASE_PROVIDER", _previousDatabaseProvider);
+                Environment.SetEnvironmentVariable(
+                    "NZBDAV_DATABASE_CONNECTION_STRING",
+                    _previousDatabaseConnectionString);
+            }
+        }
     }
 
     public async Task<DavDatabaseContext> ResetAndCreateMigratedContextAsync()

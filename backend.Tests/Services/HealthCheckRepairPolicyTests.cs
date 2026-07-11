@@ -179,6 +179,7 @@ public class HealthCheckRepairPolicyTests
     [Fact]
     public async Task PerformHealthCheckEnqueuesRepairJobForDefinitiveMissingSegments()
     {
+        var segmentId = $"{Guid.NewGuid():N}-definitive-missing";
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
         var dbClient = new DavDatabaseClient(dbContext);
         var davItem = CreateDavItem("/content/Movie.mkv");
@@ -187,12 +188,12 @@ public class HealthCheckRepairPolicyTests
         dbContext.NzbFiles.Add(new DavNzbFile
         {
             Id = davItem.Id,
-            SegmentIds = ["segment-1"]
+            SegmentIds = [segmentId]
         });
         await dbContext.SaveChangesAsync();
 
         var batch = SegmentCheckBatch.FromResults([
-            new SegmentCheckResult("segment-1", SegmentCheckState.Missing, Provider: "primary", Error: "missing")
+            new SegmentCheckResult(segmentId, SegmentCheckState.Missing, Provider: "primary", Error: "missing")
         ]);
         using var usenetClient = new FixedSegmentCheckStreamingClient(new ConfigManager(), new WebsocketManager(), batch);
         var service = new HealthCheckService(
