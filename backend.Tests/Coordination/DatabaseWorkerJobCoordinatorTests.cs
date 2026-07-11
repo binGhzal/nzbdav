@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
 using NzbWebDAV.Coordination;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -189,6 +190,78 @@ public sealed class DatabaseWorkerJobCoordinatorTests
     }
 
     [Fact]
+    public async Task CancellationAcknowledgementRequiresARequestedCancellation()
+    {
+        await using var dbContext = await CreateContextWithJobAsync(WorkerJob.JobKind.Verify);
+        var coordinator = CreateCoordinator(dbContext);
+        var now = DateTimeOffset.UtcNow;
+        var lease = Assert.Single(await coordinator.LeaseAsync(
+            WorkerJob.JobKind.Verify, "worker-a", 1, now, CancellationToken.None));
+
+        Assert.False(await coordinator.FailAsync(
+            lease.Identity, WorkerJob.FailureClass.Cancelled, "not requested", now, 3,
+            now.AddSeconds(1), CancellationToken.None));
+
+        dbContext.ChangeTracker.Clear();
+        Assert.Equal(WorkerJob.JobStatus.Leased,
+            (await dbContext.WorkerJobs.AsNoTracking().SingleAsync()).Status);
+    }
+
+    [Theory]
+    [InlineData(0, 30)]
+    [InlineData(120, 0)]
+    [InlineData(30, 30)]
+    [InlineData(30, 31)]
+    public async Task InvalidLeaseTimingOptionsAreRejected(int durationSeconds, int renewalSeconds)
+    {
+        await using var dbContext = await CreateContextWithJobAsync(WorkerJob.JobKind.Verify);
+        var options = Options.Create(new WorkerLeaseOptions
+        {
+            Duration = TimeSpan.FromSeconds(durationSeconds),
+            RenewalInterval = TimeSpan.FromSeconds(renewalSeconds)
+        });
+
+        Assert.Throws<OptionsValidationException>(() => new DatabaseWorkerJobCoordinator(
+            dbContext, new TestCapacityPolicy(1, 1, 1), options));
+    }
+
+    [Fact]
+    public void DependencyInjectionOptionsValidationRejectsInvalidTiming()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IConfigureOptions<WorkerLeaseOptions>>(
+            new InvalidLeaseOptionsConfiguration());
+        services.AddOptions<WorkerLeaseOptions>()
+            .Validate(WorkerLeaseOptions.IsValid, WorkerLeaseOptions.ValidationMessage)
+            .ValidateOnStart();
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<WorkerLeaseOptions>>().Value);
+    }
+
+    [Fact]
+    public async Task FailureTruncationDoesNotSplitSurrogatePair()
+    {
+        await using var dbContext = await CreateContextWithJobAsync(WorkerJob.JobKind.Verify);
+        var coordinator = CreateCoordinator(dbContext);
+        var now = DateTimeOffset.UtcNow;
+        var lease = Assert.Single(await coordinator.LeaseAsync(
+            WorkerJob.JobKind.Verify, "worker-a", 1, now, CancellationToken.None));
+        var error = new string('a', 1023) + "\U0001F600" + "tail";
+
+        Assert.True(await coordinator.FailAsync(
+            lease.Identity, WorkerJob.FailureClass.Retryable, error, now, 3, now,
+            CancellationToken.None));
+
+        dbContext.ChangeTracker.Clear();
+        var savedError = (await dbContext.WorkerJobs.AsNoTracking().SingleAsync()).LastError!;
+        Assert.Equal(1023, savedError.Length);
+        Assert.False(char.IsHighSurrogate(savedError[^1]));
+        Assert.True(savedError.All(character => !char.IsSurrogate(character)));
+    }
+
+    [Fact]
     public async Task ExpiredLeaseFreesCapacityAndIncrementsGeneration()
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
@@ -281,5 +354,14 @@ public sealed class DatabaseWorkerJobCoordinatorTests
             WorkerJob.JobKind.Repair => repair,
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
         };
+    }
+
+    private sealed class InvalidLeaseOptionsConfiguration : IConfigureOptions<WorkerLeaseOptions>
+    {
+        public void Configure(WorkerLeaseOptions options)
+        {
+            typeof(WorkerLeaseOptions).GetProperty(nameof(WorkerLeaseOptions.Duration))!
+                .SetValue(options, TimeSpan.Zero);
+        }
     }
 }

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Linq.Expressions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -1035,18 +1036,10 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .ConfigureAwait(false);
 
         var payloadJson = CreateRepairRunPayloadJson(repairRunId);
-        await Ctx.WorkerJobs
-            .Where(x => x.PayloadJson == payloadJson)
-            .Where(x => x.Status != WorkerJob.JobStatus.Completed
-                        && x.Status != WorkerJob.JobStatus.Cancelled)
-            .ExecuteUpdateAsync(
-                setters => setters
-                    .SetProperty(x => x.Status, WorkerJob.JobStatus.Cancelled)
-                    .SetProperty(x => x.UpdatedAt, referenceTime)
-                    .SetProperty(x => x.LeaseOwner, (string?)null)
-                    .SetProperty(x => x.LeaseExpiresAt, (DateTimeOffset?)null),
-                cancellationToken: ct)
-            .ConfigureAwait(false);
+        await CancelWorkerJobsAsync(
+            job => job.PayloadJson == payloadJson,
+            referenceTime,
+            ct).ConfigureAwait(false);
 
         await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
     }
@@ -1692,19 +1685,10 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     {
         if (targetIds.Count == 0) return;
 
-        var now = DateTimeOffset.UtcNow;
-        await Ctx.WorkerJobs
-            .Where(x => x.Kind == kind && targetIds.Contains(x.TargetId))
-            .Where(x => x.Status != WorkerJob.JobStatus.Completed
-                        && x.Status != WorkerJob.JobStatus.Cancelled)
-            .ExecuteUpdateAsync(
-                setters => setters
-                    .SetProperty(x => x.Status, WorkerJob.JobStatus.Cancelled)
-                    .SetProperty(x => x.UpdatedAt, now)
-                    .SetProperty(x => x.LeaseOwner, (string?)null)
-                    .SetProperty(x => x.LeaseExpiresAt, (DateTimeOffset?)null),
-                cancellationToken: ct)
-            .ConfigureAwait(false);
+        await CancelWorkerJobsAsync(
+            job => job.Kind == kind && targetIds.Contains(job.TargetId),
+            DateTimeOffset.UtcNow,
+            ct).ConfigureAwait(false);
     }
 
     public sealed record WorkerJobQueueStats
@@ -1816,15 +1800,8 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         }
         else if (existingJob.Status is WorkerJob.JobStatus.Completed or WorkerJob.JobStatus.Cancelled)
         {
-            existingJob.Status = WorkerJob.JobStatus.Pending;
+            ResetWorkerJobForEnqueue(existingJob, referenceTime);
             existingJob.Priority = priority;
-            existingJob.Attempts = 0;
-            existingJob.UpdatedAt = referenceTime;
-            existingJob.AvailableAt = referenceTime;
-            existingJob.CompletedAt = null;
-            existingJob.LeaseOwner = null;
-            existingJob.LeaseExpiresAt = null;
-            existingJob.LastError = null;
             existingJob.PayloadJson = payloadJson;
         }
         else
@@ -1879,15 +1856,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             }
 
             if (existingJob.Status is WorkerJob.JobStatus.Completed or WorkerJob.JobStatus.Cancelled)
-            {
-                existingJob.Status = WorkerJob.JobStatus.Pending;
-                existingJob.Attempts = 0;
-                existingJob.AvailableAt = referenceTime;
-                existingJob.CompletedAt = null;
-                existingJob.LeaseOwner = null;
-                existingJob.LeaseExpiresAt = null;
-                existingJob.LastError = null;
-            }
+                ResetWorkerJobForEnqueue(existingJob, referenceTime);
 
             existingJob.Priority = priority;
             existingJob.UpdatedAt = referenceTime;
@@ -1898,6 +1867,59 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         if (saveChanges)
             await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
         return changed;
+    }
+
+    private static void ResetWorkerJobForEnqueue(WorkerJob job, DateTimeOffset now)
+    {
+        job.Status = WorkerJob.JobStatus.Pending;
+        job.Attempts = 0;
+        job.UpdatedAt = now;
+        job.AvailableAt = now;
+        job.CompletedAt = null;
+        job.LeaseOwner = null;
+        job.LeaseToken = null;
+        job.LeaseExpiresAt = null;
+        job.LastHeartbeatAt = null;
+        job.StartedAt = null;
+        job.CancelRequestedAt = null;
+        job.FailureKind = null;
+        job.ProgressJson = null;
+        job.ProgressUpdatedAt = null;
+        job.ResultJson = null;
+        job.LastError = null;
+    }
+
+    private async Task CancelWorkerJobsAsync(
+        Expression<Func<WorkerJob, bool>> predicate,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        await Ctx.WorkerJobs
+            .Where(predicate)
+            .Where(job => job.Status == WorkerJob.JobStatus.Pending
+                          || job.Status == WorkerJob.JobStatus.Retry
+                          || job.Status == WorkerJob.JobStatus.Quarantined
+                          || job.Status == WorkerJob.JobStatus.Leased)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(job => job.Status, job => job.Status == WorkerJob.JobStatus.Leased
+                    ? WorkerJob.JobStatus.Leased
+                    : WorkerJob.JobStatus.Cancelled)
+                .SetProperty(job => job.UpdatedAt, now)
+                .SetProperty(job => job.CompletedAt, job => job.Status == WorkerJob.JobStatus.Leased
+                    ? job.CompletedAt
+                    : now)
+                .SetProperty(job => job.CancelRequestedAt, now)
+                .SetProperty(job => job.FailureKind, job => job.Status == WorkerJob.JobStatus.Leased
+                    ? job.FailureKind
+                    : WorkerJob.FailureClass.Cancelled), ct)
+            .ConfigureAwait(false);
+
+        var matches = predicate.Compile();
+        var trackedEntries = Ctx.ChangeTracker.Entries<WorkerJob>()
+            .Where(entry => entry.State != EntityState.Added && matches(entry.Entity))
+            .ToArray();
+        foreach (var entry in trackedEntries)
+            await entry.ReloadAsync(ct).ConfigureAwait(false);
     }
 
     public Task<WorkerJob?> LeaseNextWorkerJobAsync

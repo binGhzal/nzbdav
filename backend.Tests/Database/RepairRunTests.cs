@@ -3,6 +3,7 @@ using backend.Tests.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using NzbWebDAV.Coordination;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -87,6 +88,33 @@ public sealed class RepairRunTests
         Assert.Equal(WorkerJob.JobStatus.Cancelled, job.Status);
         Assert.Null(job.LeaseOwner);
         Assert.Null(job.LeaseExpiresAt);
+    }
+
+    [Fact]
+    public async Task CancelRepairRunAsync_RequestsCancellationForLeasedJobWithoutClearingIdentity()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var movie = CreateDavItem("/content/LeasedMovie.mkv");
+        dbContext.Items.Add(movie);
+        await dbContext.SaveChangesAsync();
+        var now = DateTimeOffset.UtcNow;
+        var dbClient = new DavDatabaseClient(dbContext);
+        var run = await dbClient.StartRepairRunAsync(priority: 7, now: now);
+        var leased = await dbClient.LeaseNextWorkerJobAsync(
+            WorkerJob.JobKind.Verify, "worker-a", TimeSpan.FromMinutes(2), now);
+        Assert.NotNull(leased);
+        var identity = new WorkerLeaseIdentity(
+            leased.Id, leased.LeaseOwner!, leased.LeaseToken!.Value, leased.LeaseGeneration);
+
+        await dbClient.CancelRepairRunAsync(run.Id, now: now.AddMinutes(1));
+
+        dbContext.ChangeTracker.Clear();
+        var saved = await dbContext.WorkerJobs.AsNoTracking().SingleAsync();
+        Assert.Equal(WorkerJob.JobStatus.Leased, saved.Status);
+        Assert.Equal(identity.Owner, saved.LeaseOwner);
+        Assert.Equal(identity.Token, saved.LeaseToken);
+        Assert.Equal(identity.Generation, saved.LeaseGeneration);
+        Assert.Equal(now.AddMinutes(1), saved.CancelRequestedAt);
     }
 
     [Fact]

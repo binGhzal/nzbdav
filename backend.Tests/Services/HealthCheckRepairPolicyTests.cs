@@ -1667,6 +1667,38 @@ public class HealthCheckRepairPolicyTests
         Assert.Null(savedJob.LeaseExpiresAt);
     }
 
+    [Fact]
+    public async Task RejectedHealthWorkerCompletionIsReportedAsLostOwnership()
+    {
+        var coordinator = new RejectingWorkerJobCoordinator();
+        using var usenetClient = new RecordingSegmentCheckStreamingClient(new ConfigManager(), new WebsocketManager());
+        var service = new HealthCheckService(
+            new ConfigManager(), usenetClient, new QueueWorkLaneCoordinator(), new WebsocketManager(), coordinator);
+        var lease = ToWorkerLease(CreateLeasedWorkerJob(WorkerJob.JobKind.Verify));
+
+        var accepted = await InvokeTryCompleteWorkerJobAsync(service, lease);
+
+        Assert.False(accepted);
+        Assert.Equal(1, coordinator.CompleteCalls);
+        Assert.Equal(0, coordinator.FailCalls);
+    }
+
+    [Fact]
+    public async Task RejectedHealthWorkerFailureDoesNotInferRetryOrQuarantine()
+    {
+        var coordinator = new RejectingWorkerJobCoordinator();
+        using var usenetClient = new RecordingSegmentCheckStreamingClient(new ConfigManager(), new WebsocketManager());
+        var service = new HealthCheckService(
+            new ConfigManager(), usenetClient, new QueueWorkLaneCoordinator(), new WebsocketManager(), coordinator);
+        var lease = ToWorkerLease(CreateLeasedWorkerJob(WorkerJob.JobKind.Verify));
+
+        var status = await InvokeFailLeasedWorkerJobAsync(service, lease);
+
+        Assert.Null(status);
+        Assert.Equal(0, coordinator.CompleteCalls);
+        Assert.Equal(1, coordinator.FailCalls);
+    }
+
     private static DavItem CreateDavItem(
         string path,
         DavItem.ItemSubType subType = DavItem.ItemSubType.NzbFile,
@@ -1835,6 +1867,75 @@ public class HealthCheckRepairPolicyTests
             job.PayloadJson,
             job.LeaseExpiresAt!.Value,
             job.CancelRequestedAt != null);
+    }
+
+    private static async Task<bool> InvokeTryCompleteWorkerJobAsync(
+        HealthCheckService service,
+        WorkerLease lease)
+    {
+        var method = typeof(HealthCheckService).GetMethod(
+            "TryCompleteWorkerJobAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        return await (Task<bool>)method.Invoke(service, [lease, CancellationToken.None])!;
+    }
+
+    private static async Task<WorkerJob.JobStatus?> InvokeFailLeasedWorkerJobAsync(
+        HealthCheckService service,
+        WorkerLease lease)
+    {
+        var method = typeof(HealthCheckService).GetMethod(
+            "FailLeasedWorkerJobAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        return await (Task<WorkerJob.JobStatus?>)method.Invoke(service,
+            [lease, new InvalidOperationException("failure"), WorkerJob.JobKind.Verify, CancellationToken.None])!;
+    }
+
+    private static WorkerJob CreateLeasedWorkerJob(WorkerJob.JobKind kind)
+    {
+        return new WorkerJob
+        {
+            Id = Guid.NewGuid(),
+            Kind = kind,
+            TargetId = Guid.NewGuid(),
+            Status = WorkerJob.JobStatus.Leased,
+            LeaseOwner = "worker",
+            LeaseToken = Guid.NewGuid(),
+            LeaseGeneration = 1,
+            LeaseExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
+            Attempts = 1
+        };
+    }
+
+    private sealed class RejectingWorkerJobCoordinator : IWorkerJobCoordinator
+    {
+        public int CompleteCalls { get; private set; }
+        public int FailCalls { get; private set; }
+
+        public Task<IReadOnlyList<WorkerLease>> LeaseAsync(
+            WorkerJob.JobKind kind, string owner, int capacity, DateTimeOffset now, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<WorkerLease>>([]);
+        public Task<bool> RenewAsync(WorkerLeaseIdentity lease, DateTimeOffset now, CancellationToken ct) =>
+            Task.FromResult(false);
+        public Task<bool> ReportProgressAsync(
+            WorkerLeaseIdentity lease, string progressJson, DateTimeOffset now, CancellationToken ct) =>
+            Task.FromResult(false);
+        public Task<bool> CompleteAsync(
+            WorkerLeaseIdentity lease, string? resultJson, DateTimeOffset now, CancellationToken ct)
+        {
+            CompleteCalls++;
+            return Task.FromResult(false);
+        }
+        public Task<bool> ReleaseAsync(WorkerLeaseIdentity lease, DateTimeOffset now, CancellationToken ct) =>
+            Task.FromResult(false);
+        public Task<bool> FailAsync(
+            WorkerLeaseIdentity lease, WorkerJob.FailureClass failureKind, string error,
+            DateTimeOffset nextAttemptAt, int maxAttempts, DateTimeOffset now, CancellationToken ct)
+        {
+            FailCalls++;
+            return Task.FromResult(false);
+        }
+        public Task<bool> RequestCancellationAsync(Guid jobId, DateTimeOffset now, CancellationToken ct) =>
+            Task.FromResult(false);
     }
 
     private static void MarkHealthCheckActive(HealthCheckService service, Guid targetId)

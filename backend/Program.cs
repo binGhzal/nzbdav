@@ -121,6 +121,8 @@ class Program
             .AddSingleton<StreamingConnectionLimiter>()
             .AddSingleton<QueueWorkLaneCoordinator>()
             .AddOptions<WorkerLeaseOptions>()
+            .Validate(WorkerLeaseOptions.IsValid, WorkerLeaseOptions.ValidationMessage)
+            .ValidateOnStart()
             .Services
             .AddSingleton<IWorkerLaneCapacityPolicy, ConfigWorkerLaneCapacityPolicy>()
             .AddSingleton<IWorkerJobCoordinator, DatabaseWorkerJobCoordinator>()

@@ -83,7 +83,8 @@ public class HealthCheckService : BackgroundService
         _usenetClient = usenetClient;
         _queueWorkLaneCoordinator = queueWorkLaneCoordinator;
         _websocketManager = websocketManager;
-        _workerLeaseOptions = workerLeaseOptions?.Value ?? new WorkerLeaseOptions();
+        _workerLeaseOptions = WorkerLeaseOptions.Validate(
+            workerLeaseOptions?.Value ?? new WorkerLeaseOptions());
         _workerJobCoordinator = workerJobCoordinator ?? new DatabaseWorkerJobCoordinator(
             new ConfigWorkerLaneCapacityPolicy(configManager),
             Options.Create(_workerLeaseOptions));
@@ -126,7 +127,9 @@ public class HealthCheckService : BackgroundService
                         if (verifyJob == null) break;
                         if (!TryMarkHealthCheckActive(verifyJob.TargetId))
                         {
-                            await ReleaseLeasedWorkerJobAsync(verifyJob, stoppingToken).ConfigureAwait(false);
+                            if (!await ReleaseLeasedWorkerJobAsync(verifyJob, stoppingToken).ConfigureAwait(false))
+                                Log.Warning("Lost verify worker lease {WorkerJobId} before local collision release.",
+                                    verifyJob.Identity.JobId);
                             continue;
                         }
 
@@ -333,8 +336,9 @@ public class HealthCheckService : BackgroundService
             var lease = leases[0];
             if (excluded is null || !excluded.Contains(lease.TargetId)) return lease;
 
-            await _workerJobCoordinator.ReleaseAsync(
-                lease.Identity, now.AddMilliseconds(attempt + 1), ct).ConfigureAwait(false);
+            if (!await _workerJobCoordinator.ReleaseAsync(
+                    lease.Identity, now.AddMilliseconds(attempt + 1), ct).ConfigureAwait(false))
+                return null;
         }
 
         return null;
@@ -382,8 +386,7 @@ public class HealthCheckService : BackgroundService
                         .ConfigureAwait(false);
                     await dbContext.SaveChangesAsync(workerCts.Token).ConfigureAwait(false);
                 }
-                await _workerJobCoordinator.CompleteAsync(
-                    workerJob.Identity, null, DateTimeOffset.UtcNow, workerCts.Token).ConfigureAwait(false);
+                await TryCompleteWorkerJobAsync(workerJob, workerCts.Token).ConfigureAwait(false);
                 return;
             }
 
@@ -410,8 +413,7 @@ public class HealthCheckService : BackgroundService
                     skipReleaseDateProbe: isPostDownloadVerification,
                     useRecentlyVerifiedSegmentCache: isPostDownloadVerification)
                 .ConfigureAwait(false);
-            await _workerJobCoordinator.CompleteAsync(
-                workerJob.Identity, null, DateTimeOffset.UtcNow, workerCts.Token).ConfigureAwait(false);
+            await TryCompleteWorkerJobAsync(workerJob, workerCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (workerCts.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
         {
@@ -424,7 +426,7 @@ public class HealthCheckService : BackgroundService
             var failedStatus = await FailLeasedWorkerJobAsync(workerJob, e, WorkerJob.JobKind.Verify, ct)
                 .ConfigureAwait(false);
             var repairRunId = DavDatabaseClient.TryGetRepairRunId(workerJob.PayloadJson);
-            if (repairRunId.HasValue)
+            if (repairRunId.HasValue && failedStatus.HasValue)
                 await MarkRepairVerificationFailureAsync(
                         repairRunId.Value,
                         workerJob.TargetId,
@@ -452,7 +454,9 @@ public class HealthCheckService : BackgroundService
     {
         if (!TryMarkHealthCheckActive(workerJob.TargetId))
         {
-            await ReleaseLeasedWorkerJobAsync(workerJob, ct).ConfigureAwait(false);
+            if (!await ReleaseLeasedWorkerJobAsync(workerJob, ct).ConfigureAwait(false))
+                Log.Warning("Lost repair worker lease {WorkerJobId} before local collision release.",
+                    workerJob.Identity.JobId);
             return false;
         }
 
@@ -477,14 +481,12 @@ public class HealthCheckService : BackgroundService
             var repairRunId = DavDatabaseClient.TryGetRepairRunId(workerJob.PayloadJson);
             if (davItem == null)
             {
-                await _workerJobCoordinator.CompleteAsync(
-                    workerJob.Identity, null, DateTimeOffset.UtcNow, workerCts.Token).ConfigureAwait(false);
+                await TryCompleteWorkerJobAsync(workerJob, workerCts.Token).ConfigureAwait(false);
                 return;
             }
 
             await Repair(davItem, dbClient, workerCts.Token, repairRunId).ConfigureAwait(false);
-            await _workerJobCoordinator.CompleteAsync(
-                workerJob.Identity, null, DateTimeOffset.UtcNow, workerCts.Token).ConfigureAwait(false);
+            await TryCompleteWorkerJobAsync(workerJob, workerCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (workerCts.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
         {
@@ -515,7 +517,7 @@ public class HealthCheckService : BackgroundService
     {
         try
         {
-            await _workerJobCoordinator.FailAsync(
+            var failed = await _workerJobCoordinator.FailAsync(
                     workerJob.Identity,
                     WorkerJob.FailureClass.Retryable,
                     exception.Message,
@@ -524,6 +526,7 @@ public class HealthCheckService : BackgroundService
                     DateTimeOffset.UtcNow,
                     ct)
                 .ConfigureAwait(false);
+            if (!failed) return null;
             return workerJob.Attempt >= WorkerMaxAttempts
                 ? WorkerJob.JobStatus.Quarantined
                 : WorkerJob.JobStatus.Retry;
@@ -552,11 +555,17 @@ public class HealthCheckService : BackgroundService
                     WorkerMaxAttempts,
                     DateTimeOffset.UtcNow,
                     CancellationToken.None).ConfigureAwait(false);
-                if (acknowledged) return;
+                if (!acknowledged)
+                    Log.Warning("Lost {WorkerKind} worker lease {WorkerJobId} before cancellation acknowledgement.",
+                        kind, workerJob.Identity.JobId);
+                return;
             }
 
-            await _workerJobCoordinator.ReleaseAsync(
+            var released = await _workerJobCoordinator.ReleaseAsync(
                 workerJob.Identity, DateTimeOffset.UtcNow, CancellationToken.None).ConfigureAwait(false);
+            if (!released)
+                Log.Warning("Lost {WorkerKind} worker lease {WorkerJobId} before cancellation release.",
+                    kind, workerJob.Identity.JobId);
         }
         catch (Exception e)
         {
@@ -567,6 +576,16 @@ public class HealthCheckService : BackgroundService
                 workerJob.Identity.JobId,
                 e.Message);
         }
+    }
+
+    private async Task<bool> TryCompleteWorkerJobAsync(WorkerLease workerJob, CancellationToken ct)
+    {
+        var completed = await _workerJobCoordinator.CompleteAsync(
+            workerJob.Identity, null, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+        if (!completed)
+            Log.Warning("Lost {WorkerKind} worker lease {WorkerJobId} before completion.",
+                workerJob.Kind, workerJob.Identity.JobId);
+        return completed;
     }
 
     private async Task RenewLeaseAsync(

@@ -214,6 +214,184 @@ public sealed class WorkerJobLeaseTests
     }
 
     [Fact]
+    public async Task CancelWorkerJobsAsync_RequestsCancellationWithoutDestroyingActiveLeaseIdentity()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var now = DateTimeOffset.UtcNow;
+        var pendingTarget = Guid.NewGuid();
+        var retryTarget = Guid.NewGuid();
+        var leasedTarget = Guid.NewGuid();
+        await dbClient.EnqueueWorkerJobAsync(WorkerJob.JobKind.Download, pendingTarget, 10, now);
+        await dbClient.EnqueueWorkerJobAsync(WorkerJob.JobKind.Download, retryTarget, 5, now);
+        await dbClient.EnqueueWorkerJobAsync(WorkerJob.JobKind.Download, leasedTarget, 100, now);
+        var leased = await dbClient.LeaseNextWorkerJobAsync(
+            WorkerJob.JobKind.Download, "worker-a", TimeSpan.FromMinutes(2), now);
+        Assert.NotNull(leased);
+        Assert.Equal(leasedTarget, leased.TargetId);
+        await dbContext.WorkerJobs.Where(job => job.TargetId == retryTarget)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(job => job.Status, WorkerJob.JobStatus.Retry)
+                .SetProperty(job => job.LastError, "retry"));
+        var identity = ToIdentity(leased);
+
+        await dbClient.CancelWorkerJobsAsync(
+            WorkerJob.JobKind.Download, [pendingTarget, retryTarget, leasedTarget], CancellationToken.None);
+
+        dbContext.ChangeTracker.Clear();
+        var pending = await dbContext.WorkerJobs.SingleAsync(job => job.TargetId == pendingTarget);
+        var retry = await dbContext.WorkerJobs.SingleAsync(job => job.TargetId == retryTarget);
+        var active = await dbContext.WorkerJobs.SingleAsync(job => job.TargetId == leasedTarget);
+        Assert.Equal(WorkerJob.JobStatus.Cancelled, pending.Status);
+        Assert.Equal(WorkerJob.JobStatus.Cancelled, retry.Status);
+        Assert.Equal(WorkerJob.JobStatus.Leased, active.Status);
+        Assert.Equal(identity.Owner, active.LeaseOwner);
+        Assert.Equal(identity.Token, active.LeaseToken);
+        Assert.Equal(identity.Generation, active.LeaseGeneration);
+        Assert.NotNull(active.CancelRequestedAt);
+
+        var coordinator = CreateCoordinator(dbContext);
+        Assert.False(await coordinator.RenewAsync(identity, now.AddSeconds(30), CancellationToken.None));
+        Assert.True(await coordinator.FailAsync(
+            identity, WorkerJob.FailureClass.Cancelled, "cancelled by request", now, 3,
+            now.AddSeconds(30), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CancelWorkerJobsAsync_UsesOneAtomicWorkerJobUpdate()
+    {
+        var interceptor = new CountingCommandInterceptor(commandText =>
+            commandText.TrimStart().StartsWith("UPDATE ", StringComparison.OrdinalIgnoreCase)
+            && commandText.Contains("WorkerJobs", StringComparison.OrdinalIgnoreCase));
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .AddInterceptors(interceptor)
+            .Options;
+        await using var dbContext = new DavDatabaseContext(options);
+        await dbContext.Database.EnsureCreatedAsync();
+        var now = DateTimeOffset.UtcNow;
+        var pending = CreateWorkerJob(WorkerJob.JobKind.Verify, WorkerJob.JobStatus.Pending, now);
+        var leased = CreateWorkerJob(
+            WorkerJob.JobKind.Verify, WorkerJob.JobStatus.Leased, now, now.AddMinutes(2));
+        leased.LeaseToken = Guid.NewGuid();
+        leased.LeaseGeneration = 1;
+        dbContext.WorkerJobs.AddRange(pending, leased);
+        await dbContext.SaveChangesAsync();
+        interceptor.Reset();
+
+        await new DavDatabaseClient(dbContext).CancelWorkerJobsAsync(
+            WorkerJob.JobKind.Verify, [pending.TargetId, leased.TargetId]);
+
+        Assert.Equal(1, interceptor.Count);
+    }
+
+    [Fact]
+    public async Task CancelledPendingJobCanBeReEnqueuedInTheSameTrackedContext()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var now = DateTimeOffset.UtcNow;
+        var targetId = Guid.NewGuid();
+        await dbClient.EnqueueWorkerJobAsync(WorkerJob.JobKind.Verify, targetId, 1, now);
+
+        await dbClient.CancelWorkerJobsAsync(WorkerJob.JobKind.Verify, [targetId]);
+        var reenqueued = await dbClient.EnqueueWorkerJobAsync(
+            WorkerJob.JobKind.Verify, targetId, 2, now.AddMinutes(1));
+
+        AssertFreshPendingJob(reenqueued, now.AddMinutes(1), attempts: 0);
+    }
+
+    [Fact]
+    public async Task EnqueueWorkerJobAsync_ResetsAllStaleStateAfterAcknowledgedCancellation()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var now = DateTimeOffset.UtcNow;
+        var targetId = Guid.NewGuid();
+        await dbClient.EnqueueWorkerJobAsync(WorkerJob.JobKind.Verify, targetId, 1, now);
+        var coordinator = CreateCoordinator(dbContext);
+        var lease = Assert.Single(await coordinator.LeaseAsync(
+            WorkerJob.JobKind.Verify, "worker-a", 1, now, CancellationToken.None));
+        Assert.True(await coordinator.ReportProgressAsync(
+            lease.Identity, "{\"percent\":50}", now.AddSeconds(1), CancellationToken.None));
+        Assert.True(await coordinator.RequestCancellationAsync(
+            lease.Identity.JobId, now.AddSeconds(2), CancellationToken.None));
+        Assert.True(await coordinator.FailAsync(
+            lease.Identity, WorkerJob.FailureClass.Cancelled, "cancelled", now, 3,
+            now.AddSeconds(3), CancellationToken.None));
+        await SetTerminalStaleStateAsync(dbContext, lease.Identity.JobId, "stale-result");
+
+        var reenqueued = await dbClient.EnqueueWorkerJobAsync(
+            WorkerJob.JobKind.Verify, targetId, 7, now.AddMinutes(1), payloadJson: "new-payload");
+
+        AssertFreshPendingJob(reenqueued, now.AddMinutes(1), attempts: 0);
+        Assert.Equal("new-payload", reenqueued.PayloadJson);
+    }
+
+    [Fact]
+    public async Task EnqueueWorkerJobsAsync_ResetsAllStaleStateAfterExpiredCancellation()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var now = DateTimeOffset.UtcNow;
+        var firstTarget = Guid.NewGuid();
+        var secondTarget = Guid.NewGuid();
+        await dbClient.EnqueueWorkerJobsAsync(
+            WorkerJob.JobKind.Repair, [firstTarget, secondTarget], 1, now);
+        var coordinator = CreateCoordinator(dbContext, repairCapacity: 2);
+        var leases = await coordinator.LeaseAsync(
+            WorkerJob.JobKind.Repair, "worker-a", 2, now, CancellationToken.None);
+        Assert.Equal(2, leases.Count);
+        foreach (var lease in leases)
+            Assert.True(await coordinator.RequestCancellationAsync(
+                lease.Identity.JobId, now.AddSeconds(1), CancellationToken.None));
+        Assert.Empty(await coordinator.LeaseAsync(
+            WorkerJob.JobKind.Repair, "worker-b", 2, now.AddMinutes(3), CancellationToken.None));
+        foreach (var lease in leases)
+            await SetTerminalStaleStateAsync(dbContext, lease.Identity.JobId, "stale-result");
+
+        var changed = await dbClient.EnqueueWorkerJobsAsync(
+            WorkerJob.JobKind.Repair, [firstTarget, secondTarget], 9, now.AddMinutes(4));
+
+        Assert.Equal(2, changed);
+        dbContext.ChangeTracker.Clear();
+        var jobs = await dbContext.WorkerJobs.OrderBy(job => job.TargetId).ToListAsync();
+        Assert.All(jobs, job => AssertFreshPendingJob(job, now.AddMinutes(4), attempts: 0));
+    }
+
+    [Fact]
+    public async Task QueueManagerRejectedCompletionIsReportedAsLostOwnershipWithoutFallbackMutation()
+    {
+        var coordinator = new RecordingWorkerJobCoordinator { CompleteResult = false };
+        var item = CreateDownloadInProgressQueueItem(CreateLeasedWorkerJob());
+
+        var accepted = await InvokeUpdateDownloadWorkerJobAsync(
+            item, coordinator, QueueItemProcessor.ProcessingOutcome.Completed);
+
+        Assert.False(accepted);
+        Assert.Equal(1, coordinator.CompleteCalls);
+        Assert.Equal(0, coordinator.FailCalls);
+        Assert.Equal(0, coordinator.ReleaseCalls);
+    }
+
+    [Fact]
+    public async Task QueueManagerRejectedFailureIsReportedAsLostOwnershipWithoutFallbackMutation()
+    {
+        var coordinator = new RecordingWorkerJobCoordinator { FailResult = false };
+        var item = CreateDownloadInProgressQueueItem(CreateLeasedWorkerJob());
+
+        var accepted = await InvokeUpdateDownloadWorkerJobAsync(
+            item, coordinator, QueueItemProcessor.ProcessingOutcome.RetryScheduled);
+
+        Assert.False(accepted);
+        Assert.Equal(0, coordinator.CompleteCalls);
+        Assert.Equal(1, coordinator.FailCalls);
+        Assert.Equal(0, coordinator.ReleaseCalls);
+    }
+
+    [Fact]
     public async Task LeaseTopQueueItemAsync_CreatesDurableDownloadJobAndSkipsPausedOrLeasedItems()
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
@@ -633,7 +811,53 @@ public sealed class WorkerJobLeaseTests
             workerJob.LeaseOwner!,
             workerJob.LeaseToken!.Value,
             workerJob.LeaseGeneration));
+        type.GetProperty("QueueItem")!.SetValue(value, CreateQueueItem(
+            "Lease test", QueueItem.PriorityOption.Normal, DateTime.UtcNow));
         return value;
+    }
+
+    private static WorkerLeaseIdentity ToIdentity(WorkerJob job) => new(
+        job.Id, job.LeaseOwner!, job.LeaseToken!.Value, job.LeaseGeneration);
+
+    private static DatabaseWorkerJobCoordinator CreateCoordinator(
+        DavDatabaseContext dbContext,
+        int repairCapacity = 8)
+    {
+        return new DatabaseWorkerJobCoordinator(
+            dbContext,
+            new TestWorkerCapacityPolicy(repairCapacity),
+            Options.Create(new WorkerLeaseOptions()));
+    }
+
+    private static async Task SetTerminalStaleStateAsync(
+        DavDatabaseContext dbContext,
+        Guid jobId,
+        string resultJson)
+    {
+        dbContext.ChangeTracker.Clear();
+        await dbContext.WorkerJobs.Where(job => job.Id == jobId).ExecuteUpdateAsync(setters => setters
+            .SetProperty(job => job.ResultJson, resultJson)
+            .SetProperty(job => job.StartedAt, DateTimeOffset.UtcNow)
+            .SetProperty(job => job.LastHeartbeatAt, DateTimeOffset.UtcNow));
+    }
+
+    private static void AssertFreshPendingJob(WorkerJob job, DateTimeOffset availableAt, int attempts)
+    {
+        Assert.Equal(WorkerJob.JobStatus.Pending, job.Status);
+        Assert.Equal(attempts, job.Attempts);
+        Assert.Equal(availableAt, job.AvailableAt);
+        Assert.Null(job.CancelRequestedAt);
+        Assert.Null(job.LeaseOwner);
+        Assert.Null(job.LeaseToken);
+        Assert.Null(job.LeaseExpiresAt);
+        Assert.Null(job.LastHeartbeatAt);
+        Assert.Null(job.StartedAt);
+        Assert.Null(job.FailureKind);
+        Assert.Null(job.ProgressJson);
+        Assert.Null(job.ProgressUpdatedAt);
+        Assert.Null(job.ResultJson);
+        Assert.Null(job.CompletedAt);
+        Assert.Null(job.LastError);
     }
 
     private static async Task InvokeUpdateDownloadWorkerJobAsync
@@ -655,9 +879,82 @@ public sealed class WorkerJobLeaseTests
         await task;
     }
 
-    private sealed class TestWorkerCapacityPolicy : IWorkerLaneCapacityPolicy
+    private static async Task<bool> InvokeUpdateDownloadWorkerJobAsync(
+        object inProgressQueueItem,
+        IWorkerJobCoordinator coordinator,
+        QueueItemProcessor.ProcessingOutcome outcome)
     {
-        public int GetMaximum(WorkerJob.JobKind kind) => 128;
+        var method = typeof(QueueManager).GetMethod("UpdateDownloadWorkerJobAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(method);
+        var task = Assert.IsAssignableFrom<Task<bool>>(method.Invoke(null,
+            [coordinator, inProgressQueueItem, outcome]));
+        return await task;
+    }
+
+    private static WorkerJob CreateLeasedWorkerJob()
+    {
+        return new WorkerJob
+        {
+            Id = Guid.NewGuid(),
+            Kind = WorkerJob.JobKind.Download,
+            TargetId = Guid.NewGuid(),
+            Status = WorkerJob.JobStatus.Leased,
+            LeaseOwner = "worker",
+            LeaseToken = Guid.NewGuid(),
+            LeaseGeneration = 1,
+            LeaseExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2)
+        };
+    }
+
+    private sealed class RecordingWorkerJobCoordinator : IWorkerJobCoordinator
+    {
+        public bool CompleteResult { get; init; } = true;
+        public bool FailResult { get; init; } = true;
+        public int CompleteCalls { get; private set; }
+        public int FailCalls { get; private set; }
+        public int ReleaseCalls { get; private set; }
+
+        public Task<IReadOnlyList<WorkerLease>> LeaseAsync(
+            WorkerJob.JobKind kind, string owner, int capacity, DateTimeOffset now, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<WorkerLease>>([]);
+
+        public Task<bool> RenewAsync(WorkerLeaseIdentity lease, DateTimeOffset now, CancellationToken ct) =>
+            Task.FromResult(true);
+
+        public Task<bool> ReportProgressAsync(
+            WorkerLeaseIdentity lease, string progressJson, DateTimeOffset now, CancellationToken ct) =>
+            Task.FromResult(true);
+
+        public Task<bool> CompleteAsync(
+            WorkerLeaseIdentity lease, string? resultJson, DateTimeOffset now, CancellationToken ct)
+        {
+            CompleteCalls++;
+            return Task.FromResult(CompleteResult);
+        }
+
+        public Task<bool> ReleaseAsync(WorkerLeaseIdentity lease, DateTimeOffset now, CancellationToken ct)
+        {
+            ReleaseCalls++;
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> FailAsync(
+            WorkerLeaseIdentity lease, WorkerJob.FailureClass failureKind, string error,
+            DateTimeOffset nextAttemptAt, int maxAttempts, DateTimeOffset now, CancellationToken ct)
+        {
+            FailCalls++;
+            return Task.FromResult(FailResult);
+        }
+
+        public Task<bool> RequestCancellationAsync(Guid jobId, DateTimeOffset now, CancellationToken ct) =>
+            Task.FromResult(true);
+    }
+
+    private sealed class TestWorkerCapacityPolicy(int repairCapacity = 128) : IWorkerLaneCapacityPolicy
+    {
+        public int GetMaximum(WorkerJob.JobKind kind) =>
+            kind == WorkerJob.JobKind.Repair ? repairCapacity : 128;
     }
 
     private sealed class CountingCommandInterceptor(Func<string, bool> predicate) : DbCommandInterceptor
@@ -692,6 +989,25 @@ public sealed class WorkerJobLeaseTests
         {
             CountIfMatched(command);
             return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override InterceptionResult<int> NonQueryExecuting(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result)
+        {
+            CountIfMatched(command);
+            return base.NonQueryExecuting(command, eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            CountIfMatched(command);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
         }
 
         private void CountIfMatched(DbCommand command)

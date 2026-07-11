@@ -2,6 +2,7 @@ using System.Data;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 
@@ -40,7 +41,7 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
         _contextFactory = contextFactory;
         _sharedContext = sharedContext;
         _capacityPolicy = capacityPolicy;
-        _options = options;
+        _options = WorkerLeaseOptions.Validate(options);
     }
 
     public Task<IReadOnlyList<WorkerLease>> LeaseAsync(
@@ -53,7 +54,7 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
         if (string.IsNullOrWhiteSpace(owner))
             throw new ArgumentException("A lease owner is required.", nameof(owner));
 
-        return WithSqliteRetryAsync(
+        return WithLeaseAcquisitionRetryAsync(
             db => LeaseCoreAsync(db, kind, owner, Math.Clamp(capacity, 1, 128), now, ct),
             ct);
     }
@@ -144,12 +145,13 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
         DateTimeOffset now,
         CancellationToken ct)
     {
-        var boundedError = error.Length <= MaxErrorLength ? error : error[..MaxErrorLength];
+        var boundedError = BoundLength(error, MaxErrorLength);
         return WithSqliteRetryAsync(async db =>
         {
             if (failureKind == WorkerJob.FailureClass.Cancelled)
             {
                 var cancelled = await AuthenticatedLease(db, lease)
+                    .Where(job => job.CancelRequestedAt != null)
                     .ExecuteUpdateAsync(setters => setters
                         .SetProperty(job => job.Status, WorkerJob.JobStatus.Cancelled)
                         .SetProperty(job => job.UpdatedAt, now)
@@ -346,6 +348,38 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
         }, ct).ConfigureAwait(false);
     }
 
+    private async Task<T> WithLeaseAcquisitionRetryAsync<T>(
+        Func<DavDatabaseContext, Task<T>> action,
+        CancellationToken ct)
+    {
+        const int maxAttempts = 5;
+        for (var attempt = 1;; attempt++)
+        {
+            try
+            {
+                return await WithSqliteRetryAsync(action, ct).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (
+                attempt < maxAttempts && IsRetryablePostgreSqlTransactionFailure(exception))
+            {
+                _sharedContext?.ChangeTracker.Clear();
+                await Task.Delay(TimeSpan.FromMilliseconds(20 * attempt), ct).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static bool IsRetryablePostgreSqlTransactionFailure(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException!)
+        {
+            if (current is PostgresException postgresException)
+                return postgresException.SqlState is PostgresErrorCodes.SerializationFailure
+                    or PostgresErrorCodes.DeadlockDetected;
+        }
+
+        return false;
+    }
+
     private static string? BoundUtf8(string? value, int maxBytes)
     {
         if (value is null || Encoding.UTF8.GetByteCount(value) <= maxBytes) return value;
@@ -354,6 +388,15 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
         while (length > 0 && Encoding.UTF8.GetByteCount(value.AsSpan(0, length)) > maxBytes)
             length--;
         if (length > 0 && char.IsHighSurrogate(value[length - 1])) length--;
+        return value[..length];
+    }
+
+    private static string BoundLength(string value, int maxLength)
+    {
+        if (value.Length <= maxLength) return value;
+
+        var length = maxLength;
+        if (char.IsHighSurrogate(value[length - 1])) length--;
         return value[..length];
     }
 }

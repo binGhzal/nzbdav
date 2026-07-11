@@ -49,7 +49,8 @@ public class QueueManager : IDisposable
         _queueWorkLaneCoordinator = queueWorkLaneCoordinator;
         _websocketManager = websocketManager;
         _arrDownloadReportService = arrDownloadReportService;
-        _workerLeaseOptions = workerLeaseOptions?.Value ?? new WorkerLeaseOptions();
+        _workerLeaseOptions = WorkerLeaseOptions.Validate(
+            workerLeaseOptions?.Value ?? new WorkerLeaseOptions());
         _workerJobCoordinator = workerJobCoordinator ?? new DatabaseWorkerJobCoordinator(
             new ConfigWorkerLaneCapacityPolicy(configManager),
             Options.Create(_workerLeaseOptions));
@@ -226,8 +227,11 @@ public class QueueManager : IDisposable
                 .ConfigureAwait(false);
             if (topItem.queueItem is null)
             {
-                await _workerJobCoordinator.CompleteAsync(
+                var completed = await _workerJobCoordinator.CompleteAsync(
                     workerLease.Identity, null, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+                if (!completed)
+                    Log.Warning("Lost download worker lease {WorkerJobId} before orphan cleanup.",
+                        workerLease.Identity.JobId);
                 await dbContext.DisposeAsync().ConfigureAwait(false);
                 return false;
             }
@@ -315,8 +319,10 @@ public class QueueManager : IDisposable
                 inProgressQueueItem.CancellationTokenSource.Token,
                 stage => inProgressQueueItem.Stage = stage
             ).ProcessAsync().ConfigureAwait(false);
-            await UpdateDownloadWorkerJobAsync(_workerJobCoordinator, inProgressQueueItem, outcome)
-                .ConfigureAwait(false);
+            if (!await UpdateDownloadWorkerJobAsync(_workerJobCoordinator, inProgressQueueItem, outcome)
+                    .ConfigureAwait(false))
+                Log.Warning("Lost download worker lease {WorkerJobId} before terminal update.",
+                    inProgressQueueItem.WorkerLease.JobId);
         }
         finally
         {
@@ -378,7 +384,7 @@ public class QueueManager : IDisposable
         }
     }
 
-    private static async Task UpdateDownloadWorkerJobAsync
+    private static async Task<bool> UpdateDownloadWorkerJobAsync
     (
         IWorkerJobCoordinator workerJobCoordinator,
         InProgressQueueItem inProgressQueueItem,
@@ -388,9 +394,8 @@ public class QueueManager : IDisposable
         var now = DateTimeOffset.UtcNow;
         if (outcome == QueueItemProcessor.ProcessingOutcome.Completed)
         {
-            await workerJobCoordinator.CompleteAsync(
+            return await workerJobCoordinator.CompleteAsync(
                 inProgressQueueItem.WorkerLease, null, now, CancellationToken.None).ConfigureAwait(false);
-            return;
         }
 
         if (outcome == QueueItemProcessor.ProcessingOutcome.RetryScheduled)
@@ -398,7 +403,7 @@ public class QueueManager : IDisposable
             var nextAttemptAt = inProgressQueueItem.QueueItem.PauseUntil.HasValue
                 ? new DateTimeOffset(inProgressQueueItem.QueueItem.PauseUntil.Value)
                 : DateTimeOffset.UtcNow.AddMinutes(1);
-            await workerJobCoordinator.FailAsync(
+            return await workerJobCoordinator.FailAsync(
                     inProgressQueueItem.WorkerLease,
                     WorkerJob.FailureClass.Retryable,
                     "Download retry scheduled.",
@@ -407,7 +412,6 @@ public class QueueManager : IDisposable
                     now,
                     CancellationToken.None)
                 .ConfigureAwait(false);
-            return;
         }
 
         if (outcome == QueueItemProcessor.ProcessingOutcome.Cancelled)
@@ -422,12 +426,14 @@ public class QueueManager : IDisposable
                     DownloadWorkerRetryMaxAttempts,
                     now,
                     CancellationToken.None).ConfigureAwait(false);
-                if (acknowledged) return;
+                return acknowledged;
             }
 
-            await workerJobCoordinator.ReleaseAsync(
+            return await workerJobCoordinator.ReleaseAsync(
                 inProgressQueueItem.WorkerLease, now, CancellationToken.None).ConfigureAwait(false);
         }
+
+        return false;
     }
 
     public void Dispose()
