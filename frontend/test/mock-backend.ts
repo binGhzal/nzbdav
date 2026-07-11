@@ -1,6 +1,7 @@
 import http from "node:http";
 import { URL } from "node:url";
 import { WebSocketServer } from "ws";
+import { attachMockBackendWebsocket } from "../server/test-support/mock-backend-websocket";
 
 type RecordedRequest = {
   method: string;
@@ -738,9 +739,7 @@ function getArrCorrelationsResponse() {
 
 const websocketServer = new WebSocketServer({ noServer: true });
 websocketServer.on("connection", (socket) => {
-  socket.on("message", () => {
-    // The frontend sends the backend API key as the first frame. No mock response is needed.
-  });
+  attachMockBackendWebsocket(socket);
 });
 
 server.on("upgrade", (req, socket, head) => {
