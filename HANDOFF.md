@@ -8,7 +8,7 @@
 | Production host | `10.10.5.119` |
 | Production media-stack checkout | `/opt/media-stack` |
 | Current local branch | `codex/single-host-role-separation-design` |
-| Last clean implementation checkpoint | `d7395a5` (`fix: preserve container maintenance contract`) |
+| Last clean implementation checkpoint | `c86e4d5` (`fix: seed mock websocket connection state`) |
 | Current `main` | `86af7b81` (`docs: record first-byte remediation`) |
 | Remote tracking | `main` tracks `origin/main`; the current architecture branch is local and not pushed |
 
@@ -19,6 +19,151 @@ This addendum is the authoritative continuation state. It supersedes Sections
 commit ledger, test matrix, or combined-Task-6 sequence conflicts with the
 verified results below. The historical sections remain intact as evidence of
 what was inherited and why the repair was narrowed.
+
+### 0.0 Latest Sanity Check And Decision Resolution
+
+This subsection is the newest authoritative checkpoint and supersedes Sections
+0.1-0.5 where they describe unresolved user inputs, the invalid-ref blocker,
+the websocket loading blocker, timestamp policy, or the provider-migration
+sequence. Those earlier addendum sections remain as a record of what prompted
+the investigation.
+
+#### User answers resolved
+
+1. PostgreSQL is greenfield: the user confirmed there is no real PostgreSQL
+   database with application data. This does **not** mean NZBDav is data-free.
+   A read-only production check found a real SQLite database.
+2. The timestamp request was to check and verify existing semantics, not to
+   convert them. The verified contract is deployment-local wall time for
+   `DavItems.CreatedAt`, `QueueItems.CreatedAt`, `QueueItems.PauseUntil`, and
+   `HistoryItems.CreatedAt`. Preserve those fields as `DateTime`; PostgreSQL's
+   target type is `timestamp without time zone`. UTC conversion is out of scope
+   unless separately approved.
+3. The user approved repairing the local websocket fixture. The repair is
+   committed at `c86e4d5` and production websocket behavior is untouched.
+4. The user approved Finder-metadata cleanup while excluding `artifacts/**`.
+   The cleanup and repository-integrity check are complete.
+
+One execution authorization remains: confirm that the PostgreSQL target is a
+dedicated NZBDav database/schema with no shared objects and may be dropped and
+recreated throughout rehearsal. Absence of real PostgreSQL data alone does not
+grant that authority.
+
+#### Production and repository evidence
+
+| Area | Verified result |
+| --- | --- |
+| Production provider | `sqlite(default)` on host `10.10.5.119`; no write or restart performed |
+| Container timezone | `TZ=Asia/Dubai`; container clock observed at UTC+04:00 |
+| Live database files | `/config/db.sqlite` 5,156,151,296 bytes; WAL 4,466,112 bytes; SHM 32,768 bytes; files were stat'ed, not opened |
+| PostgreSQL data | No real application database; prior PostgreSQL evidence is disposable test infrastructure |
+| Finder cleanup | 23 non-artifact `.DS_Store` files moved to `/tmp/nzbdav-dsstore-quarantine.wLLmFy` with relative paths preserved |
+| Invalid ref before cleanup | `.git/refs/.DS_Store`, SHA-256 `8d183a479d1acdb5b3324e69bab85b37ea5e2a7bcb1f77e425d7d7e8293282d3` |
+| Finder files deliberately retained | `artifacts/.DS_Store` and `artifacts/product-audit/.DS_Store` |
+| Repository integrity after cleanup | `git fsck --full --no-dangling` passed |
+| Unrelated workspace content | `artifacts/` remains untracked and untouched |
+| Branch relation after this handoff commit | 29 commits ahead of `main`/`origin/main`, 0 behind |
+| Deployment / push / PR | Not performed |
+
+The quarantine is a local safety copy, not a permanent backup. Do not stage
+the two retained artifact files or any other `artifacts/` content.
+
+#### Timestamp sanity result
+
+The local-wall contract is evidenced by `DateTime.Now` writes in `DavItem.New`,
+SAB add, queue retry/history, and WebDAV upload paths; local queue gates and
+local day/week/month statistics; and SQLite text values that return with no
+offset/Kind. The static root timestamp is a `DateTime.MinValue` sentinel.
+
+Three correctness defects remain for implementation under the reviewed plan:
+
+- ARR recent-history queries compare these local fields to `DateTime.UtcNow`;
+- DFS treats an unspecified local-wall value as UTC when making Unix time;
+- download duration uses wall-clock subtraction instead of a monotonic clock.
+
+Modern `DateTimeOffset`, Unix-seconds, and UTC-tick fields are separate and
+remain UTC instants. Do not globally replace time APIs or convert the four
+legacy fields as collateral work.
+
+#### PostgreSQL schema and transfer conclusion
+
+A disposable PostgreSQL 16 audit compared the inherited 46-migration result to
+the current native model: 209 columns on each side, with exactly 50 physical
+definition mismatches (28 UUID, ten bigint, four timestamp, two boolean, three
+length, and three default mismatches), 33 matching constraints, and 76 indexes.
+Two long index names were implicitly truncated. The final schema requires
+exactly nine triggers/functions and must not recreate the intentionally removed
+history-cleanup trigger.
+
+The approved next design is
+`docs/superpowers/plans/2026-07-11-nzbdav-provider-specific-migrations.md`.
+It preserves local-wall timestamps, reattributes all 47 inherited context
+metadata attributes (46 migrations plus one snapshot), fails PostgreSQL closed
+between provider split and native baseline, runs raw target preflight before EF
+history creation, checks in an exact physical-schema manifest, and replaces the
+whole-snapshot transfer with bounded JSONL framing and rolling digests. The
+5.16 GB SQLite size makes the current list-materializing export/import unsafe
+for a real cutover.
+
+The plan also disables Npgsql infinity conversion before provider startup so
+the year-1 root sentinel is not stored as `-infinity`, rejects unapproved
+100-nanosecond precision loss, keeps PostgreSQL disabled until baseline and all
+nine operational triggers pass the complete backend suite, and commits a
+reserved import-state marker before the first streamed batch so a SIGKILL or
+power loss cannot expose a partially imported target to normal startup. The
+runtime-migration-safety plan has a matching v3 compatibility addendum.
+
+The lossless rollback window ends before normal PostgreSQL services start.
+Once PostgreSQL performs any normal write, switching back to the stopped SQLite
+source would lose leases, health rows, cleanup work, or receipts; use
+PostgreSQL backup/restore or a separately designed reverse-delta process after
+that point.
+
+#### Websocket repair and Product Design audit
+
+Commit `c86e4d5` makes the mock backend mirror the real bridge protocol: the
+first backend-bound frame authenticates, then the backend publishes one cached
+`cxs` state envelope (`0|4|2|4|10|2`). A focused helper test proves ordering and
+one-shot behavior; a fixture-level test starts the real mock backend and
+connects to `/ws`, so removing the wiring now fails regression coverage.
+
+The in-app Browser then reached stable non-loading `/health` and `/queue`
+states showing `4 connected / 10 max` and `2 active`; the Queue status filter
+worked and browser warning/error logs were empty. Product audit findings still
+requiring separately scoped UI work are:
+
+- Upload is hidden behind a clickable `h3` and lacks keyboard semantics.
+- Destructive bulk actions have ambiguous accessible names (`All`, `TV`, and
+  `Movies` rather than delete-action names).
+- Filter/navigation selection and dynamic health warnings lack
+  `aria-pressed`, `aria-current`, or an appropriate live-region role.
+- Screenshot-scale clipping was suspected, but 1280x720 DOM measurements found
+  no document-level horizontal overflow. Reproduce the exact viewport and zoom
+  before changing layout breakpoints; do not treat the screenshot alone as
+  proof.
+
+No UI accessibility/layout change was authorized or implemented in this
+continuation.
+
+#### Fresh verification matrix
+
+| Gate | Result |
+| --- | --- |
+| Backend without PostgreSQL | 686 passed, 8 skipped, 0 failed |
+| Backend with disposable PostgreSQL 16 | 694 passed, 0 skipped, 0 failed |
+| Python unit discovery | 44 passed |
+| Entrypoint shell contract | Passed |
+| Frontend focused websocket tests | 2 files, 2 tests passed |
+| Frontend complete Vitest | 25 files, 81 tests passed |
+| Frontend typecheck | Passed |
+| Frontend production build | Passed |
+| Independent fixture code review | No Critical/Important findings; ready |
+| Independent provider-plan reviews | Two final read-only reviews; ready after all Critical/Important findings were resolved |
+
+The disposable PostgreSQL test container and local frontend/mock processes were
+removed/stopped after verification. Generated Python caches were removed. The
+provider-migration plan is design-only; none of its implementation tasks have
+been executed.
 
 ### 0.1 Verified Current State
 
@@ -980,14 +1125,20 @@ docker stop nzbdav-test-postgres
 ## 20. Final Handoff State
 
 The architecture direction remains approved. Foundation Tasks 1-5, the
-cross-process test-isolation repair, and the root container maintenance contract
-are committed locally with a final 694/694 PostgreSQL-enabled backend gate. The
-interrupted Task 5 wave described in the historical sections has been repaired,
-reviewed, and closed.
+cross-process test-isolation repair, root container maintenance contract, and
+local websocket-fixture repair are committed locally. The latest complete
+backend gate remains 694/694 with disposable PostgreSQL 16; the repaired
+frontend gate is 81/81 with typecheck and production build passing.
 
-The next implementation blocker is the provider-specific PostgreSQL migration
-decision, not Task 6 code. Do not claim migrated PostgreSQL compatibility, run a
-real SQLite-to-PostgreSQL cutover, expose the broad proxy publicly, or begin
-gateway/worker extraction until the addendum sequence is satisfied. Rclone stays
-the production mount. Native FUSE remains a measured replacement candidate, not
-an assumption.
+PostgreSQL has no real application data, but production SQLite is real and
+large. The current shared migration chain is not PostgreSQL-compatible. The
+provider-specific plan linked in Section 0.0 preserves verified local-wall
+timestamp semantics, adds a native guarded baseline, and requires bounded
+streaming transfer plus offline rehearsal. Do not begin that implementation
+until the user confirms the target is a dedicated disposable NZBDav
+database/schema.
+
+Do not claim migrated PostgreSQL compatibility, run a real cutover, expose the
+broad proxy publicly, or begin gateway/worker extraction before the revised
+sequence is implemented and reviewed. Rclone stays the production mount.
+Native FUSE remains a measured replacement candidate, not an assumption.

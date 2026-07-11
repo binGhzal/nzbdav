@@ -8,6 +8,73 @@
 
 **Tech Stack:** POSIX `sh`, Docker/BuildKit, Alpine Linux, .NET 10, EF Core 10, Python 3.9+ standard library, PostgreSQL 16
 
+## Provider-Specific Transfer V3 Compatibility Addendum
+
+This addendum is authoritative when executing
+`docs/superpowers/plans/2026-07-11-nzbdav-provider-specific-migrations.md`.
+Task 1's committed entrypoint/runtime repair remains valid. The legacy Task 2
+steps below describe the current v1/v2 single-JSON transfer and must not be used
+for the real 5.16 GB SQLite migration.
+
+The provider plan supersedes conflicting statements below as follows:
+
+- Add exact allowlisted maintenance commands `--db-export-v3 DIR` and
+  `--db-import-v3 DIR`. Keep `--db-export-json`/`--db-import-json` only for
+  bounded compatibility tests and SQLite-only CLI coverage. PostgreSQL rejects
+  both legacy JSON commands in `Program`/`DatabaseTransferService` before
+  migration, deserialization, or mutation; the production helper rejects v1/v2.
+- Transfer v3 is a private mode-`0700` directory with mode-`0600` JSONL table
+  files and an atomically published mode-`0600` manifest. The source and verify
+  directories, every atomic temporary file, and the mode-`0600` disk-backed
+  UUID-validation database are sensitive artifacts.
+- Extend descriptor-relative/no-follow preflight, cleanup, retention, signal,
+  forced-recovery, and SIGKILL/host-loss audit rules to every v3 file/directory
+  and validation database. Retention is all-or-nothing for a completed v3
+  snapshot; temporary validation state is never retained.
+- Before source downtime/copy, require a redacted per-filesystem capacity ledger
+  based on quota and `statvfs().f_bavail` for raw plus canonical SQLite copies,
+  both v3 trees, validation state, PostgreSQL data/WAL, blob staging/rollback,
+  and reviewed fixed/percentage headroom. Recheck before each phase, define the
+  safe reclamation order, and abort on unknown quota or insufficient space.
+- Bound v3 work by UTF-8 bytes as well as rows. Stream/chunk unrestricted text
+  fields such as `QueueNzbContents.NzbContents`; one giant row must not bypass
+  the memory budget.
+- Before manifest publication or PostgreSQL mutation, run the provider plan's
+  bounded raw representability scan for every target type/constraint (including
+  varchar character limits, strict UTF-8/no NUL, canonical booleans, ranges,
+  normalized uniqueness, timestamps, and UUID/FKs). UUID keyset pagination uses
+  the private normalized index's canonical network-byte order, not raw
+  mixed-case SQLite text.
+- The current "serialized format and EF migrations are out of scope" constraint
+  applies only to the already completed v1/v2 hardening checkpoint. Provider
+  Tasks 2-5 explicitly own provider migrations, the v3 format, and the new
+  entrypoint allowlist.
+- Use the repository's real `entrypoint.sh`; there is no
+  `docker-entrypoint.sh`.
+- Before the first committed import batch, persist the reserved PostgreSQL
+  `database.import-state=importing:<manifest-digest>` marker. Normal startup
+  refuses an incomplete marker, including after SIGKILL or power loss, until
+  the disposable target is dropped/recreated. Database verification advances
+  it only to non-usable `database-verified:<digest>`.
+- After verified blob publication, final source stability, and sensitive-work
+  cleanup, atomically publish/fsync a mode-`0600` target-config
+  `.nzbdav-migration-complete.json` containing the matching redacted digests.
+  A transferred deployment starts only when the DB state and external marker
+  agree. Test crashes at every post-database/pre-marker boundary; DB completion
+  alone never authorizes startup.
+- Hide and protect the reserved import-state ConfigItem from ordinary config
+  reads/exports and generic update APIs. Only the import-state service may make
+  its finite, digest-bound transitions.
+- V3 verification uses per-table rolling counts/digests and bounded readers; it
+  never loads or sorts the full database in memory. `HealthCheckStats` is
+  independently recomputed from raw `HealthCheckResults`, not imported into
+  active triggers.
+
+Before implementing legacy Task 2 below, first complete and review the provider
+plan through its full native-schema checkpoint. Update every v1/v2-specific
+test/example in this document as part of provider Task 5; do not execute the old
+seed/snapshot examples as if they were v3 instructions.
+
 ## Global Constraints
 
 - Implement exactly the two tasks below; do not add role-split, rclone, proxy, Task 6, or unrelated CI work.
