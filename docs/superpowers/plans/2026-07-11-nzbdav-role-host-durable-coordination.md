@@ -486,6 +486,38 @@ public async Task LeaseCapacityNeverExceedsConfiguredLaneMaximum()
         WorkerJob.JobKind.Verify, "worker-a", 128, now, CancellationToken.None);
     Assert.Equal(3, leases.Count);
 }
+
+[Fact]
+public async Task CancellationRejectsRenewalAndCanBeAcknowledged()
+{
+    var lease = Assert.Single(await coordinator.LeaseAsync(
+        WorkerJob.JobKind.Verify, "worker-a", 1, now, CancellationToken.None));
+
+    Assert.True(await coordinator.RequestCancellationAsync(
+        lease.Identity.JobId, now.AddSeconds(10), CancellationToken.None));
+    Assert.False(await coordinator.RenewAsync(
+        lease.Identity, now.AddSeconds(30), CancellationToken.None));
+    Assert.True(await coordinator.FailAsync(
+        lease.Identity, WorkerJob.FailureClass.Cancelled, "cancelled by request",
+        now.AddSeconds(30), 3, now.AddSeconds(30), CancellationToken.None));
+
+    var job = await dbContext.WorkerJobs.AsNoTracking().SingleAsync();
+    Assert.Equal(WorkerJob.JobStatus.Cancelled, job.Status);
+}
+
+[Fact]
+public async Task ExpiredCancellationRequestIsTerminalizedInsteadOfReLeased()
+{
+    var lease = Assert.Single(await coordinator.LeaseAsync(
+        WorkerJob.JobKind.Download, "worker-a", 1, now, CancellationToken.None));
+    Assert.True(await coordinator.RequestCancellationAsync(
+        lease.Identity.JobId, now.AddSeconds(10), CancellationToken.None));
+
+    Assert.Empty(await coordinator.LeaseAsync(
+        WorkerJob.JobKind.Download, "worker-b", 1, now.AddMinutes(3), CancellationToken.None));
+    var job = await dbContext.WorkerJobs.AsNoTracking().SingleAsync();
+    Assert.Equal(WorkerJob.JobStatus.Cancelled, job.Status);
+}
 ```
 
 - [ ] **Step 2: Run the focused tests and confirm failure**
@@ -542,23 +574,25 @@ kind instead of sharing capacity between lanes.
 
 - [ ] **Step 4: Implement compare-and-swap updates**
 
-Use a shared predicate for every lease mutation:
+Use one authentication predicate and derive the active-work predicate from it:
 
 ```csharp
-private IQueryable<WorkerJob> CurrentLease(WorkerLeaseIdentity lease) =>
+private IQueryable<WorkerJob> AuthenticatedLease(WorkerLeaseIdentity lease) =>
     _db.WorkerJobs.Where(job =>
         job.Id == lease.JobId &&
         job.Status == WorkerJob.JobStatus.Leased &&
         job.LeaseOwner == lease.Owner &&
         job.LeaseToken == lease.Token &&
-        job.LeaseGeneration == lease.Generation &&
-        job.CancelRequestedAt == null);
+        job.LeaseGeneration == lease.Generation);
+
+private IQueryable<WorkerJob> ActiveLease(WorkerLeaseIdentity lease) =>
+    AuthenticatedLease(lease).Where(job => job.CancelRequestedAt == null);
 ```
 
 Renew with one conditional update and return `changed == 1`:
 
 ```csharp
-var changed = await CurrentLease(lease).ExecuteUpdateAsync(setters => setters
+var changed = await ActiveLease(lease).ExecuteUpdateAsync(setters => setters
     .SetProperty(job => job.LastHeartbeatAt, now)
     .SetProperty(job => job.LeaseExpiresAt, now + _options.Duration)
     .SetProperty(job => job.UpdatedAt, now), ct);
@@ -566,18 +600,29 @@ return changed == 1;
 ```
 
 Lease acquisition assigns a new token, increments generation, sets heartbeat,
-start, expiry, and clears cancellation/failure. Completion, release, and fail
-use the same predicate and never attach a detached entity supplied by a worker.
+start, expiry, and clears cancellation/failure. Completion, release,
+non-cancelled failure, renewal, and progress use `ActiveLease` and never attach
+a detached entity supplied by a worker. A `Cancelled` failure uses
+`AuthenticatedLease`, transitions the job to `Cancelled`, records completion
+and failure state, and clears the expiry; this is the worker's idempotent
+cancellation acknowledgement.
+
+At the start of the lease-acquisition transaction, transition expired leased
+rows with `CancelRequestedAt != null` to `Cancelled` before counting active
+leases or selecting candidates. Candidate selection must explicitly require
+`CancelRequestedAt == null`. This handles a worker that exits after cancellation
+without acknowledging it and prevents cancelled work from being leased again.
+
 `LeaseAsync` clamps requested capacity to `1..128` and enforces the existing
 per-kind configured maximum across all unexpired leases, so another worker
 process cannot exceed the download, verify, or repair limit.
 
 `ReportProgressAsync` updates `ProgressJson` and `ProgressUpdatedAt` only for the
-current lease. `CompleteAsync` stores the bounded result descriptor and returns
+active lease. `CompleteAsync` stores the bounded result descriptor and returns
 `true` when the exact owner/token/generation is already completed; stale
 generations return `false`. `RequestCancellationAsync` sets
-`CancelRequestedAt`; renewal requires that field to remain null, so the next
-renewal is rejected and the worker cancels locally.
+`CancelRequestedAt` idempotently on a leased job; renewal requires that field to
+remain null, so the next renewal is rejected and the worker cancels locally.
 
 After a conditional completion updates one row, preserve owner, token, and
 generation on the terminal job. If zero rows update, perform this idempotency
