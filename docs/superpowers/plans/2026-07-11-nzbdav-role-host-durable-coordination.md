@@ -285,6 +285,7 @@ git commit -m "refactor: define nzbdav runtime role ownership"
 - Modify: `backend/Database/Models/WorkerJob.cs`
 - Create: `backend/Coordination/WorkerLease.cs`
 - Modify: `backend/Database/DavDatabaseContext.cs:600-670`
+- Modify: `backend/Database/DavDatabaseClient.cs:1882-1945`
 - Create: `backend/Database/Migrations/20260711120000_Add-Worker-Lease-Coordination.cs`
 - Modify: `backend/Database/Migrations/DavDatabaseContextModelSnapshot.cs`
 - Modify: `backend/Database/DatabaseTransferService.cs`
@@ -383,7 +384,28 @@ descriptor from the worker plan. Add an index on
 
 Create the migration with nullable columns and `LeaseGeneration` default `0`. Do not rewrite existing rows.
 
-- [ ] **Step 5: Update database transfer compatibility**
+- [ ] **Step 5: Populate lease identity through the transitional in-process path**
+
+Until Task 4 routes callers through `IWorkerJobCoordinator`, update
+`LeaseNextWorkerJobCoreAsync` immediately before saving the selected job:
+
+```csharp
+job.LeaseToken = Guid.NewGuid();
+job.LeaseGeneration += 1;
+job.LastHeartbeatAt = referenceTime;
+job.StartedAt = referenceTime;
+job.CancelRequestedAt = null;
+job.FailureKind = null;
+job.ProgressJson = null;
+job.ProgressUpdatedAt = null;
+job.ResultJson = null;
+```
+
+Keep the existing owner, expiry, attempt, and transaction behavior. This makes
+the additive fields valid for current in-process workers and gives Task 4 a
+working compatibility path to replace with compare-and-swap mutations.
+
+- [ ] **Step 6: Update database transfer compatibility**
 
 The `WorkerJobs` list already transfers rows. Increment `DatabaseTransferSnapshot.CurrentVersion` to `2`, accept versions `1` and `2` during import, and let missing JSON properties deserialize to their default values:
 
@@ -392,7 +414,7 @@ if (snapshot.Version is not (1 or DatabaseTransferSnapshot.CurrentVersion))
     throw new InvalidDataException($"Unsupported database transfer snapshot version {snapshot.Version}.");
 ```
 
-- [ ] **Step 6: Run database tests**
+- [ ] **Step 7: Run database tests**
 
 ```bash
 dotnet test backend.Tests/backend.Tests.csproj --filter "FullyQualifiedName~WorkerJobLeaseTests|FullyQualifiedName~DatabaseTransferServiceTests|FullyQualifiedName~DatabaseProviderSelectionTests"
@@ -400,7 +422,7 @@ dotnet test backend.Tests/backend.Tests.csproj --filter "FullyQualifiedName~Work
 
 Expected: all selected tests pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add backend/Coordination backend/Database backend.Tests/Database
