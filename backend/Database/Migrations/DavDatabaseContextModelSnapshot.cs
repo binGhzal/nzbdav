@@ -894,6 +894,9 @@ namespace NzbWebDAV.Database.Migrations
                     b.Property<long>("AvailableAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long?>("CancelRequestedAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long?>("CompletedAt")
                         .HasColumnType("INTEGER");
 
@@ -903,11 +906,25 @@ namespace NzbWebDAV.Database.Migrations
                     b.Property<int>("Kind")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("FailureKind")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("LastHeartbeatAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long?>("LeaseExpiresAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long>("LeaseGeneration")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0L);
+
                     b.Property<string>("LeaseOwner")
                         .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("LeaseToken")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("LastError")
@@ -918,6 +935,20 @@ namespace NzbWebDAV.Database.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<int>("Priority")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ProgressJson")
+                        .HasMaxLength(16384)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("ProgressUpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ResultJson")
+                        .HasMaxLength(16384)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("StartedAt")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("Status")
@@ -942,6 +973,9 @@ namespace NzbWebDAV.Database.Migrations
                     b.HasIndex("Kind", "Status", "Priority", "AvailableAt", "CreatedAt")
                         .IsDescending(false, false, true, false, false)
                         .HasDatabaseName("IX_WorkerJobs_Kind_Status_Priority_AvailableAt_CreatedAt");
+
+                    b.HasIndex("Status", "LeaseExpiresAt", "LeaseGeneration")
+                        .HasDatabaseName("IX_WorkerJobs_Status_LeaseExpiresAt_LeaseGeneration");
 
                     b.ToTable("WorkerJobs", (string)null);
                 });

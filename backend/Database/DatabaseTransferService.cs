@@ -68,7 +68,7 @@ public static class DatabaseTransferService
         var snapshot = await JsonSerializer.DeserializeAsync<DatabaseTransferSnapshot>(stream, JsonOptions, ct)
             .ConfigureAwait(false)
             ?? throw new InvalidDataException("Database transfer snapshot is empty or invalid.");
-        if (snapshot.Version != DatabaseTransferSnapshot.CurrentVersion)
+        if (snapshot.Version is not (1 or DatabaseTransferSnapshot.CurrentVersion))
             throw new InvalidDataException($"Unsupported database transfer snapshot version {snapshot.Version}.");
 
         await dbContext.Database.MigrateAsync(cancellationToken: ct).ConfigureAwait(false);
@@ -181,7 +181,7 @@ public static class DatabaseTransferService
 
 public sealed class DatabaseTransferSnapshot
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
     public int Version { get; set; } = CurrentVersion;
     public DateTimeOffset ExportedAt { get; set; }
     public string Provider { get; set; } = "";

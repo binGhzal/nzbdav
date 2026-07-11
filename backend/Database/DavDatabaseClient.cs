@@ -1943,6 +1943,15 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         job.LeaseExpiresAt = leaseExpiresAt;
         job.Attempts += 1;
         job.UpdatedAt = referenceTime;
+        job.LeaseToken = Guid.NewGuid();
+        job.LeaseGeneration += 1;
+        job.LastHeartbeatAt = referenceTime;
+        job.StartedAt = referenceTime;
+        job.CancelRequestedAt = null;
+        job.FailureKind = null;
+        job.ProgressJson = null;
+        job.ProgressUpdatedAt = null;
+        job.ResultJson = null;
 
         await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
         await transaction.CommitAsync(ct).ConfigureAwait(false);

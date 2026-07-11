@@ -52,6 +52,11 @@ public sealed class WorkerJobLeaseTests
         Assert.Equal(WorkerJob.JobStatus.Leased, downloadLease.Status);
         Assert.Equal("worker-a", downloadLease.LeaseOwner);
         Assert.Equal(1, downloadLease.Attempts);
+        Assert.NotEqual(Guid.Empty, downloadLease.LeaseToken);
+        Assert.Equal(1, downloadLease.LeaseGeneration);
+        Assert.Equal(now, downloadLease.StartedAt);
+        Assert.Equal(now, downloadLease.LastHeartbeatAt);
+        Assert.Null(downloadLease.CancelRequestedAt);
 
         Assert.Null(secondDownloadLease);
         Assert.NotNull(verifyLease);
@@ -454,6 +459,38 @@ public sealed class WorkerJobLeaseTests
 
         Assert.Contains("IX_WorkerJobs_Kind_Status_Priority_AvailableAt_CreatedAt", indexNames);
         Assert.Contains("IX_WorkerJobs_Kind_Status_LeaseExpiresAt", indexNames);
+    }
+
+    [Fact]
+    public async Task Migration_CreatesRenewableWorkerLeaseColumns()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+
+        var columns = await ReadSqliteColumnsAsync(dbContext, "WorkerJobs");
+
+        Assert.Contains("LeaseToken", columns);
+        Assert.Contains("LeaseGeneration", columns);
+        Assert.Contains("LastHeartbeatAt", columns);
+        Assert.Contains("StartedAt", columns);
+        Assert.Contains("CancelRequestedAt", columns);
+        Assert.Contains("FailureKind", columns);
+        Assert.Contains("ProgressJson", columns);
+        Assert.Contains("ProgressUpdatedAt", columns);
+        Assert.Contains("ResultJson", columns);
+    }
+
+    private static async Task<HashSet<string>> ReadSqliteColumnsAsync(DavDatabaseContext dbContext, string tableName)
+    {
+        await using var command = dbContext.Database.GetDbConnection().CreateCommand();
+        command.CommandText = $"PRAGMA table_info(\"{tableName.Replace("\"", "\"\"")}\")";
+        if (command.Connection!.State != System.Data.ConnectionState.Open)
+            await command.Connection.OpenAsync();
+
+        var columns = new HashSet<string>(StringComparer.Ordinal);
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            columns.Add(reader.GetString(reader.GetOrdinal("name")));
+        return columns;
     }
 
     private static QueueItem CreateQueueItem

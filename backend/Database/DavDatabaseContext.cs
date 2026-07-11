@@ -647,6 +647,49 @@ public sealed class DavDatabaseContext : DbContext
             e.Property(i => i.LeaseOwner)
                 .HasMaxLength(255);
 
+            e.Property(i => i.LeaseToken);
+
+            e.Property(i => i.LeaseGeneration)
+                .HasDefaultValue(0L)
+                .IsRequired();
+
+            e.Property(i => i.LastHeartbeatAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                    x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null
+                );
+
+            e.Property(i => i.StartedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                    x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null
+                );
+
+            e.Property(i => i.CancelRequestedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                    x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null
+                );
+
+            e.Property(i => i.FailureKind)
+                .HasConversion<int?>();
+
+            e.Property(i => i.ProgressJson)
+                .HasMaxLength(16 * 1024);
+
+            e.Property(i => i.ProgressUpdatedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                    x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null
+                );
+
+            e.Property(i => i.ResultJson)
+                .HasMaxLength(16 * 1024);
+
             e.Property(i => i.LastError)
                 .HasMaxLength(1024);
 
@@ -665,6 +708,10 @@ public sealed class DavDatabaseContext : DbContext
 
             e.HasIndex(i => new { i.Kind, i.Status, i.LeaseExpiresAt })
                 .HasDatabaseName("IX_WorkerJobs_Kind_Status_LeaseExpiresAt")
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.Status, i.LeaseExpiresAt, i.LeaseGeneration })
+                .HasDatabaseName("IX_WorkerJobs_Status_LeaseExpiresAt_LeaseGeneration")
                 .IsUnique(false);
         });
 
