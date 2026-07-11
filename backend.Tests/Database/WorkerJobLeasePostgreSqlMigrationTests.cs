@@ -1,4 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Npgsql;
 using NzbWebDAV.Database;
 
@@ -27,6 +31,7 @@ public sealed class WorkerJobLeasePostgreSqlMigrationTests
                 .UseNpgsql(schemaConnectionString)
                 .Options;
             await using var dbContext = new DavDatabaseContext(options);
+            AssertNoPendingMigrationChanges(dbContext);
             await dbContext.Database.MigrateAsync();
 
             var columns = await ReadWorkerJobColumnsAsync(adminConnection, schemaName);
@@ -126,6 +131,32 @@ public sealed class WorkerJobLeasePostgreSqlMigrationTests
         await using var command = connection.CreateCommand();
         command.CommandText = commandText;
         await command.ExecuteNonQueryAsync();
+    }
+
+    private static void AssertNoPendingMigrationChanges(DavDatabaseContext dbContext)
+    {
+        var snapshotModel = dbContext.GetService<IModelRuntimeInitializer>().Initialize(
+            dbContext.GetService<IMigrationsAssembly>().ModelSnapshot!.Model,
+            designTime: true,
+            validationLogger: null);
+        var designTimeModel = dbContext.GetService<IDesignTimeModel>().Model;
+        var operations = dbContext.GetService<IMigrationsModelDiffer>()
+            .GetDifferences(snapshotModel.GetRelationalModel(), designTimeModel.GetRelationalModel())
+            .ToArray();
+
+        Assert.True(operations.Length == 0,
+            $"Pending Npgsql migration operations: {string.Join("; ", operations.Select(DescribeOperation))}");
+    }
+
+    private static string DescribeOperation(MigrationOperation operation)
+    {
+        return operation switch
+        {
+            RenameIndexOperation rename => $"RenameIndex {rename.Table}.{rename.Name} to {rename.NewName}",
+            AlterColumnOperation alter =>
+                $"AlterColumn {alter.Table}.{alter.Name} from {alter.OldColumn.ColumnType} to {alter.ColumnType}",
+            _ => operation.GetType().Name
+        };
     }
 
     private sealed record ColumnInfo(string DataType, bool IsNullable, string? ColumnDefault);

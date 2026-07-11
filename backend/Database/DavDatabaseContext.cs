@@ -185,6 +185,8 @@ public sealed class DavDatabaseContext : DbContext
     // tables
     protected override void OnModelCreating(ModelBuilder b)
     {
+        b.Model.SetMaxIdentifierLength(63);
+
         // Account
         b.Entity<Account>(e =>
         {
@@ -213,7 +215,6 @@ public sealed class DavDatabaseContext : DbContext
             e.HasKey(i => i.Id);
 
             e.Property(i => i.Id)
-                .HasColumnType("TEXT")
                 .ValueGeneratedNever();
 
             e.Property(i => i.CreatedAt)
@@ -301,7 +302,6 @@ public sealed class DavDatabaseContext : DbContext
                     v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
                     v => DeserializeOrFallback<string[]>(v) ?? Array.Empty<string>()
                 ))
-                .HasColumnType("TEXT")
                 .IsRequired();
 
             e.HasOne(f => f.DavItem)
@@ -325,7 +325,6 @@ public sealed class DavDatabaseContext : DbContext
                     v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
                     v => DeserializeOrFallback<DavRarFile.RarPart[]>(v) ?? Array.Empty<DavRarFile.RarPart>()
                 ))
-                .HasColumnType("TEXT")
                 .IsRequired();
 
             e.HasOne(f => f.DavItem)
@@ -349,7 +348,6 @@ public sealed class DavDatabaseContext : DbContext
                     v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
                     v => DeserializeOrFallback<DavMultipartFile.Meta>(v) ?? new DavMultipartFile.Meta()
                 ))
-                .HasColumnType("TEXT")
                 .IsRequired();
 
             e.HasOne(f => f.DavItem)
@@ -723,14 +721,11 @@ public sealed class DavDatabaseContext : DbContext
             e.HasKey(i => i.Id);
 
             e.Property(i => i.Id)
-                .HasColumnType("TEXT")
                 .ValueGeneratedNever();
 
-            e.Property(i => i.QueueItemId)
-                .HasColumnType("TEXT");
+            e.Property(i => i.QueueItemId);
 
-            e.Property(i => i.HistoryItemId)
-                .HasColumnType("TEXT");
+            e.Property(i => i.HistoryItemId);
 
             e.Property(i => i.ArrApp)
                 .HasMaxLength(32)
@@ -834,7 +829,6 @@ public sealed class DavDatabaseContext : DbContext
             e.HasKey(i => i.QueueItemId);
 
             e.Property(i => i.QueueItemId)
-                .HasColumnType("TEXT")
                 .ValueGeneratedNever();
 
             e.Property(i => i.EffectivePriority)
@@ -886,7 +880,6 @@ public sealed class DavDatabaseContext : DbContext
             e.HasKey(i => i.Id);
 
             e.Property(i => i.Id)
-                .HasColumnType("TEXT")
                 .ValueGeneratedNever();
 
             e.Property(i => i.ArrApp)
@@ -960,14 +953,11 @@ public sealed class DavDatabaseContext : DbContext
             e.HasKey(i => i.Id);
 
             e.Property(i => i.Id)
-                .HasColumnType("TEXT")
                 .ValueGeneratedNever();
 
-            e.Property(i => i.QueueItemId)
-                .HasColumnType("TEXT");
+            e.Property(i => i.QueueItemId);
 
-            e.Property(i => i.HistoryItemId)
-                .HasColumnType("TEXT");
+            e.Property(i => i.HistoryItemId);
 
             e.Property(i => i.ArrApp)
                 .HasMaxLength(32)

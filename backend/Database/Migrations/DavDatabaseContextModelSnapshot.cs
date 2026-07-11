@@ -16,23 +16,20 @@ namespace NzbWebDAV.Database.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
+            modelBuilder.HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.Account", b =>
                 {
-                    b.Property<int>("Type")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Type");
 
                     b.Property<string>("Username")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(255);
 
                     b.Property<string>("PasswordHash")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
                     b.Property<string>("RandomSalt")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
                     b.HasKey("Type", "Username");
 
@@ -41,119 +38,87 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.ArrDownloadCorrelation", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
-                    b.Property<int?>("AlbumId")
-                        .HasColumnType("INTEGER");
+                    b.Property<int?>("AlbumId");
 
                     b.Property<string>("ArrApp")
                         .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(32);
 
                     b.Property<string>("Category")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(255);
 
-                    b.Property<string>("CustomFormatsJson")
-                        .HasColumnType("TEXT");
+                    b.Property<string>("CustomFormatsJson");
 
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("CreatedAt");
 
                     b.Property<string>("DownloadClient")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(255);
 
                     b.Property<string>("DownloadId")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(255);
 
-                    b.Property<int?>("EpisodeId")
-                        .HasColumnType("INTEGER");
+                    b.Property<int?>("EpisodeId");
 
-                    b.Property<string>("EpisodeIdsJson")
-                        .HasColumnType("TEXT");
+                    b.Property<string>("EpisodeIdsJson");
 
-                    b.Property<Guid?>("HistoryItemId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid?>("HistoryItemId");
 
                     b.Property<string>("Indexer")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(255);
 
                     b.Property<string>("InstanceHost")
                         .IsRequired()
-                        .HasMaxLength(1024)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(1024);
 
                     b.Property<string>("InstanceKey")
                         .IsRequired()
-                        .HasMaxLength(512)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(512);
 
-                    b.Property<int?>("ArtistId")
-                        .HasColumnType("INTEGER");
+                    b.Property<int?>("ArtistId");
 
-                    b.Property<bool>("IsDuplicate")
-                        .HasColumnType("INTEGER");
+                    b.Property<bool>("IsDuplicate");
 
-                    b.Property<bool>("IsUpgrade")
-                        .HasColumnType("INTEGER");
+                    b.Property<bool>("IsUpgrade");
 
-                    b.Property<long>("LastSeenAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("LastSeenAt");
 
-                    b.Property<bool>("ManualLock")
-                        .HasColumnType("INTEGER");
+                    b.Property<bool>("ManualLock");
 
                     b.Property<string>("MediaKey")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(255);
 
-                    b.Property<int?>("MovieId")
-                        .HasColumnType("INTEGER");
+                    b.Property<int?>("MovieId");
 
                     b.Property<string>("Quality")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(255);
 
-                    b.Property<Guid?>("QueueItemId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid?>("QueueItemId");
 
-                    b.Property<int?>("QueueRecordId")
-                        .HasColumnType("INTEGER");
+                    b.Property<int?>("QueueRecordId");
 
                     b.Property<string>("ReleaseTitle")
-                        .HasMaxLength(1024)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(1024);
 
-                    b.Property<int?>("SeasonNumber")
-                        .HasColumnType("INTEGER");
+                    b.Property<int?>("SeasonNumber");
 
-                    b.Property<int?>("SeriesId")
-                        .HasColumnType("INTEGER");
+                    b.Property<int?>("SeriesId");
 
                     b.Property<string>("Status")
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(64);
 
                     b.Property<string>("Source")
                         .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(32);
 
                     b.Property<string>("TrackedDownloadState")
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(64);
 
                     b.Property<string>("TrackedDownloadStatus")
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(64);
 
-                    b.Property<long>("UpdatedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("UpdatedAt");
 
                     b.HasKey("Id");
 
@@ -176,44 +141,34 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.ArrDownloadLifecycleEvent", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
                     b.Property<string>("ArrApp")
                         .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(32);
 
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("CreatedAt");
 
                     b.Property<string>("DownloadId")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(255);
 
-                    b.Property<Guid?>("HistoryItemId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid?>("HistoryItemId");
 
                     b.Property<string>("InstanceKey")
                         .IsRequired()
-                        .HasMaxLength(512)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(512);
 
                     b.Property<string>("MediaKey")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(255);
 
-                    b.Property<Guid?>("QueueItemId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid?>("QueueItemId");
 
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(64);
 
                     b.Property<string>("StateReason")
-                        .HasMaxLength(1024)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(1024);
 
                     b.HasKey("Id");
 
@@ -228,70 +183,54 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.ArrSearchNudgeCommand", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
                     b.Property<string>("ArrApp")
                         .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(32);
 
-                    b.Property<int?>("CommandId")
-                        .HasColumnType("INTEGER");
+                    b.Property<int?>("CommandId");
 
                     b.Property<string>("CommandName")
                         .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(128);
 
-                    b.Property<long?>("CompletedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("CompletedAt");
 
                     b.Property<string>("CooldownKey")
                         .IsRequired()
-                        .HasMaxLength(512)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(512);
 
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("CreatedAt");
 
                     b.Property<string>("Error")
-                        .HasMaxLength(1024)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(1024);
 
                     b.Property<string>("InstanceHost")
                         .IsRequired()
-                        .HasMaxLength(1024)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(1024);
 
                     b.Property<string>("InstanceKey")
                         .IsRequired()
-                        .HasMaxLength(512)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(512);
 
                     b.Property<string>("Mode")
                         .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(32);
 
-                    b.Property<long>("NextAllowedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("NextAllowedAt");
 
                     b.Property<string>("ReasonsJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
-                    b.Property<int>("Score")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Score");
 
                     b.Property<string>("Status")
                         .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(32);
 
                     b.Property<string>("TargetsJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
                     b.HasKey("Id");
 
@@ -304,8 +243,7 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.BlobCleanupItem", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
                     b.HasKey("Id");
 
@@ -314,12 +252,10 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.ConfigItem", b =>
                 {
-                    b.Property<string>("ConfigName")
-                        .HasColumnType("TEXT");
+                    b.Property<string>("ConfigName");
 
                     b.Property<string>("ConfigValue")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
                     b.HasKey("ConfigName");
 
@@ -328,8 +264,7 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.DavCleanupItem", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
                     b.HasKey("Id");
 
@@ -338,54 +273,39 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.DavItem", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<DateTime>("CreatedAt");
 
-                    b.Property<Guid?>("FileBlobId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid?>("FileBlobId");
 
-                    b.Property<long?>("FileSize")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("FileSize");
 
-                    b.Property<Guid?>("HistoryItemId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid?>("HistoryItemId");
 
                     b.Property<string>("IdPrefix")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
-                    b.Property<long?>("LastHealthCheck")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("LastHealthCheck");
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(255);
 
-                    b.Property<long?>("NextHealthCheck")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("NextHealthCheck");
 
-                    b.Property<Guid?>("NzbBlobId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid?>("NzbBlobId");
 
-                    b.Property<Guid?>("ParentId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid?>("ParentId");
 
                     b.Property<string>("Path")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
-                    b.Property<long?>("ReleaseDate")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("ReleaseDate");
 
-                    b.Property<int>("SubType")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("SubType");
 
-                    b.Property<int>("Type")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Type");
 
                     b.HasKey("Id");
 
@@ -407,12 +327,10 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.DavMultipartFile", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
                     b.Property<string>("Metadata")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
                     b.HasKey("Id");
 
@@ -421,12 +339,10 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.DavNzbFile", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
                     b.Property<string>("SegmentIds")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
                     b.HasKey("Id");
 
@@ -435,12 +351,10 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.DavRarFile", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
                     b.Property<string>("RarParts")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
                     b.HasKey("Id");
 
@@ -449,27 +363,20 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.HealthCheckResult", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("CreatedAt");
 
-                    b.Property<Guid>("DavItemId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("DavItemId");
 
-                    b.Property<string>("Message")
-                        .HasColumnType("TEXT");
+                    b.Property<string>("Message");
 
                     b.Property<string>("Path")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
-                    b.Property<int>("RepairStatus")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("RepairStatus");
 
-                    b.Property<int>("Result")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Result");
 
                     b.HasKey("Id");
 
@@ -488,20 +395,15 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.HealthCheckStat", b =>
                 {
-                    b.Property<long>("DateStartInclusive")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("DateStartInclusive");
 
-                    b.Property<long>("DateEndExclusive")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("DateEndExclusive");
 
-                    b.Property<int>("Result")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Result");
 
-                    b.Property<int>("RepairStatus")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("RepairStatus");
 
-                    b.Property<int>("Count")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Count");
 
                     b.HasKey("DateStartInclusive", "DateEndExclusive", "Result", "RepairStatus");
 
@@ -510,11 +412,9 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.HistoryCleanupItem", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
-                    b.Property<bool>("DeleteMountedFiles")
-                        .HasColumnType("INTEGER");
+                    b.Property<bool>("DeleteMountedFiles");
 
                     b.HasKey("Id");
 
@@ -523,41 +423,30 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.HistoryItem", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
                     b.Property<string>("Category")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<DateTime>("CreatedAt");
 
-                    b.Property<Guid?>("DownloadDirId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid?>("DownloadDirId");
 
-                    b.Property<int>("DownloadStatus")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("DownloadStatus");
 
-                    b.Property<int>("DownloadTimeSeconds")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("DownloadTimeSeconds");
 
-                    b.Property<string>("FailMessage")
-                        .HasColumnType("TEXT");
+                    b.Property<string>("FailMessage");
 
                     b.Property<string>("FileName")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
                     b.Property<string>("JobName")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
-                    b.Property<Guid?>("NzbBlobId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid?>("NzbBlobId");
 
-                    b.Property<long>("TotalSegmentBytes")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("TotalSegmentBytes");
 
                     b.HasKey("Id");
 
@@ -576,8 +465,7 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.NzbBlobCleanupItem", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
                     b.HasKey("Id");
 
@@ -586,12 +474,10 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.NzbName", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
                     b.Property<string>("FileName")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
                     b.HasKey("Id");
 
@@ -600,28 +486,21 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.RcloneInvalidationItem", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
-                    b.Property<int>("Attempts")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Attempts");
 
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("CreatedAt");
 
                     b.Property<string>("LastError")
-                        .HasMaxLength(1024)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(1024);
 
-                    b.Property<long?>("LastAttemptAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("LastAttemptAt");
 
-                    b.Property<long>("NextAttemptAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("NextAttemptAt");
 
                     b.Property<string>("Path")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
                     b.HasKey("Id");
 
@@ -634,29 +513,22 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.RepairBrokenFile", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
-                    b.Property<bool>("Cleared")
-                        .HasColumnType("INTEGER");
+                    b.Property<bool>("Cleared");
 
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("CreatedAt");
 
-                    b.Property<Guid>("DavItemId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("DavItemId");
 
                     b.Property<string>("Path")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
                     b.Property<string>("Reason")
                         .IsRequired()
-                        .HasMaxLength(1024)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(1024);
 
-                    b.Property<Guid>("RepairRunId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("RepairRunId");
 
                     b.HasKey("Id");
 
@@ -669,31 +541,23 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.RepairEntryHealth", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("CreatedAt");
 
-                    b.Property<Guid>("DavItemId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("DavItemId");
 
                     b.Property<string>("Message")
-                        .HasMaxLength(1024)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(1024);
 
                     b.Property<string>("Path")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
-                    b.Property<Guid>("RepairRunId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("RepairRunId");
 
-                    b.Property<int>("State")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("State");
 
-                    b.Property<long>("UpdatedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("UpdatedAt");
 
                     b.HasKey("Id");
 
@@ -707,62 +571,44 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.RepairRun", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
-                    b.Property<int>("ActionNeeded")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("ActionNeeded");
 
-                    b.Property<int>("BrokenFiles")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("BrokenFiles");
 
-                    b.Property<long?>("CancelledAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("CancelledAt");
 
-                    b.Property<int>("Checked")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Checked");
 
-                    b.Property<long?>("CompletedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("CompletedAt");
 
-                    b.Property<int>("Deleted")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Deleted");
 
                     b.Property<string>("Message")
-                        .HasMaxLength(1024)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(1024);
 
-                    b.Property<int>("Missing")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Missing");
 
-                    b.Property<long?>("NextDueAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("NextDueAt");
 
-                    b.Property<int>("ProviderErrors")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("ProviderErrors");
 
-                    b.Property<int>("Repaired")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Repaired");
 
                     b.Property<string>("Stage")
                         .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(64);
 
-                    b.Property<long>("StartedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("StartedAt");
 
-                    b.Property<int>("Status")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Status");
 
-                    b.Property<int>("Total")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Total");
 
-                    b.Property<int>("Unknown")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Unknown");
 
-                    b.Property<long>("UpdatedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("UpdatedAt");
 
                     b.HasKey("Id");
 
@@ -773,36 +619,27 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.QueuePriorityHint", b =>
                 {
-                    b.Property<Guid>("QueueItemId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("QueueItemId");
 
-                    b.Property<bool>("ApplyToScheduling")
-                        .HasColumnType("INTEGER");
+                    b.Property<bool>("ApplyToScheduling");
 
-                    b.Property<long>("ComputedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("ComputedAt");
 
-                    b.Property<int>("EffectivePriority")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("EffectivePriority");
 
-                    b.Property<long>("ExpiresAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("ExpiresAt");
 
                     b.Property<string>("ReasonsJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
-                    b.Property<int>("Score")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Score");
 
                     b.Property<string>("Source")
                         .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(64);
 
                     b.Property<string>("StaleReason")
-                        .HasMaxLength(1024)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(1024);
 
                     b.HasKey("QueueItemId");
 
@@ -813,41 +650,30 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.QueueItem", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
-                    b.Property<string>("ArchivePassword")
-                        .HasColumnType("TEXT");
+                    b.Property<string>("ArchivePassword");
 
                     b.Property<string>("Category")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<DateTime>("CreatedAt");
 
                     b.Property<string>("FileName")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
                     b.Property<string>("JobName")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
-                    b.Property<long>("NzbFileSize")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("NzbFileSize");
 
-                    b.Property<DateTime?>("PauseUntil")
-                        .HasColumnType("TEXT");
+                    b.Property<DateTime?>("PauseUntil");
 
-                    b.Property<int>("PostProcessing")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("PostProcessing");
 
-                    b.Property<int>("Priority")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Priority");
 
-                    b.Property<long>("TotalSegmentBytes")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("TotalSegmentBytes");
 
                     b.HasKey("Id");
 
@@ -871,12 +697,10 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.QueueNzbContents", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
                     b.Property<string>("NzbContents")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                        .IsRequired();
 
                     b.HasKey("Id");
 
@@ -885,80 +709,57 @@ namespace NzbWebDAV.Database.Migrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.WorkerJob", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("Id");
 
-                    b.Property<int>("Attempts")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Attempts");
 
-                    b.Property<long>("AvailableAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("AvailableAt");
 
-                    b.Property<long?>("CancelRequestedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("CancelRequestedAt");
 
-                    b.Property<long?>("CompletedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("CompletedAt");
 
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("CreatedAt");
 
-                    b.Property<int>("Kind")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Kind");
 
-                    b.Property<int?>("FailureKind")
-                        .HasColumnType("INTEGER");
+                    b.Property<int?>("FailureKind");
 
-                    b.Property<long?>("LastHeartbeatAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("LastHeartbeatAt");
 
-                    b.Property<long?>("LeaseExpiresAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("LeaseExpiresAt");
 
                     b.Property<long>("LeaseGeneration")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER")
                         .HasDefaultValue(0L);
 
                     b.Property<string>("LeaseOwner")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(255);
 
-                    b.Property<Guid?>("LeaseToken")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid?>("LeaseToken");
 
                     b.Property<string>("LastError")
-                        .HasMaxLength(1024)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(1024);
 
-                    b.Property<string>("PayloadJson")
-                        .HasColumnType("TEXT");
+                    b.Property<string>("PayloadJson");
 
-                    b.Property<int>("Priority")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Priority");
 
                     b.Property<string>("ProgressJson")
-                        .HasMaxLength(16384)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(16384);
 
-                    b.Property<long?>("ProgressUpdatedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("ProgressUpdatedAt");
 
                     b.Property<string>("ResultJson")
-                        .HasMaxLength(16384)
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(16384);
 
-                    b.Property<long?>("StartedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long?>("StartedAt");
 
-                    b.Property<int>("Status")
-                        .HasColumnType("INTEGER");
+                    b.Property<int>("Status");
 
-                    b.Property<Guid>("TargetId")
-                        .HasColumnType("TEXT");
+                    b.Property<Guid>("TargetId");
 
-                    b.Property<long>("UpdatedAt")
-                        .HasColumnType("INTEGER");
+                    b.Property<long>("UpdatedAt");
 
                     b.HasKey("Id");
 
