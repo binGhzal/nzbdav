@@ -1,5 +1,7 @@
 using System.Reflection;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -91,6 +93,54 @@ public sealed class QueueItemProcessorVerificationTests
         var receipt = await dbContext.ImportReceipts.SingleAsync(x => x.HistoryItemId == history.Id);
         Assert.Equal(outputFile!.Id, receipt.DavItemId);
         Assert.Equal(ImportReceiptState.Available, receipt.State);
+    }
+
+    [Fact]
+    public async Task MarkQueueItemCompleted_SaveFailureDoesNotPartiallyCommitCompletion()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var baseOptions = new DbContextOptionsBuilder<DavDatabaseContext>().UseSqlite(connection).Options;
+        var queueItem = CreateQueueItem();
+        await using (var setup = new DavDatabaseContext(baseOptions))
+        {
+            await setup.Database.EnsureCreatedAsync();
+            setup.QueueItems.Add(queueItem);
+            await setup.SaveChangesAsync();
+        }
+        var failingOptions = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .AddInterceptors(new FailingSaveInterceptor())
+            .Options;
+        await using var failingContext = new DavDatabaseContext(failingOptions);
+        var persistedQueueItem = await failingContext.QueueItems.SingleAsync(x => x.Id == queueItem.Id);
+        var configManager = _fixture.CreateConfigManager();
+        using var usenetClient = new FakeNntpClient();
+        var processor = new QueueItemProcessor(
+            persistedQueueItem,
+            Stream.Null,
+            new DavDatabaseClient(failingContext),
+            usenetClient,
+            configManager,
+            new WebsocketManager(),
+            new ArrDownloadReportService(configManager),
+            new Progress<int>(),
+            CancellationToken.None);
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => InvokeMarkQueueItemCompletedAsync(processor, () =>
+        {
+            var mountFolder = CreateDavItem(
+                "Failed Movie", DavItem.ItemType.Directory, DavItem.ItemSubType.Directory, queueItem.Id);
+            var output = CreateDavItem(
+                "Failed.mkv", DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile, queueItem.Id);
+            failingContext.Items.AddRange(mountFolder, output);
+            return Task.FromResult<DavItem?>(mountFolder);
+        }));
+
+        await using var assertionContext = new DavDatabaseContext(baseOptions);
+        Assert.NotNull(await assertionContext.QueueItems.SingleOrDefaultAsync(x => x.Id == queueItem.Id));
+        Assert.Null(await assertionContext.HistoryItems.SingleOrDefaultAsync(x => x.Id == queueItem.Id));
+        Assert.Empty(await assertionContext.ImportReceipts.Where(x => x.HistoryItemId == queueItem.Id).ToListAsync());
     }
 
     [Fact]
@@ -393,5 +443,15 @@ public sealed class QueueItemProcessorVerificationTests
         {
             throw new NotSupportedException();
         }
+    }
+
+    private sealed class FailingSaveInterceptor : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<InterceptionResult<int>>(
+                new DbUpdateException("forced completion transaction failure"));
     }
 }

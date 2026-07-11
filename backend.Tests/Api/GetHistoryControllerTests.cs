@@ -5,9 +5,11 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using NzbWebDAV.Api.SabControllers.GetHistory;
+using NzbWebDAV.Api.SabControllers.RemoveFromHistory;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Websocket;
 using backend.Tests.Services;
 
 namespace backend.Tests.Api;
@@ -112,6 +114,62 @@ public sealed class GetHistoryControllerTests
         Assert.Equal(ImportReceiptState.Removed, receipt.State);
         Assert.NotNull(receipt.RemovedAt);
         Assert.Equal(deleteFiles, (await dbContext.HistoryCleanupItems.SingleAsync(x => x.Id == historyId)).DeleteMountedFiles);
+    }
+
+    [Fact]
+    public async Task RemoveFromHistory_SaveFailureRollsBackReceiptAndHistoryRemoval()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var baseOptions = new DbContextOptionsBuilder<DavDatabaseContext>().UseSqlite(connection).Options;
+        var historyId = Guid.NewGuid();
+        var davItemId = Guid.NewGuid();
+        await using (var setup = new DavDatabaseContext(baseOptions))
+        {
+            await setup.Database.EnsureCreatedAsync();
+            setup.HistoryItems.Add(new HistoryItem
+            {
+                Id = historyId,
+                CreatedAt = DateTime.UtcNow,
+                FileName = "Rollback.nzb",
+                JobName = "Rollback",
+                Category = "movies",
+                DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+                TotalSegmentBytes = 1024,
+                DownloadTimeSeconds = 1
+            });
+            setup.ImportReceipts.Add(new ImportReceipt
+            {
+                Id = Guid.NewGuid(),
+                DavItemId = davItemId,
+                HistoryItemId = historyId,
+                State = ImportReceiptState.Imported,
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+            });
+            await setup.SaveChangesAsync();
+        }
+        var failingOptions = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .AddInterceptors(new FailingSaveInterceptor())
+            .Options;
+        await using var failingContext = new DavDatabaseContext(failingOptions);
+        var httpContext = CreateHttpContext($"?value={historyId}&del_completed_files=1");
+        var request = await RemoveFromHistoryRequest.New(httpContext);
+        var controller = new RemoveFromHistoryController(
+            httpContext,
+            new DavDatabaseClient(failingContext),
+            CreateConfigManager(),
+            new WebsocketManager());
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => controller.RemoveFromHistory(request));
+
+        await using var assertionContext = new DavDatabaseContext(baseOptions);
+        Assert.NotNull(await assertionContext.HistoryItems.SingleOrDefaultAsync(x => x.Id == historyId));
+        Assert.Equal(
+            ImportReceiptState.Imported,
+            (await assertionContext.ImportReceipts.SingleAsync(x => x.DavItemId == davItemId)).State);
+        Assert.Empty(await assertionContext.HistoryCleanupItems.ToListAsync());
     }
 
     [Fact]
@@ -372,5 +430,15 @@ public sealed class GetHistoryControllerTests
             if (predicate(command.CommandText))
                 Interlocked.Increment(ref _count);
         }
+    }
+
+    private sealed class FailingSaveInterceptor : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<InterceptionResult<int>>(
+                new DbUpdateException("forced history transaction failure"));
     }
 }

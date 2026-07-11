@@ -8,12 +8,24 @@ using Serilog;
 
 namespace NzbWebDAV.Services;
 
-public sealed class ImportReceiptReconciliationService(ConfigManager configManager) : BackgroundService
+public sealed class ImportReceiptReconciliationService : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan ClaimGracePeriod = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan ReviewThreshold = TimeSpan.FromMinutes(30);
     private const int BatchSize = 100;
+    private readonly Func<IEnumerable<OrganizedLinksUtil.DavItemLink>> _enumerateLinks;
+
+    public ImportReceiptReconciliationService(ConfigManager configManager)
+        : this(() => OrganizedLinksUtil.GetLibraryDavItemLinks(configManager))
+    {
+    }
+
+    public ImportReceiptReconciliationService(
+        Func<IEnumerable<OrganizedLinksUtil.DavItemLink>> enumerateLinks)
+    {
+        _enumerateLinks = enumerateLinks;
+    }
 
     public async Task RunOnceAsync(DateTimeOffset now, CancellationToken ct)
     {
@@ -29,16 +41,13 @@ public sealed class ImportReceiptReconciliationService(ConfigManager configManag
             .ConfigureAwait(false);
         if (candidates.Count == 0) return;
 
-        var itemIds = candidates.Select(x => x.DavItemId).ToList();
-        var items = await dbContext.Items
-            .Where(x => itemIds.Contains(x.Id))
-            .ToDictionaryAsync(x => x.Id, ct)
-            .ConfigureAwait(false);
+        var linkedItemIds = _enumerateLinks()
+            .Select(x => x.DavItemId)
+            .ToHashSet();
         var receiptService = new ImportReceiptService(dbContext);
         foreach (var candidate in candidates)
         {
-            if (items.TryGetValue(candidate.DavItemId, out var item)
-                && OrganizedLinksUtil.GetLink(item, configManager) != null)
+            if (linkedItemIds.Contains(candidate.DavItemId))
             {
                 await receiptService
                     .MarkImportedAsync(candidate.DavItemId, candidate.HistoryItemId, now, ct)

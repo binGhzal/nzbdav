@@ -1,4 +1,6 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 
@@ -10,6 +12,8 @@ public sealed record ImportClaimRequest(Guid DavItemId, Guid HistoryItemId, Date
 
 public sealed class ImportReceiptService(DavDatabaseContext dbContext)
 {
+    private const string ReceiptUniqueIndex = "IX_ImportReceipts_DavItemId_HistoryItemId";
+
     public async Task StageAvailableReceiptsAsync(
         Guid historyItemId,
         DateTimeOffset now,
@@ -63,121 +67,220 @@ public sealed class ImportReceiptService(DavDatabaseContext dbContext)
 
     public async Task<ImportReceiptResult> ClaimAsync(ImportClaimRequest request, CancellationToken ct)
     {
-        var receipt = await dbContext.ImportReceipts
-            .SingleOrDefaultAsync(x => x.DavItemId == request.DavItemId && x.HistoryItemId == request.HistoryItemId, ct)
-            .ConfigureAwait(false);
-        if (receipt == null)
+        DetachTrackedReceipts(request.DavItemId, request.HistoryItemId);
+        var changed = await ClaimAvailableAsync(request, ct).ConfigureAwait(false);
+        if (changed == 1)
+            return Result(await ReloadAsync(request.DavItemId, request.HistoryItemId, ct).ConfigureAwait(false), true);
+
+        var durable = await FindAsync(request.DavItemId, request.HistoryItemId, ct).ConfigureAwait(false);
+        if (durable != null)
+            return Result(durable, false);
+
+        var receipt = new ImportReceipt
         {
-            receipt = new ImportReceipt
-            {
-                Id = Guid.NewGuid(),
-                DavItemId = request.DavItemId,
-                HistoryItemId = request.HistoryItemId,
-                State = ImportReceiptState.UnlinkClaimed,
-                CreatedAt = request.Now,
-                UpdatedAt = request.Now
-            };
-            dbContext.ImportReceipts.Add(receipt);
+            Id = Guid.NewGuid(),
+            DavItemId = request.DavItemId,
+            HistoryItemId = request.HistoryItemId,
+            State = ImportReceiptState.UnlinkClaimed,
+            CreatedAt = request.Now,
+            UpdatedAt = request.Now
+        };
+        dbContext.ImportReceipts.Add(receipt);
+        try
+        {
             await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
             return Result(receipt, true);
         }
-
-        if (receipt.State != ImportReceiptState.Available)
-            return Result(receipt, false);
-
-        receipt.State = ImportReceiptState.UnlinkClaimed;
-        receipt.UpdatedAt = request.Now;
-        receipt.Detail = null;
-        await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
-        return Result(receipt, true);
+        catch (DbUpdateException exception) when (IsReceiptUniqueViolation(exception))
+        {
+            dbContext.Entry(receipt).State = EntityState.Detached;
+            changed = await ClaimAvailableAsync(request, ct).ConfigureAwait(false);
+            durable = await ReloadAsync(request.DavItemId, request.HistoryItemId, ct).ConfigureAwait(false);
+            return Result(durable, changed == 1);
+        }
     }
 
-    public Task<IReadOnlyList<ImportReceiptResult>> MarkImportedAsync(
+    public async Task<IReadOnlyList<ImportReceiptResult>> MarkImportedAsync(
         Guid historyItemId,
         DateTimeOffset now,
-        CancellationToken ct) => TransitionHistoryAsync(historyItemId, ImportReceiptState.Imported, now, null, ct);
+        CancellationToken ct)
+    {
+        return await TransitionHistoryAsync(
+                historyItemId,
+                [ImportReceiptState.Available, ImportReceiptState.UnlinkClaimed, ImportReceiptState.NeedsReview],
+                ImportReceiptState.Imported,
+                now,
+                null,
+                ct)
+            .ConfigureAwait(false);
+    }
 
-    public async Task<ImportReceiptResult> MarkImportedAsync(
+    public Task<ImportReceiptResult> MarkImportedAsync(
         Guid davItemId,
         Guid historyItemId,
         DateTimeOffset now,
         CancellationToken ct)
     {
-        var receipt = await dbContext.ImportReceipts
-            .SingleAsync(x => x.DavItemId == davItemId && x.HistoryItemId == historyItemId, ct)
-            .ConfigureAwait(false);
-        if (receipt.State is ImportReceiptState.Removed or ImportReceiptState.Imported)
-            return Result(receipt, false);
-
-        receipt.State = ImportReceiptState.Imported;
-        receipt.UpdatedAt = now;
-        receipt.ImportedAt = now;
-        receipt.Detail = null;
-        await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
-        return Result(receipt, true);
+        return TransitionOneAsync(
+            davItemId,
+            historyItemId,
+            [ImportReceiptState.Available, ImportReceiptState.UnlinkClaimed, ImportReceiptState.NeedsReview],
+            ImportReceiptState.Imported,
+            now,
+            null,
+            ct);
     }
 
-    public Task<IReadOnlyList<ImportReceiptResult>> MarkRemovedAsync(
+    public async Task<IReadOnlyList<ImportReceiptResult>> MarkRemovedAsync(
         Guid historyItemId,
         DateTimeOffset now,
-        CancellationToken ct) => TransitionHistoryAsync(historyItemId, ImportReceiptState.Removed, now, null, ct);
+        CancellationToken ct)
+    {
+        var activeStates = Enum.GetValues<ImportReceiptState>()
+            .Where(x => x != ImportReceiptState.Removed)
+            .ToArray();
+        return await TransitionHistoryAsync(
+                historyItemId,
+                activeStates,
+                ImportReceiptState.Removed,
+                now,
+                null,
+                ct)
+            .ConfigureAwait(false);
+    }
 
-    public async Task<ImportReceiptResult> MarkNeedsReviewAsync(
+    public Task<ImportReceiptResult> MarkNeedsReviewAsync(
         Guid davItemId,
         Guid historyItemId,
         DateTimeOffset now,
         string? detail,
         CancellationToken ct)
     {
-        var receipt = await dbContext.ImportReceipts
-            .SingleAsync(x => x.DavItemId == davItemId && x.HistoryItemId == historyItemId, ct)
-            .ConfigureAwait(false);
-        if (receipt.State != ImportReceiptState.UnlinkClaimed)
-            return Result(receipt, false);
+        return TransitionOneAsync(
+            davItemId,
+            historyItemId,
+            [ImportReceiptState.UnlinkClaimed],
+            ImportReceiptState.NeedsReview,
+            now,
+            detail,
+            ct);
+    }
 
-        receipt.State = ImportReceiptState.NeedsReview;
-        receipt.UpdatedAt = now;
-        receipt.Detail = detail;
-        await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
-        return Result(receipt, true);
+    private Task<int> ClaimAvailableAsync(ImportClaimRequest request, CancellationToken ct)
+    {
+        return dbContext.ImportReceipts
+            .Where(x => x.DavItemId == request.DavItemId
+                        && x.HistoryItemId == request.HistoryItemId
+                        && x.State == ImportReceiptState.Available)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.State, ImportReceiptState.UnlinkClaimed)
+                .SetProperty(x => x.UpdatedAt, request.Now)
+                .SetProperty(x => x.Detail, (string?)null), ct);
     }
 
     private async Task<IReadOnlyList<ImportReceiptResult>> TransitionHistoryAsync(
         Guid historyItemId,
+        IReadOnlyCollection<ImportReceiptState> allowedStates,
         ImportReceiptState target,
         DateTimeOffset now,
         string? detail,
         CancellationToken ct)
     {
-        var receipts = await dbContext.ImportReceipts
+        DetachTrackedReceipts(historyItemId);
+        var receiptKeys = await dbContext.ImportReceipts
+            .AsNoTracking()
             .Where(x => x.HistoryItemId == historyItemId)
+            .OrderBy(x => x.Id)
+            .Select(x => new { x.DavItemId, x.HistoryItemId })
             .ToListAsync(ct)
             .ConfigureAwait(false);
-        var changed = false;
-        var results = new List<ImportReceiptResult>(receipts.Count);
-        foreach (var receipt in receipts)
+        var results = new List<ImportReceiptResult>(receiptKeys.Count);
+        foreach (var key in receiptKeys)
         {
-            var canTransition = receipt.State != ImportReceiptState.Removed
-                                && receipt.State != target
-                                && (target == ImportReceiptState.Removed
-                                    || receipt.State is ImportReceiptState.Available
-                                        or ImportReceiptState.UnlinkClaimed
-                                        or ImportReceiptState.NeedsReview);
-            if (canTransition)
-            {
-                receipt.State = target;
-                receipt.UpdatedAt = now;
-                receipt.Detail = detail;
-                if (target == ImportReceiptState.Imported) receipt.ImportedAt = now;
-                if (target == ImportReceiptState.Removed) receipt.RemovedAt = now;
-                changed = true;
-            }
-            results.Add(Result(receipt, canTransition));
+            results.Add(await TransitionOneAsync(
+                    key.DavItemId,
+                    key.HistoryItemId,
+                    allowedStates,
+                    target,
+                    now,
+                    detail,
+                    ct)
+                .ConfigureAwait(false));
         }
-
-        if (changed)
-            await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
         return results;
+    }
+
+    private async Task<ImportReceiptResult> TransitionOneAsync(
+        Guid davItemId,
+        Guid historyItemId,
+        IReadOnlyCollection<ImportReceiptState> allowedStates,
+        ImportReceiptState target,
+        DateTimeOffset now,
+        string? detail,
+        CancellationToken ct)
+    {
+        DetachTrackedReceipts(davItemId, historyItemId);
+        var changed = await dbContext.ImportReceipts
+            .Where(x => x.DavItemId == davItemId
+                        && x.HistoryItemId == historyItemId
+                        && allowedStates.Contains(x.State))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.State, target)
+                .SetProperty(x => x.UpdatedAt, now)
+                .SetProperty(x => x.Detail, detail)
+                .SetProperty(
+                    x => x.ImportedAt,
+                    x => target == ImportReceiptState.Imported ? now : x.ImportedAt)
+                .SetProperty(
+                    x => x.RemovedAt,
+                    x => target == ImportReceiptState.Removed ? now : x.RemovedAt), ct)
+            .ConfigureAwait(false);
+        var durable = await ReloadAsync(davItemId, historyItemId, ct).ConfigureAwait(false);
+        return Result(durable, changed == 1);
+    }
+
+    private Task<ImportReceipt?> FindAsync(Guid davItemId, Guid historyItemId, CancellationToken ct)
+    {
+        return dbContext.ImportReceipts
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x => x.DavItemId == davItemId && x.HistoryItemId == historyItemId, ct);
+    }
+
+    private async Task<ImportReceipt> ReloadAsync(Guid davItemId, Guid historyItemId, CancellationToken ct)
+    {
+        return await FindAsync(davItemId, historyItemId, ct).ConfigureAwait(false)
+               ?? throw new InvalidOperationException("The import receipt disappeared during a state transition.");
+    }
+
+    private void DetachTrackedReceipts(Guid historyItemId)
+    {
+        foreach (var entry in dbContext.ChangeTracker.Entries<ImportReceipt>()
+                     .Where(x => x.Entity.HistoryItemId == historyItemId)
+                     .ToList())
+            entry.State = EntityState.Detached;
+    }
+
+    private void DetachTrackedReceipts(Guid davItemId, Guid historyItemId)
+    {
+        foreach (var entry in dbContext.ChangeTracker.Entries<ImportReceipt>()
+                     .Where(x => x.Entity.DavItemId == davItemId && x.Entity.HistoryItemId == historyItemId)
+                     .ToList())
+            entry.State = EntityState.Detached;
+    }
+
+    private static bool IsReceiptUniqueViolation(DbUpdateException exception)
+    {
+        return exception.InnerException switch
+        {
+            SqliteException { SqliteErrorCode: 19, SqliteExtendedErrorCode: 2067 } sqlite =>
+                sqlite.Message.Contains("ImportReceipts.DavItemId, ImportReceipts.HistoryItemId", StringComparison.Ordinal),
+            PostgresException
+            {
+                SqlState: PostgresErrorCodes.UniqueViolation,
+                ConstraintName: ReceiptUniqueIndex
+            } => true,
+            _ => false
+        };
     }
 
     private static ImportReceiptResult Result(ImportReceipt receipt, bool changed) =>

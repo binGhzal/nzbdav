@@ -89,12 +89,108 @@ public sealed class ImportReceiptServiceTests
         Assert.Equal(now.AddMinutes(1), (await dbContext.ImportReceipts.SingleAsync(x => x.DavItemId == davItemId)).UpdatedAt);
     }
 
-    private static ImportReceipt CreateReceipt(Guid davItemId, Guid historyId, DateTimeOffset now) => new()
+    [Theory]
+    [InlineData(ImportReceiptState.UnlinkClaimed)]
+    [InlineData(ImportReceiptState.Imported)]
+    [InlineData(ImportReceiptState.Removed)]
+    [InlineData(ImportReceiptState.NeedsReview)]
+    public async Task ClaimOnlyChangesAvailable(ImportReceiptState initialState)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var receipt = CreateReceipt(Guid.NewGuid(), Guid.NewGuid(), now, initialState);
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        dbContext.ImportReceipts.Add(receipt);
+        await dbContext.SaveChangesAsync();
+
+        var result = await new ImportReceiptService(dbContext).ClaimAsync(
+            new ImportClaimRequest(receipt.DavItemId, receipt.HistoryItemId, now.AddMinutes(1)),
+            CancellationToken.None);
+
+        Assert.False(result.Changed);
+        Assert.Equal(initialState, result.State);
+    }
+
+    [Theory]
+    [InlineData(ImportReceiptState.Available, true, ImportReceiptState.Imported)]
+    [InlineData(ImportReceiptState.UnlinkClaimed, true, ImportReceiptState.Imported)]
+    [InlineData(ImportReceiptState.NeedsReview, true, ImportReceiptState.Imported)]
+    [InlineData(ImportReceiptState.Imported, false, ImportReceiptState.Imported)]
+    [InlineData(ImportReceiptState.Removed, false, ImportReceiptState.Removed)]
+    public async Task MarkImportedUsesExplicitAllowedStates(
+        ImportReceiptState initialState,
+        bool expectedChanged,
+        ImportReceiptState expectedState)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var receipt = CreateReceipt(Guid.NewGuid(), Guid.NewGuid(), now, initialState);
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        dbContext.ImportReceipts.Add(receipt);
+        await dbContext.SaveChangesAsync();
+
+        var result = await new ImportReceiptService(dbContext).MarkImportedAsync(
+            receipt.DavItemId, receipt.HistoryItemId, now.AddMinutes(1), CancellationToken.None);
+
+        Assert.Equal(expectedChanged, result.Changed);
+        Assert.Equal(expectedState, result.State);
+    }
+
+    [Theory]
+    [InlineData(ImportReceiptState.Available, true)]
+    [InlineData(ImportReceiptState.UnlinkClaimed, true)]
+    [InlineData(ImportReceiptState.Imported, true)]
+    [InlineData(ImportReceiptState.NeedsReview, true)]
+    [InlineData(ImportReceiptState.Removed, false)]
+    public async Task MarkRemovedTerminalizesEveryNonRemovedState(
+        ImportReceiptState initialState,
+        bool expectedChanged)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var receipt = CreateReceipt(Guid.NewGuid(), Guid.NewGuid(), now, initialState);
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        dbContext.ImportReceipts.Add(receipt);
+        await dbContext.SaveChangesAsync();
+
+        var result = Assert.Single(await new ImportReceiptService(dbContext).MarkRemovedAsync(
+            receipt.HistoryItemId, now.AddMinutes(1), CancellationToken.None));
+
+        Assert.Equal(expectedChanged, result.Changed);
+        Assert.Equal(ImportReceiptState.Removed, result.State);
+    }
+
+    [Theory]
+    [InlineData(ImportReceiptState.Available, false, ImportReceiptState.Available)]
+    [InlineData(ImportReceiptState.UnlinkClaimed, true, ImportReceiptState.NeedsReview)]
+    [InlineData(ImportReceiptState.Imported, false, ImportReceiptState.Imported)]
+    [InlineData(ImportReceiptState.NeedsReview, false, ImportReceiptState.NeedsReview)]
+    [InlineData(ImportReceiptState.Removed, false, ImportReceiptState.Removed)]
+    public async Task MarkNeedsReviewOnlyChangesUnlinkClaimed(
+        ImportReceiptState initialState,
+        bool expectedChanged,
+        ImportReceiptState expectedState)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var receipt = CreateReceipt(Guid.NewGuid(), Guid.NewGuid(), now, initialState);
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        dbContext.ImportReceipts.Add(receipt);
+        await dbContext.SaveChangesAsync();
+
+        var result = await new ImportReceiptService(dbContext).MarkNeedsReviewAsync(
+            receipt.DavItemId, receipt.HistoryItemId, now.AddMinutes(1), "review", CancellationToken.None);
+
+        Assert.Equal(expectedChanged, result.Changed);
+        Assert.Equal(expectedState, result.State);
+    }
+
+    private static ImportReceipt CreateReceipt(
+        Guid davItemId,
+        Guid historyId,
+        DateTimeOffset now,
+        ImportReceiptState state = ImportReceiptState.Available) => new()
     {
         Id = Guid.NewGuid(),
         DavItemId = davItemId,
         HistoryItemId = historyId,
-        State = ImportReceiptState.Available,
+        State = state,
         CreatedAt = now,
         UpdatedAt = now
     };

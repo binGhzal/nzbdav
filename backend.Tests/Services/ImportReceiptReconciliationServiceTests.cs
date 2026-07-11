@@ -67,7 +67,13 @@ public sealed class ImportReceiptReconciliationServiceTests
             await dbContext.SaveChangesAsync();
         }
 
-        await new ImportReceiptReconciliationService(_fixture.CreateConfigManager(_fixture.CreateLibraryDirectory()))
+        var traversalCount = 0;
+        await new ImportReceiptReconciliationService(
+                () =>
+                {
+                    traversalCount++;
+                    return [];
+                })
             .RunOnceAsync(now, CancellationToken.None);
 
         await using var assertionContext = await _fixture.CreateMigratedContextAsync();
@@ -82,6 +88,7 @@ public sealed class ImportReceiptReconciliationServiceTests
         Assert.Equal(
             ImportReceiptState.Available,
             (await assertionContext.ImportReceipts.SingleAsync(x => x.DavItemId == available.Id)).State);
+        Assert.Equal(1, traversalCount);
     }
 
     private static DavItem CreateFile(Guid id, Guid historyId, string name)

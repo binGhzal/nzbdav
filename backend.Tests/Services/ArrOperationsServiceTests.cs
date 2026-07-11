@@ -4,7 +4,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using NzbWebDAV.Api.SabControllers.AddFile;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -153,6 +155,133 @@ public sealed class ArrOperationsServiceTests
         Assert.Equal(ImportReceiptState.Imported, receipt.State);
         Assert.NotNull(receipt.ImportedAt);
         Assert.Equal("Imported", (await dbContext.ArrDownloadLifecycleEvents.SingleAsync(x => x.HistoryItemId == historyId)).State);
+    }
+
+    [Theory]
+    [InlineData("Import")]
+    [InlineData("Download")]
+    public async Task IngestOfficialDownloadIdOnlyEventPreservesEffectiveCorrelationIds(string eventType)
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var historyId = Guid.NewGuid();
+        var davItemId = Guid.NewGuid();
+        const string downloadId = "official-download-id";
+        dbContext.HistoryItems.Add(new HistoryItem
+        {
+            Id = historyId,
+            CreatedAt = DateTime.UtcNow,
+            FileName = "Example.nzb",
+            JobName = "Example",
+            Category = "movies",
+            DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+            TotalSegmentBytes = 1024,
+            DownloadTimeSeconds = 1
+        });
+        dbContext.ImportReceipts.Add(new ImportReceipt
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = davItemId,
+            HistoryItemId = historyId,
+            State = ImportReceiptState.UnlinkClaimed,
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+        });
+        dbContext.ArrDownloadCorrelations.Add(new ArrDownloadCorrelation
+        {
+            Id = Guid.NewGuid(),
+            HistoryItemId = historyId,
+            ArrApp = "radarr",
+            InstanceKey = GetInstanceKey("radarr", "http://radarr:7878"),
+            InstanceHost = "http://radarr:7878",
+            DownloadId = downloadId,
+            MediaKey = "radarr:movie:42",
+            MovieId = 42,
+            Source = "auto",
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+            LastSeenAt = DateTimeOffset.UtcNow.AddMinutes(-2)
+        });
+        await dbContext.SaveChangesAsync();
+
+        await new ArrOperationsService(_fixture.CreateConfigManager()).IngestCustomScriptEventAsync(
+            dbContext,
+            "radarr",
+            new Dictionary<string, string>
+            {
+                ["radarr_eventtype"] = eventType,
+                ["radarr_download_id"] = downloadId,
+                ["radarr_host"] = "http://radarr:7878"
+            });
+
+        dbContext.ChangeTracker.Clear();
+        var correlation = await dbContext.ArrDownloadCorrelations.SingleAsync(x => x.DownloadId == downloadId);
+        Assert.Equal(historyId, correlation.HistoryItemId);
+        Assert.Equal("radarr:movie:42", correlation.MediaKey);
+        Assert.Equal(42, correlation.MovieId);
+        var lifecycle = await dbContext.ArrDownloadLifecycleEvents.SingleAsync(x => x.DownloadId == downloadId);
+        Assert.Equal(historyId, lifecycle.HistoryItemId);
+        Assert.Equal("radarr:movie:42", lifecycle.MediaKey);
+        Assert.Equal(
+            ImportReceiptState.Imported,
+            (await dbContext.ImportReceipts.SingleAsync(x => x.DavItemId == davItemId)).State);
+    }
+
+    [Fact]
+    public async Task IngestCustomScriptEvent_SaveFailureRollsBackReceiptAndLifecycle()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var baseOptions = new DbContextOptionsBuilder<DavDatabaseContext>().UseSqlite(connection).Options;
+        var historyId = Guid.NewGuid();
+        var davItemId = Guid.NewGuid();
+        await using (var setup = new DavDatabaseContext(baseOptions))
+        {
+            await setup.Database.EnsureCreatedAsync();
+            setup.HistoryItems.Add(new HistoryItem
+            {
+                Id = historyId,
+                CreatedAt = DateTime.UtcNow,
+                FileName = "Rollback.nzb",
+                JobName = "Rollback",
+                Category = "movies",
+                DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+                TotalSegmentBytes = 1024,
+                DownloadTimeSeconds = 1
+            });
+            setup.ImportReceipts.Add(new ImportReceipt
+            {
+                Id = Guid.NewGuid(),
+                DavItemId = davItemId,
+                HistoryItemId = historyId,
+                State = ImportReceiptState.UnlinkClaimed,
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+            });
+            await setup.SaveChangesAsync();
+        }
+        var failingOptions = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .AddInterceptors(new FailingSaveInterceptor())
+            .Options;
+        await using var failingContext = new DavDatabaseContext(failingOptions);
+
+        await Assert.ThrowsAsync<DbUpdateException>(() =>
+            new ArrOperationsService(_fixture.CreateConfigManager()).IngestCustomScriptEventAsync(
+                failingContext,
+                "radarr",
+                new Dictionary<string, string>
+                {
+                    ["event_type"] = "Import",
+                    ["history_item_id"] = historyId.ToString(),
+                    ["instance_host"] = "http://radarr:7878"
+                }));
+
+        await using var assertionContext = new DavDatabaseContext(baseOptions);
+        Assert.Equal(
+            ImportReceiptState.UnlinkClaimed,
+            (await assertionContext.ImportReceipts.SingleAsync(x => x.DavItemId == davItemId)).State);
+        Assert.Empty(await assertionContext.ArrDownloadLifecycleEvents.ToListAsync());
+        Assert.Empty(await assertionContext.ArrDownloadCorrelations.ToListAsync());
     }
 
     [Fact]
@@ -580,6 +709,16 @@ public sealed class ArrOperationsServiceTests
         Priority = QueueItem.PriorityOption.Normal,
         PostProcessing = QueueItem.PostProcessingOption.None
     };
+
+    private sealed class FailingSaveInterceptor : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<InterceptionResult<int>>(
+                new DbUpdateException("forced ARR transaction failure"));
+    }
 
     private static string MissingEpisodeResponse(int episodeId, int seriesId)
     {

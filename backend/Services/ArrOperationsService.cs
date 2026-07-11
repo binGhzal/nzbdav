@@ -276,6 +276,10 @@ public sealed class ArrOperationsService(ConfigManager configManager)
             };
         }
 
+        await using var ownedTransaction = dbContext.Database.CurrentTransaction == null
+            ? await dbContext.Database.BeginTransactionAsync(ct).ConfigureAwait(false)
+            : null;
+
         var downloadId = Get(payload, "download_id", "downloadid", "nzo_id", "nzoid", $"{app}_download_id");
         var nzoId = Get(payload, "nzo_id", "nzoid", "download_id", "downloadid");
         var queueItemId = ParseOptionalGuid(Get(payload, "queue_item_id", "queueitemid"), "queue_item_id");
@@ -305,6 +309,18 @@ public sealed class ArrOperationsService(ConfigManager configManager)
             dbContext.ArrDownloadCorrelations.Add(correlation);
         }
 
+        queueItemId ??= correlation.QueueItemId;
+        historyItemId ??= correlation.HistoryItemId;
+        downloadId ??= correlation.DownloadId;
+        var movieId = media.MovieId ?? correlation.MovieId;
+        var seriesId = media.SeriesId ?? correlation.SeriesId;
+        var episodeId = media.EpisodeId ?? correlation.EpisodeId;
+        var seasonNumber = media.SeasonNumber ?? correlation.SeasonNumber;
+        var artistId = media.ArtistId ?? correlation.ArtistId;
+        var albumId = media.AlbumId ?? correlation.AlbumId;
+        mediaKey ??= correlation.MediaKey
+                     ?? BuildMediaKey(app, movieId, seriesId, episodeId, seasonNumber, artistId, albumId);
+
         correlation.ArrApp = app;
         correlation.InstanceKey = instanceKey;
         correlation.InstanceHost = instanceHost;
@@ -315,12 +331,12 @@ public sealed class ArrOperationsService(ConfigManager configManager)
             source: "custom-script",
             downloadId,
             mediaKey,
-            media.MovieId,
-            media.SeriesId,
-            media.EpisodeId,
-            media.SeasonNumber,
-            media.ArtistId,
-            media.AlbumId);
+            movieId,
+            seriesId,
+            episodeId,
+            seasonNumber,
+            artistId,
+            albumId);
         correlation.ReleaseTitle = Get(payload, "release_title", "releasetitle", "source_title", "sourcetitle", $"{app}_release_title", $"{app}_source_title");
         correlation.Category = Get(payload, "category", "cat", $"{app}_category");
         correlation.Quality = Get(payload, "quality", "quality_name", $"{app}_quality", $"{app}_qualityversion");
@@ -351,6 +367,8 @@ public sealed class ArrOperationsService(ConfigManager configManager)
                 .ConfigureAwait(false);
         }
         await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+        if (ownedTransaction != null)
+            await ownedTransaction.CommitAsync(ct).ConfigureAwait(false);
         return new ArrEventResponse
         {
             EventType = eventType,

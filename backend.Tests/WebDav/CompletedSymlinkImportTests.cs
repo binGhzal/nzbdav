@@ -68,7 +68,7 @@ public sealed class CompletedSymlinkImportTests
 
         var failingOptions = new DbContextOptionsBuilder<DavDatabaseContext>()
             .UseSqlite(connection)
-            .AddInterceptors(new FailingSaveInterceptor())
+            .AddInterceptors(new FailingClaimInterceptor())
             .Options;
         await using var failingContext = new DavDatabaseContext(failingOptions);
         var store = CreateStore(directory, failingContext);
@@ -115,10 +115,11 @@ public sealed class CompletedSymlinkImportTests
         UpdatedAt = DateTimeOffset.UtcNow
     };
 
-    private sealed class FailingSaveInterceptor : SaveChangesInterceptor
+    private sealed class FailingClaimInterceptor : DbCommandInterceptor
     {
-        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
-            DbContextEventData eventData,
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            System.Data.Common.DbCommand command,
+            CommandEventData eventData,
             InterceptionResult<int> result,
             CancellationToken cancellationToken = default) =>
             ValueTask.FromException<InterceptionResult<int>>(new DbUpdateException("receipt write failed"));
