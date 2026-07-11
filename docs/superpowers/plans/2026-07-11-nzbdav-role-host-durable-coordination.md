@@ -102,7 +102,7 @@ git commit -m "fix: default optional rclone benchmark probes"
 - Modify: `backend/Program.cs:24-40`
 
 **Interfaces:**
-- Produces: `NzbdavRole`, `NzbdavCapability`, `NzbdavRoleResolver.Resolve(IConfiguration configuration)`, and `NzbdavRoleCapabilities.For(NzbdavRole role)`.
+- Produces: `NzbdavRole`, `NzbdavCapability`, `NzbdavRoleResolver.Resolve(string? value)`, and `NzbdavRoleCapabilities.For(NzbdavRole role)`.
 - Constraint: only `NzbdavRole.All` is executable until dependent plans register complete role hosts.
 
 - [ ] **Step 1: Write role parsing and ownership tests**
