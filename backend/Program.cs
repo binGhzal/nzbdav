@@ -11,6 +11,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Hosting;
 using NzbWebDAV.Middlewares;
 using NzbWebDAV.Mount;
 using NzbWebDAV.Queue;
@@ -32,6 +33,13 @@ class Program
     static async Task Main(string[] args)
     {
         EnvironmentUtil.LoadDotEnvFile();
+
+        var role = NzbdavRoleResolver.Resolve(EnvironmentUtil.GetVariable("NZBDAV_ROLE"));
+        if (role != NzbdavRole.All)
+        {
+            throw new InvalidOperationException(
+                $"NZBDAV_ROLE '{role}' is defined but not executable until its service implementation is installed.");
+        }
 
         ConfigureThreadPool();
 
