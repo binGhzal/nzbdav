@@ -40,6 +40,23 @@ public sealed class DfsDavPathResolverTests
         Assert.Equal(movie.Id, idNode.Item?.Id);
     }
 
+    [Fact]
+    public async Task ResolveAsync_ExposesVirtualContentAndNzbsRootsWithoutDatabaseRows()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var resolver = CreateResolver(dbContext);
+
+        var contentNode = await resolver.ResolveAsync("/content");
+        var nzbsNode = await resolver.ResolveAsync("/nzbs");
+
+        Assert.NotNull(contentNode);
+        Assert.Equal(DfsDavNodeKind.Directory, contentNode.Kind);
+        Assert.Equal(DavItem.ContentFolder.Id, contentNode.Item?.Id);
+        Assert.NotNull(nzbsNode);
+        Assert.Equal(DfsDavNodeKind.Directory, nzbsNode.Kind);
+        Assert.Equal(DavItem.NzbFolder.Id, nzbsNode.Item?.Id);
+    }
+
     [Theory]
     [InlineData("/.ids/6/a/8/9/6/.gitignore")]
     [InlineData("/.ids/6/a/8/9/6/.ignore")]

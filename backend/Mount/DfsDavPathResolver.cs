@@ -54,7 +54,8 @@ public sealed class DfsDavPathResolver(DavDatabaseClient dbClient, ConfigManager
 
     private async Task<DfsDavNode?> ResolveDavTreeAsync(IReadOnlyList<string> parts, CancellationToken ct)
     {
-        var current = await dbClient.GetDirectoryChildAsync(DavItem.Root.Id, parts[0], ct).ConfigureAwait(false);
+        var current = GetVirtualRoot(parts[0])
+            ?? await dbClient.GetDirectoryChildAsync(DavItem.Root.Id, parts[0], ct).ConfigureAwait(false);
         if (current == null) return null;
 
         for (var i = 1; i < parts.Count; i++)
@@ -65,6 +66,16 @@ public sealed class DfsDavPathResolver(DavDatabaseClient dbClient, ConfigManager
         }
 
         return FromDavItem(current);
+    }
+
+    private static DavItem? GetVirtualRoot(string name)
+    {
+        return name switch
+        {
+            var content when content == DavItem.ContentFolder.Name => DavItem.ContentFolder,
+            var nzbs when nzbs == DavItem.NzbFolder.Name => DavItem.NzbFolder,
+            _ => null
+        };
     }
 
     private async Task<DfsDavNode?> ResolveSymlinkAsync(IReadOnlyList<string> parts, CancellationToken ct)
