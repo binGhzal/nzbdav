@@ -430,10 +430,64 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
 
     public async Task RemoveQueueItemsAsync(List<Guid> ids, CancellationToken ct = default)
     {
-        await CancelWorkerJobsAsync(WorkerJob.JobKind.Download, ids, ct).ConfigureAwait(false);
-        await Ctx.QueueItems
-            .Where(x => ids.Contains(x.Id))
-            .ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        if (ids.Count == 0) return;
+
+        await DavDatabaseContext.ExecuteWithSqliteBusyRetryAsync(async () =>
+        {
+            await RemoveQueueItemsCoreAsync(ids, ct).ConfigureAwait(false);
+            return true;
+        }, ct).ConfigureAwait(false);
+    }
+
+    private async Task RemoveQueueItemsCoreAsync(List<Guid> ids, CancellationToken ct)
+    {
+        Expression<Func<WorkerJob, bool>> workerJobPredicate =
+            job => job.Kind == WorkerJob.JobKind.Download && ids.Contains(job.TargetId);
+        await using var transaction = await Ctx.Database
+            .BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct)
+            .ConfigureAwait(false);
+
+        try
+        {
+            await CancelWorkerJobsAsync(
+                workerJobPredicate,
+                DateTimeOffset.UtcNow,
+                ct,
+                reloadTrackedEntries: false).ConfigureAwait(false);
+            await Ctx.QueueItems
+                .Where(x => ids.Contains(x.Id))
+                .ExecuteDeleteAsync(ct).ConfigureAwait(false);
+            await ReloadTrackedWorkerJobsAsync(workerJobPredicate, ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            var rolledBack = false;
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                rolledBack = true;
+            }
+            catch
+            {
+                // Disposal still closes an unusable transaction; preserve the operation failure.
+            }
+
+            if (rolledBack)
+            {
+                try
+                {
+                    await ReloadTrackedWorkerJobsAsync(workerJobPredicate, CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Tracker repair is best-effort after rollback; preserve the operation failure.
+                }
+            }
+
+            throw;
+        }
     }
 
     public async Task UpdateQueueItemsPriorityAsync
@@ -1896,7 +1950,8 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     private async Task CancelWorkerJobsAsync(
         Expression<Func<WorkerJob, bool>> predicate,
         DateTimeOffset now,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool reloadTrackedEntries = true)
     {
         await Ctx.WorkerJobs
             .Where(predicate)
@@ -1918,6 +1973,14 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                     : WorkerJob.FailureClass.Cancelled), ct)
             .ConfigureAwait(false);
 
+        if (reloadTrackedEntries)
+            await ReloadTrackedWorkerJobsAsync(predicate, ct).ConfigureAwait(false);
+    }
+
+    private async Task ReloadTrackedWorkerJobsAsync(
+        Expression<Func<WorkerJob, bool>> predicate,
+        CancellationToken ct)
+    {
         var matches = predicate.Compile();
         var trackedEntries = Ctx.ChangeTracker.Entries<WorkerJob>()
             .Where(entry => entry.State != EntityState.Added && matches(entry.Entity))

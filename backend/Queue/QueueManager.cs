@@ -125,7 +125,6 @@ public class QueueManager : IDisposable
             }
 
             await dbClient.RemoveQueueItemsAsync(queueItemIds, ct).ConfigureAwait(false);
-            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
 
             foreach (var inProgressQueueItem in inProgressQueueItems)
                 inProgressQueueItem.CancellationTokenSource.Cancel();

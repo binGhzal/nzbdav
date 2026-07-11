@@ -414,9 +414,12 @@ public sealed class WorkerJobLeaseTests
         var dbClient = new DavDatabaseClient(dbContext);
         var now = DateTimeOffset.UtcNow;
         var queueItem = CreateQueueItem("Active removal", QueueItem.PriorityOption.Normal, DateTime.UtcNow);
-        dbContext.QueueItems.Add(queueItem);
+        var unrelatedQueueItem = CreateQueueItem(
+            "Unrelated tracked", QueueItem.PriorityOption.Normal, DateTime.UtcNow.AddSeconds(1));
+        dbContext.QueueItems.AddRange(queueItem, unrelatedQueueItem);
         await dbClient.EnqueueWorkerJobAsync(WorkerJob.JobKind.Download, queueItem.Id, 1, now);
         await dbContext.SaveChangesAsync();
+        unrelatedQueueItem.Priority = QueueItem.PriorityOption.High;
         var coordinator = new DatabaseWorkerJobCoordinator(
             new TestWorkerCapacityPolicy(), Options.Create(new WorkerLeaseOptions()));
         var lease = Assert.Single(await coordinator.LeaseAsync(
@@ -438,12 +441,15 @@ public sealed class WorkerJobLeaseTests
         var inProgress = CreateDownloadInProgressQueueItem(lease.Identity, queueItem);
         var workerStopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var requestWasVisible = false;
+        var queueWasDeleted = false;
         var terminalAccepted = false;
         using var registration = workerCts.Token.Register(() =>
         {
             using var callbackContext = new DavDatabaseContext();
             requestWasVisible = callbackContext.WorkerJobs.AsNoTracking()
                 .Single(job => job.Id == lease.Identity.JobId).CancelRequestedAt != null;
+            queueWasDeleted = !callbackContext.QueueItems.AsNoTracking()
+                .Any(item => item.Id == queueItem.Id);
             terminalAccepted = InvokeUpdateDownloadWorkerJobAsync(
                     inProgress, coordinator, QueueItemProcessor.ProcessingOutcome.Cancelled)
                 .GetAwaiter().GetResult();
@@ -455,6 +461,7 @@ public sealed class WorkerJobLeaseTests
         await queueManager.RemoveQueueItemsAsync([queueItem.Id], dbClient);
 
         Assert.True(requestWasVisible);
+        Assert.True(queueWasDeleted);
         Assert.True(terminalAccepted);
         dbContext.ChangeTracker.Clear();
         var saved = await dbContext.WorkerJobs.AsNoTracking().SingleAsync();
@@ -462,6 +469,54 @@ public sealed class WorkerJobLeaseTests
         Assert.Equal(lease.Identity.Owner, saved.LeaseOwner);
         Assert.Equal(lease.Identity.Token, saved.LeaseToken);
         Assert.Equal(lease.Identity.Generation, saved.LeaseGeneration);
+        await using var verificationContext = await _fixture.CreateMigratedContextAsync();
+        Assert.False(await verificationContext.QueueItems.AnyAsync(item => item.Id == queueItem.Id));
+        Assert.Equal(QueueItem.PriorityOption.Normal,
+            (await verificationContext.QueueItems.AsNoTracking()
+                .SingleAsync(item => item.Id == unrelatedQueueItem.Id)).Priority);
+    }
+
+    [Fact]
+    public async Task RemoveQueueItemsAsync_DeleteFailureRollsBackCancellationAndQueueDeletion()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var now = DateTimeOffset.UtcNow;
+        var queueItem = CreateQueueItem("Rollback", QueueItem.PriorityOption.Normal, DateTime.UtcNow);
+        dbContext.QueueItems.Add(queueItem);
+        await dbClient.EnqueueWorkerJobAsync(WorkerJob.JobKind.Download, queueItem.Id, 1, now);
+        await dbContext.SaveChangesAsync();
+        var coordinator = CreateCoordinator(dbContext);
+        var lease = Assert.Single(await coordinator.LeaseAsync(
+            WorkerJob.JobKind.Download, "worker-a", 1, now, CancellationToken.None));
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TRIGGER fail_queue_delete
+            BEFORE DELETE ON QueueItems
+            BEGIN
+                SELECT RAISE(ABORT, 'forced queue delete failure');
+            END;
+            """);
+
+        try
+        {
+            var exception = await Assert.ThrowsAnyAsync<Exception>(() =>
+                dbClient.RemoveQueueItemsAsync([queueItem.Id]));
+            Assert.Contains("forced queue delete failure", exception.ToString());
+
+            await using var verificationContext = await _fixture.CreateMigratedContextAsync();
+            Assert.True(await verificationContext.QueueItems.AsNoTracking()
+                .AnyAsync(item => item.Id == queueItem.Id));
+            var saved = await verificationContext.WorkerJobs.AsNoTracking().SingleAsync();
+            Assert.Equal(WorkerJob.JobStatus.Leased, saved.Status);
+            Assert.Null(saved.CancelRequestedAt);
+            Assert.Equal(lease.Identity.Owner, saved.LeaseOwner);
+            Assert.Equal(lease.Identity.Token, saved.LeaseToken);
+            Assert.Equal(lease.Identity.Generation, saved.LeaseGeneration);
+        }
+        finally
+        {
+            await dbContext.Database.ExecuteSqlRawAsync("DROP TRIGGER IF EXISTS fail_queue_delete");
+        }
     }
 
     [Fact]

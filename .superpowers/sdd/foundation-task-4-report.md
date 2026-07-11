@@ -310,3 +310,85 @@ Passed: 623, Failed: 0, Skipped: 0, Total: 623
 ### Concerns
 
 - No blocking concerns remain. PostgreSQL advisory-lock behavior, forced retry evidence, same-lane capacity, distinct candidates, and cross-lane independence are all exercised against the supplied live database.
+
+## Final Atomic Queue Removal Fix
+
+### Status
+
+Closed the remaining independent-commit finding in the real queue-removal path. Worker cancellation/terminalization and queue-row deletion now commit in one transaction before the local worker CTS is cancelled.
+
+### RED Evidence
+
+```bash
+dotnet test backend.Tests/backend.Tests.csproj \
+  --filter "FullyQualifiedName~ActiveQueueRemoval|FullyQualifiedName~RemoveQueueItemsAsync_DeleteFailure" \
+  --no-restore
+```
+
+Initial result: 0 passed, 2 failed, 0 skipped. The injected SQLite delete trigger left `CancelRequestedAt` committed on the leased worker job, and QueueManager's broad `SaveChangesAsync` persisted an unrelated tracked priority change.
+
+### Implementation
+
+- `DavDatabaseClient.RemoveQueueItemsAsync` now wraps the existing single atomic worker-job `ExecuteUpdateAsync` and queue `ExecuteDeleteAsync` in one serializable EF transaction.
+- The existing bounded, cancellation-aware SQLite busy retry wraps the entire transaction attempt. PostgreSQL uses the same provider-neutral transaction path without SQLite retry classification.
+- Every in-transaction failure attempts rollback with a non-cancelled token; `await using` disposes the transaction even if rollback fails. Matching tracked worker entries are repaired after a successful rollback without saving or clearing unrelated tracked changes.
+- Matching worker entries are reloaded inside the transaction and commit is the final operation, so no cancellable database work can fail after a successful commit.
+- QueueManager no longer calls broad `SaveChangesAsync`; it cancels local CTS instances only after the atomic database method returns.
+- The success test's synchronous CTS callback proves both `CancelRequestedAt` visibility and queue-row absence before authenticated cancellation acknowledgement. It also proves an unrelated tracked queue mutation is not persisted.
+- The SQLite trigger failure-injection test proves delete failure preserves the queue row and the original leased worker status, null cancellation request, owner, token, and generation.
+
+### GREEN Evidence
+
+Focused queue cancellation and rollback:
+
+```bash
+dotnet test backend.Tests/backend.Tests.csproj \
+  --filter "FullyQualifiedName~WorkerJobLeaseTests.ActiveQueueRemoval|FullyQualifiedName~WorkerJobLeaseTests.RemoveQueueItemsAsync|FullyQualifiedName~WorkerJobLeaseTests.CancelWorkerJobsAsync|FullyQualifiedName~WorkerJobLeaseTests.CancelledDownloadWorker" \
+  --no-restore
+```
+
+```text
+Passed: 5, Failed: 0, Skipped: 0, Total: 5
+```
+
+Coordinator, queue, and health focused set:
+
+```bash
+dotnet test backend.Tests/backend.Tests.csproj \
+  --filter "FullyQualifiedName~DatabaseWorkerJobCoordinatorTests|FullyQualifiedName~WorkerJobLeaseTests|FullyQualifiedName~QueueProcessingLoopTests|FullyQualifiedName~HealthCheckRepairPolicyTests" \
+  --no-restore
+```
+
+```text
+Passed: 107, Failed: 0, Skipped: 0, Total: 107
+```
+
+Live PostgreSQL coordinator and migration set:
+
+```bash
+NZBDAV_TEST_POSTGRES_CONNECTION_STRING='Host=localhost;Port=55434;Database=nzbdav;Username=nzbdav;Password=nzbdav' \
+  dotnet test backend.Tests/backend.Tests.csproj \
+  --filter "FullyQualifiedName~DatabaseWorkerJobCoordinatorPostgreSqlTests|FullyQualifiedName~WorkerJobLeasePostgreSqlMigrationTests" \
+  --no-restore
+```
+
+```text
+Passed: 4, Failed: 0, Skipped: 0, Total: 4
+```
+
+Complete backend suite with `NZBDAV_TEST_POSTGRES_CONNECTION_STRING` set:
+
+```bash
+NZBDAV_TEST_POSTGRES_CONNECTION_STRING='Host=localhost;Port=55434;Database=nzbdav;Username=nzbdav;Password=nzbdav' \
+  dotnet test backend.Tests/backend.Tests.csproj --no-restore
+```
+
+```text
+Passed: 624, Failed: 0, Skipped: 0, Total: 624
+```
+
+`git diff --check`: clean.
+
+### Concerns
+
+- No blocking concerns remain. The production removal transaction is provider-neutral; only SQLite receives its established busy retry. PostgreSQL transaction and migration behavior remains covered by the zero-skip live set.
