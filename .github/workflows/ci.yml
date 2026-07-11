@@ -42,6 +42,8 @@ jobs:
         run: dotnet list backend.Tests/backend.Tests.csproj package --vulnerable --include-transitive
 
       - name: Test backend
+        env:
+          NZBDAV_TEST_POSTGRES_CONNECTION_STRING: Host=localhost;Port=55432;Database=nzbdav;Username=nzbdav;Password=nzbdav
         run: dotnet test backend.Tests/backend.Tests.csproj --configuration Release --no-restore
 
       - name: Smoke test PostgreSQL migrations

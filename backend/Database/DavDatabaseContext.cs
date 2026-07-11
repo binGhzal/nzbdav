@@ -20,6 +20,7 @@ public sealed class DavDatabaseContext : DbContext
 {
     private const int SqliteBusy = 5;
     private const int SqliteLocked = 6;
+    private const int WorkerJobJsonMaxUtf8Bytes = 16 * 1024;
 
     public DavDatabaseContext() : base(CreateOptions())
     {
@@ -1292,6 +1293,8 @@ public sealed class DavDatabaseContext : DbContext
     {
         try
         {
+            ValidateWorkerJobJsonSizes();
+
             foreach (var blobNzbFile in BlobNzbFiles)
                 BlobStore.WriteBlob(blobNzbFile.Id, blobNzbFile).GetAwaiter().GetResult();
             foreach (var blobRarFile in BlobRarFiles)
@@ -1325,6 +1328,8 @@ public sealed class DavDatabaseContext : DbContext
     {
         try
         {
+            ValidateWorkerJobJsonSizes();
+
             // save blobs to blob-store
             foreach (var blobNzbFile in BlobNzbFiles)
                 await BlobStore.WriteBlob(blobNzbFile.Id, blobNzbFile);
@@ -1354,6 +1359,25 @@ public sealed class DavDatabaseContext : DbContext
             // rethrow the exception
             throw;
         }
+    }
+
+    private void ValidateWorkerJobJsonSizes()
+    {
+        foreach (var workerJob in ChangeTracker.Entries<WorkerJob>()
+                     .Where(x => x.State is EntityState.Added or EntityState.Modified)
+                     .Select(x => x.Entity))
+        {
+            ValidateWorkerJobJsonSize(workerJob.ProgressJson, nameof(WorkerJob.ProgressJson));
+            ValidateWorkerJobJsonSize(workerJob.ResultJson, nameof(WorkerJob.ResultJson));
+        }
+    }
+
+    private static void ValidateWorkerJobJsonSize(string? value, string propertyName)
+    {
+        if (value is null || Encoding.UTF8.GetByteCount(value) <= WorkerJobJsonMaxUtf8Bytes) return;
+
+        throw new InvalidOperationException(
+            $"WorkerJob {propertyName} exceeds the {WorkerJobJsonMaxUtf8Bytes} UTF-8 byte limit.");
     }
 
     private void DeletePendingBlobWrites()

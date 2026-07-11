@@ -459,6 +459,57 @@ public sealed class WorkerJobLeaseTests
 
         Assert.Contains("IX_WorkerJobs_Kind_Status_Priority_AvailableAt_CreatedAt", indexNames);
         Assert.Contains("IX_WorkerJobs_Kind_Status_LeaseExpiresAt", indexNames);
+        Assert.Contains("IX_WorkerJobs_Status_LeaseExpiresAt_LeaseGeneration", indexNames);
+    }
+
+    [Theory]
+    [InlineData(nameof(WorkerJob.ProgressJson))]
+    [InlineData(nameof(WorkerJob.ResultJson))]
+    public async Task SaveChangesAsync_AcceptsWorkerJobJsonAtUtf8ByteLimit(string propertyName)
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var workerJob = CreateWorkerJob(WorkerJob.JobKind.Verify, WorkerJob.JobStatus.Pending, DateTimeOffset.UtcNow);
+        SetWorkerJobJson(workerJob, propertyName, new string('a', 16 * 1024));
+        dbContext.WorkerJobs.Add(workerJob);
+
+        await dbContext.SaveChangesAsync();
+
+        Assert.Single(await dbContext.WorkerJobs.AsNoTracking().ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(nameof(WorkerJob.ProgressJson))]
+    [InlineData(nameof(WorkerJob.ResultJson))]
+    public async Task SaveChanges_RejectsWorkerJobJsonOverUtf8ByteLimitBeforePersistence(string propertyName)
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var workerJob = CreateWorkerJob(WorkerJob.JobKind.Verify, WorkerJob.JobStatus.Pending, DateTimeOffset.UtcNow);
+        SetWorkerJobJson(workerJob, propertyName, new string('a', 16 * 1024 + 1));
+        dbContext.WorkerJobs.Add(workerJob);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => dbContext.SaveChanges());
+
+        Assert.Equal($"WorkerJob {propertyName} exceeds the 16384 UTF-8 byte limit.", exception.Message);
+        Assert.Empty(await dbContext.WorkerJobs.AsNoTracking().ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(nameof(WorkerJob.ProgressJson))]
+    [InlineData(nameof(WorkerJob.ResultJson))]
+    public async Task SaveChangesAsync_RejectsMultibyteWorkerJobJsonOverUtf8ByteLimit(string propertyName)
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var workerJob = CreateWorkerJob(WorkerJob.JobKind.Verify, WorkerJob.JobStatus.Pending, DateTimeOffset.UtcNow);
+        var value = new string('é', 8193);
+        Assert.True(value.Length <= 16 * 1024);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(value) > 16 * 1024);
+        SetWorkerJobJson(workerJob, propertyName, value);
+        dbContext.WorkerJobs.Add(workerJob);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => dbContext.SaveChangesAsync());
+
+        Assert.Equal($"WorkerJob {propertyName} exceeds the 16384 UTF-8 byte limit.", exception.Message);
+        Assert.Empty(await dbContext.WorkerJobs.AsNoTracking().ToListAsync());
     }
 
     [Fact]
@@ -491,6 +542,21 @@ public sealed class WorkerJobLeaseTests
         while (await reader.ReadAsync())
             columns.Add(reader.GetString(reader.GetOrdinal("name")));
         return columns;
+    }
+
+    private static void SetWorkerJobJson(WorkerJob workerJob, string propertyName, string value)
+    {
+        switch (propertyName)
+        {
+            case nameof(WorkerJob.ProgressJson):
+                workerJob.ProgressJson = value;
+                break;
+            case nameof(WorkerJob.ResultJson):
+                workerJob.ResultJson = value;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(propertyName), propertyName, null);
+        }
     }
 
     private static QueueItem CreateQueueItem
