@@ -832,15 +832,17 @@ git commit -m "feat: persist completed symlink import receipts"
 - Create: `backend/Database/Models/ArrRepairCommand.cs`
 - Create: `backend/Services/ManifestChangeService.cs`
 - Create: `backend/Services/ArrRepairCommandService.cs`
+- Create: `backend/Services/ArrRepairCommandDispatcherService.cs`
 - Create: `backend/Database/Migrations/20260711150000_Add-Control-Outboxes.cs`
 - Modify: `backend/Database/DavDatabaseContext.cs:1244-1305`
 - Modify: `backend/Database/DatabaseTransferService.cs`
 - Modify: `backend/Services/HealthCheckService.cs:1767-1940`
+- Modify: `backend/Program.cs`
 - Create: `backend.Tests/Services/ManifestChangeServiceTests.cs`
 - Create: `backend.Tests/Services/ArrRepairCommandServiceTests.cs`
 
 **Interfaces:**
-- Produces: ordered `ManifestChange.Sequence`, durable `ManifestConsumerCheckpoint`, durable `ArrRepairCommand`, and in-process dispatch services.
+- Produces: ordered `ManifestChange.Sequence`, durable `ManifestConsumerCheckpoint`, durable `ArrRepairCommand`, `ManifestChangeService.AppendSnapshotBoundaryAsync(string sha256, int itemCount, DateTimeOffset now, CancellationToken ct)`, and `ArrRepairCommandDispatcherService`.
 
 - [ ] **Step 1: Write atomicity and idempotency tests**
 
@@ -901,9 +903,15 @@ removed DAV items. Payloads contain complete immutable item metadata needed by
 the gateway plan; delete payloads contain ID, path, and prior revision.
 Use `ConsumerId` as the checkpoint primary key. Acknowledgements only move the
 sequence forward with a conditional update; duplicate or older acknowledgements
-are no-ops. Keep changes newer than the checkpoint and retain at least the most
-recent complete snapshot boundary so a reconnect can replay or request a full
-snapshot safely.
+are no-ops.
+
+`AppendSnapshotBoundaryAsync` appends a `snapshot-boundary` change containing
+the snapshot SHA-256 and item count after a complete snapshot has been written.
+Compaction computes the minimum acknowledged sequence across consumers, finds
+the newest boundary at or below that minimum, and deletes only older changes.
+It always retains that boundary and every newer change. With no consumer
+checkpoint or no eligible boundary, it deletes nothing. Add tests for reconnect
+from the retained boundary and for a lagging consumer preventing compaction.
 
 - [ ] **Step 4: Add durable ARR repair commands**
 
@@ -929,6 +937,14 @@ public sealed class ArrRepairCommand
 Use a unique index on `DeduplicationKey`. Implement `pending -> executing ->
 executed|retry|failed` with conditional updates.
 
+`ArrRepairCommandDispatcherService` is the only background executor. In `all`
+and later `control`, it polls every five seconds, conditionally leases at most
+20 available `pending`/`retry` rows by changing them to `executing`, and invokes
+`ArrRepairCommandService`. It recovers `executing` rows whose heartbeat is older
+than two minutes to `retry`. Cancellation stops new leases and does not convert
+in-flight ambiguous ARR outcomes to success. Register the dispatcher once in
+`Program`; separated roles remain rejected in this plan.
+
 - [ ] **Step 5: Move repair side effects behind the outbox**
 
 Change `HealthCheckService.Repair` to persist a repair command and leave the DAV
@@ -937,11 +953,13 @@ logic. Only after confirmed success does it transactionally record repair
 success and remove the DAV item. On ambiguous failure, query ARR state before
 issuing another command.
 
-- [ ] **Step 6: Include both tables in database transfer**
+- [ ] **Step 6: Include all three outbox tables in database transfer**
 
-Add ordered export/import/clear handling for changes and checkpoints and update
-row totals. A transfer must preserve `ManifestChange.Sequence` and checkpoint
-values.
+Add ordered export/import/clear handling for manifest changes, manifest consumer
+checkpoints, and ARR repair commands, and update row totals. A transfer must
+preserve `ManifestChange.Sequence`, checkpoint values, ARR command IDs, and
+retry state. Older version-1/version-2 snapshots default all three lists to
+empty.
 
 - [ ] **Step 7: Run repair, recovery, and transfer tests**
 
