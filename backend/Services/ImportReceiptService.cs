@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Npgsql;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -149,6 +150,62 @@ public sealed class ImportReceiptService(DavDatabaseContext dbContext)
             .ConfigureAwait(false);
     }
 
+    public async Task<int> MarkRemovedBatchAsync(
+        IReadOnlyCollection<Guid> historyItemIds,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        if (historyItemIds.Count == 0) return 0;
+
+        var ids = historyItemIds.Distinct().ToArray();
+        var idSet = ids.ToHashSet();
+        var trackedReceipts = dbContext.ChangeTracker.Entries<ImportReceipt>()
+            .Where(entry => idSet.Contains(entry.Entity.HistoryItemId)
+                            || (entry.State != EntityState.Added
+                                && idSet.Contains(entry.OriginalValues.GetValue<Guid>(
+                                    nameof(ImportReceipt.HistoryItemId)))))
+            .ToList();
+        ValidateTrackedReceipts(trackedReceipts);
+
+        var changed = await dbContext.ImportReceipts
+            .Where(x => ids.Contains(x.HistoryItemId) && x.State != ImportReceiptState.Removed)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.State, ImportReceiptState.Removed)
+                .SetProperty(x => x.UpdatedAt, now)
+                .SetProperty(x => x.RemovedAt, now)
+                .SetProperty(x => x.Detail, (string?)null), ct)
+            .ConfigureAwait(false);
+
+        if (trackedReceipts.Count == 0) return changed;
+
+        var durableReceipts = await dbContext.ImportReceipts
+            .AsNoTracking()
+            .Where(x => ids.Contains(x.HistoryItemId))
+            .ToDictionaryAsync(x => x.Id, ct)
+            .ConfigureAwait(false);
+        foreach (var entry in trackedReceipts)
+        {
+            if (entry.State == EntityState.Added)
+            {
+                entry.Entity.State = ImportReceiptState.Removed;
+                entry.Entity.UpdatedAt = now;
+                entry.Entity.RemovedAt = now;
+                entry.Entity.Detail = null;
+                continue;
+            }
+
+            if (!durableReceipts.TryGetValue(entry.Entity.Id, out var durable))
+            {
+                throw new DbUpdateConcurrencyException(
+                    $"Tracked import receipt '{entry.Entity.Id}' disappeared during history removal.");
+            }
+
+            ReconcileTerminalFields(entry, durable);
+        }
+
+        return changed;
+    }
+
     public Task<ImportReceiptResult> MarkNeedsReviewAsync(
         Guid davItemId,
         Guid historyItemId,
@@ -258,6 +315,47 @@ public sealed class ImportReceiptService(DavDatabaseContext dbContext)
                      .Where(x => x.Entity.HistoryItemId == historyItemId)
                      .ToList())
             entry.State = EntityState.Detached;
+    }
+
+    private static void ValidateTrackedReceipts(IReadOnlyCollection<EntityEntry<ImportReceipt>> entries)
+    {
+        foreach (var entry in entries)
+        {
+            if (entry.State == EntityState.Deleted)
+            {
+                throw new InvalidOperationException(
+                    "Cannot remove history while a matching import receipt is tracked as Deleted.");
+            }
+
+            if (entry.State == EntityState.Added) continue;
+
+            var originalHistoryItemId = entry.OriginalValues.GetValue<Guid>(
+                nameof(ImportReceipt.HistoryItemId));
+            var originalDavItemId = entry.OriginalValues.GetValue<Guid>(nameof(ImportReceipt.DavItemId));
+            if (entry.Entity.HistoryItemId != originalHistoryItemId
+                || entry.Entity.DavItemId != originalDavItemId)
+            {
+                throw new InvalidOperationException(
+                    "Cannot remove history while a matching import receipt identity has pending changes.");
+            }
+        }
+    }
+
+    private static void ReconcileTerminalFields(
+        EntityEntry<ImportReceipt> entry,
+        ImportReceipt durable)
+    {
+        AcceptDurableValue(entry.Property(x => x.State), durable.State);
+        AcceptDurableValue(entry.Property(x => x.UpdatedAt), durable.UpdatedAt);
+        AcceptDurableValue(entry.Property(x => x.RemovedAt), durable.RemovedAt);
+        AcceptDurableValue(entry.Property(x => x.Detail), durable.Detail);
+    }
+
+    private static void AcceptDurableValue<T>(PropertyEntry<ImportReceipt, T> property, T value)
+    {
+        property.CurrentValue = value;
+        property.OriginalValue = value;
+        property.IsModified = false;
     }
 
     private void DetachTrackedReceipts(Guid davItemId, Guid historyItemId)

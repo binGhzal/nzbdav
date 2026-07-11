@@ -173,6 +173,52 @@ public sealed class GetHistoryControllerTests
     }
 
     [Fact]
+    public async Task RemoveAll_BatchesReceiptTerminalizationIntoBoundedCommands()
+    {
+        const int itemCount = 1201;
+        var interceptor = new CountingCommandInterceptor(commandText =>
+            commandText.Contains("UPDATE \"ImportReceipts\"", StringComparison.OrdinalIgnoreCase));
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .AddInterceptors(interceptor)
+            .Options;
+        var historyIds = Enumerable.Range(0, itemCount).Select(_ => Guid.NewGuid()).ToArray();
+        await using (var setup = new DavDatabaseContext(options))
+        {
+            await setup.Database.EnsureCreatedAsync();
+            setup.HistoryItems.AddRange(historyIds.Select(CreateCompletedHistory));
+            setup.ImportReceipts.AddRange(historyIds.Select(historyId =>
+                CreateReceipt(Guid.NewGuid(), historyId, ImportReceiptState.Imported)));
+            await setup.SaveChangesAsync();
+        }
+        interceptor.Reset();
+        await using (var removeContext = new DavDatabaseContext(options))
+        {
+            var httpContext = CreateHttpContext("?value=all");
+            var request = await RemoveFromHistoryRequest.New(httpContext);
+            var controller = new RemoveFromHistoryController(
+                httpContext,
+                new DavDatabaseClient(removeContext),
+                CreateConfigManager(),
+                new WebsocketManager());
+
+            var response = await controller.RemoveFromHistory(request);
+
+            Assert.True(response.Status);
+        }
+
+        Assert.Equal(3, interceptor.Count);
+        await using var assertionContext = new DavDatabaseContext(options);
+        Assert.Empty(await assertionContext.HistoryItems.Where(x => historyIds.Contains(x.Id)).ToListAsync());
+        Assert.Equal(
+            itemCount,
+            await assertionContext.ImportReceipts.CountAsync(x =>
+                historyIds.Contains(x.HistoryItemId) && x.State == ImportReceiptState.Removed));
+    }
+
+    [Fact]
     public async Task GetHistory_HidesCompletedRowsWithActivePostDownloadVerifyJobs()
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
@@ -369,6 +415,31 @@ public sealed class GetHistoryControllerTests
         return configManager;
     }
 
+    private static HistoryItem CreateCompletedHistory(Guid historyId) => new()
+    {
+        Id = historyId,
+        CreatedAt = DateTime.UtcNow,
+        FileName = $"{historyId}.nzb",
+        JobName = historyId.ToString(),
+        Category = "movies",
+        DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+        TotalSegmentBytes = 1024,
+        DownloadTimeSeconds = 1
+    };
+
+    private static ImportReceipt CreateReceipt(
+        Guid davItemId,
+        Guid historyId,
+        ImportReceiptState state) => new()
+    {
+        Id = Guid.NewGuid(),
+        DavItemId = davItemId,
+        HistoryItemId = historyId,
+        State = state,
+        CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+        UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+    };
+
     private static DefaultHttpContext CreateHttpContext(string query = "?limit=10")
     {
         var context = new DefaultHttpContext();
@@ -425,6 +496,25 @@ public sealed class GetHistoryControllerTests
             return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
         }
 
+        public override InterceptionResult<int> NonQueryExecuting(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result)
+        {
+            CountIfMatched(command);
+            return base.NonQueryExecuting(command, eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            CountIfMatched(command);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
         private void CountIfMatched(DbCommand command)
         {
             if (predicate(command.CommandText))
@@ -441,4 +531,5 @@ public sealed class GetHistoryControllerTests
             ValueTask.FromException<InterceptionResult<int>>(
                 new DbUpdateException("forced history transaction failure"));
     }
+
 }

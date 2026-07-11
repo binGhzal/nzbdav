@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.Data.Common;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
@@ -17,7 +18,7 @@ public sealed class ImportReceiptConcurrencyTests
             var now = DateTimeOffset.UtcNow;
             var receipt = CreateReceipt(ImportReceiptState.Available, now);
             await SeedAsync(options, receipt);
-            var barrier = new ReceiptSaveBarrier(2);
+            var barrier = new ReceiptCasCommandBarrier(2);
             var concurrentOptions = AddInterceptor(options, barrier);
             await using var firstContext = new DavDatabaseContext(concurrentOptions);
             await using var secondContext = new DavDatabaseContext(concurrentOptions);
@@ -32,6 +33,7 @@ public sealed class ImportReceiptConcurrencyTests
 
             Assert.Single(results, x => x.Changed);
             Assert.All(results, x => Assert.Equal(ImportReceiptState.UnlinkClaimed, x.State));
+            Assert.Equal(2, barrier.Arrivals);
         });
     }
 
@@ -43,7 +45,7 @@ public sealed class ImportReceiptConcurrencyTests
             var now = DateTimeOffset.UtcNow;
             var davItemId = Guid.NewGuid();
             var historyItemId = Guid.NewGuid();
-            var barrier = new ReceiptSaveBarrier(2);
+            var barrier = new ReceiptInsertSaveBarrier(2);
             var concurrentOptions = AddInterceptor(options, barrier);
             await using var firstContext = new DavDatabaseContext(concurrentOptions);
             await using var secondContext = new DavDatabaseContext(concurrentOptions);
@@ -224,7 +226,31 @@ public sealed class ImportReceiptConcurrencyTests
         UpdatedAt = now
     };
 
-    private sealed class ReceiptSaveBarrier(int participants) : SaveChangesInterceptor
+    private sealed class ReceiptCasCommandBarrier(int participants) : DbCommandInterceptor
+    {
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _arrivals;
+
+        public int Arrivals => Volatile.Read(ref _arrivals);
+
+        public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (!command.CommandText.Contains("UPDATE", StringComparison.OrdinalIgnoreCase)
+                || !command.CommandText.Contains("ImportReceipts", StringComparison.OrdinalIgnoreCase))
+                return result;
+
+            if (Interlocked.Increment(ref _arrivals) >= participants)
+                _release.TrySetResult();
+            await _release.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            return result;
+        }
+    }
+
+    private sealed class ReceiptInsertSaveBarrier(int participants) : SaveChangesInterceptor
     {
         private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _arrivals;
@@ -240,7 +266,7 @@ public sealed class ImportReceiptConcurrencyTests
 
             if (Interlocked.Increment(ref _arrivals) >= participants)
                 _release.TrySetResult();
-            await _release.Task.WaitAsync(cancellationToken);
+            await _release.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
             return result;
         }
     }

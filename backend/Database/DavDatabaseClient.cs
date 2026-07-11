@@ -15,6 +15,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
 {
     private const int MaxWorkerJobErrorLength = 1024;
     private const int MaxRepairRunMessageLength = 1024;
+    private const int HistoryMutationBatchSize = 500;
 
     public DavDatabaseContext Ctx => ctx;
 
@@ -688,39 +689,40 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     public async Task RemoveHistoryItemsAsync(List<Guid> ids, bool deleteFiles, CancellationToken ct = default)
     {
         var receiptService = new ImportReceiptService(Ctx);
-        foreach (var historyItemId in ids)
+        var now = DateTimeOffset.UtcNow;
+        foreach (var idBatch in ids.Distinct().Chunk(HistoryMutationBatchSize))
         {
             await receiptService
-                .MarkRemovedAsync(historyItemId, DateTimeOffset.UtcNow, ct)
+                .MarkRemovedBatchAsync(idBatch, now, ct)
+                .ConfigureAwait(false);
+
+            if (deleteFiles)
+            {
+                var results = await (
+                    from h in Ctx.HistoryItems
+                    where idBatch.Contains(h.Id)
+                    join d in Ctx.Items on h.DownloadDirId equals d.Id into items
+                    from d in items.DefaultIfEmpty()
+                    select new { HistoryItem = h, DavItem = d }
+                ).ToListAsync(ct).ConfigureAwait(false);
+
+                var historyItems = results.Select(r => r.HistoryItem).ToList();
+                var davItems = results.Where(r => r.DavItem != null).Select(r => r.DavItem!).ToList();
+                Ctx.Items.RemoveRange(davItems);
+                Ctx.HistoryItems.RemoveRange(historyItems);
+                await AddMissingHistoryCleanupItemsAsync(historyItems.Select(x => x.Id).ToList(), deleteFiles, ct)
+                    .ConfigureAwait(false);
+                continue;
+            }
+
+            var existingHistoryItems = await Ctx.HistoryItems
+                .Where(x => idBatch.Contains(x.Id))
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+            Ctx.HistoryItems.RemoveRange(existingHistoryItems);
+            await AddMissingHistoryCleanupItemsAsync(existingHistoryItems.Select(x => x.Id).ToList(), deleteFiles, ct)
                 .ConfigureAwait(false);
         }
-
-        if (deleteFiles)
-        {
-            var results = await (
-                from h in Ctx.HistoryItems
-                where ids.Contains(h.Id)
-                join d in Ctx.Items on h.DownloadDirId equals d.Id into items
-                from d in items.DefaultIfEmpty()
-                select new { HistoryItem = h, DavItem = d }
-            ).ToListAsync(ct).ConfigureAwait(false);
-
-            var historyItems = results.Select(r => r.HistoryItem).ToList();
-            var davItems = results.Where(r => r.DavItem != null).Select(r => r.DavItem!).ToList();
-            Ctx.Items.RemoveRange(davItems);
-            Ctx.HistoryItems.RemoveRange(historyItems);
-            await AddMissingHistoryCleanupItemsAsync(historyItems.Select(x => x.Id).ToList(), deleteFiles, ct)
-                .ConfigureAwait(false);
-            return;
-        }
-
-        var existingHistoryItems = await Ctx.HistoryItems
-            .Where(x => ids.Contains(x.Id))
-            .ToListAsync(ct)
-            .ConfigureAwait(false);
-        Ctx.HistoryItems.RemoveRange(existingHistoryItems);
-        await AddMissingHistoryCleanupItemsAsync(existingHistoryItems.Select(x => x.Id).ToList(), deleteFiles, ct)
-            .ConfigureAwait(false);
     }
 
     private async Task AddMissingHistoryCleanupItemsAsync(List<Guid> ids, bool deleteFiles, CancellationToken ct)
