@@ -2,36 +2,42 @@
 
 ## Set up your system
 
-The project consists of two sub projects: frontend and backend
-Both share some necessary environment variables.
+The project consists of frontend and backend projects. Both share some
+necessary environment variables.
 
 **Ensure that frontend and backend share the same environment configuration!**
 
 Environment variables:
 
+Run this block from the repository root so `CONFIG_PATH` resolves inside the
+ignored backend build-output tree:
+
 ```bash
-export CONFIG_PATH=/where/to/create/database/
+export CONFIG_PATH="$PWD/backend/bin/dev-config/"
 export FRONTEND_BACKEND_API_KEY=$(head -c 32 /dev/urandom | hexdump -ve '1/1 "%.2x"')
 export BACKEND_URL=http://localhost:5000
 ```
 
-You need some packages in order to run the project:
+Use the repository-declared tool families:
 
-- dotnet-sdk
-- aspnet-runtime
-- nodejs
-- npm
+- .NET SDK 10 and .NET/ASP.NET Runtime 10
+- Node.js 24 and npm 11, as declared by `.nvmrc` and `frontend/package.json`
+- Python 3 for repository test tooling
+- Docker only for the complete container and disposable PostgreSQL gates
 
 Example installation for Arch based systems:
 
 ```bash
-sudo pacman -S dotnet-sdk aspnet-runtime nodejs npm
+sudo pacman -S dotnet-sdk aspnet-runtime nodejs npm python docker
 ```
 
 ## Build / run backend
 
 ```bash
 cd backend
+
+# Restore the shared backend/test dependency graph first
+dotnet restore ../backend.Tests/backend.Tests.csproj
 
 # Build (release)
 dotnet publish -c Release -o ./publish
@@ -50,7 +56,7 @@ mkdir -p $CONFIG_PATH
 cd frontend
 
 # Install dependencies
-npm install
+npm ci
 
 # Run / serve frontend with hot module replacement
 npm run dev
@@ -76,7 +82,7 @@ Run the container:
 
 ```bash
 docker run --rm -it \
-  -v /path/to/nzbdav/config:/config \
+  -v nzbdav-config:/config \
   -e PUID=1000 \
   -e PGID=1000 \
   -p 3333:3000 \
@@ -92,11 +98,15 @@ services:
     ports:
       - 3333:3000
     volumes:
-      - /path/to/nzbdav/config:/config
-      - /path/to/nzbdav/data:/data
+      - nzbdav-config:/config
+      - nzbdav-data:/data
     environment:
       - PUID=1000
       - PGID=1000
+
+volumes:
+  nzbdav-config:
+  nzbdav-data:
 ```
 
 Build and run container:
@@ -105,11 +115,24 @@ Build and run container:
 docker compose up
 ```
 
-## Contributing
+## Verify before review
 
-You might check types before creating a PR:
+Begin with the narrow tests for the code changed. The repository's reproducible
+local non-service baseline is:
 
 ```bash
-cd frontend
-npm run typecheck
+dotnet build backend/NzbWebDAV.csproj --configuration Release --no-restore -warnaserror
+dotnet test backend.Tests/backend.Tests.csproj --configuration Release --no-restore
+python3 -m unittest discover -s tests -p 'test_*.py'
+npm --prefix frontend run typecheck
+npm --prefix frontend run test
+npm --prefix frontend run build
+npm --prefix frontend run build:server
+git diff --check
 ```
+
+PostgreSQL integration requires a uniquely owned disposable PostgreSQL 16.14
+target and the `NZBDAV_TEST_POSTGRES_CONNECTION_STRING`,
+`NZBDAV_REQUIRE_POSTGRES_TESTS`, `NZBDAV_LEGACY_TIMESTAMP_TIMEZONE`, and `TZ`
+variable names. Never point tests at an existing database. Follow the active
+plan and CI workflow for exact values and ownership rules.
