@@ -313,8 +313,10 @@ V1 does not support unauthenticated WebDAV. `DISABLE_WEBDAV_AUTH=true` now fails
 startup with an actionable diagnostic, NWebDav authentication is unconditionally
 required, and the bypass branches have been removed. Focused auth tests pass
 `8/8`; Release warning-as-error build and edited-file formatter checks exit
-zero. Keep the combined backend regression pending until the Task 2B key-parser
-slice lands, then rerun once across both changes.
+zero. The Task 2B key-parser slice has landed: its affected gate passed `91/91`
+before review characterization and now passes `96/96`. A complete combined
+backend regression across the WebDAV-auth and carrier changes has not run and
+remains pending and unsealed.
 
 **Verified import and signed-media decision (2026-07-17):** V1 is hard
 symlink-only. Remove the `strm` and `both` import settings and every STRM
@@ -355,18 +357,21 @@ Pinned client evidence:
   files. Its [`GET` request builder](https://github.com/Viren070/AIOStreams/blob/ccc25bc65d3abbc9d0cd61c547b2725bfbe20fe0/packages/core/src/debrid/usenet-stream-base.ts#L132-L173)
   and [`addurl`/`history` callers](https://github.com/Viren070/AIOStreams/blob/ccc25bc65d3abbc9d0cd61c547b2725bfbe20fe0/packages/core/src/debrid/usenet-stream-base.ts#L273-L347)
   send the same key in lowercase query `apikey` and header `x-api-key`.
-- Sonarr `v4.0.19.2979` uses one lowercase query key in its
-  [request builder](https://github.com/Sonarr/Sonarr/blob/v4.0.19.2979/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L46-L53)
-  and keeps that key in the query for
-  [multipart `addfile`](https://github.com/Sonarr/Sonarr/blob/v4.0.19.2979/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L162-L184).
-  Radarr `v6.3.0.10514` has the byte-identical
-  [request](https://github.com/Radarr/Radarr/blob/v6.3.0.10514/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L46-L53)
-  and [`addfile`](https://github.com/Radarr/Radarr/blob/v6.3.0.10514/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L162-L184)
-  logic; Lidarr `v3.1.0.4875` has the byte-identical
-  [request](https://github.com/Lidarr/Lidarr/blob/v3.1.0.4875/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L46-L53)
-  and [`addfile`](https://github.com/Lidarr/Lidarr/blob/v3.1.0.4875/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L162-L184)
-  logic.
-- [SABnzbd 5.0.4 documents lowercase query `apikey`](https://sabnzbd.org/wiki/advanced/api).
+- Sonarr `v4.0.19.2979` uses one lowercase query key in
+  [`BuildRequest`](https://github.com/Sonarr/Sonarr/blob/v4.0.19.2979/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L162-L184).
+  Its multipart
+  [`DownloadNzb`](https://github.com/Sonarr/Sonarr/blob/v4.0.19.2979/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L46-L53)
+  keeps the key in that request query and puts the NZB in form field `name`.
+  Radarr `v6.3.0.10514` and Lidarr `v3.1.0.4875` have byte-identical
+  `BuildRequest`/lowercase-query logic
+  ([Radarr](https://github.com/Radarr/Radarr/blob/v6.3.0.10514/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L162-L184),
+  [Lidarr](https://github.com/Lidarr/Lidarr/blob/v3.1.0.4875/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L162-L184)).
+  Their multipart category properties differ
+  ([Radarr](https://github.com/Radarr/Radarr/blob/v6.3.0.10514/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L46-L53),
+  [Lidarr](https://github.com/Lidarr/Lidarr/blob/v3.1.0.4875/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L46-L53)),
+  but carrier placement is structurally equivalent: the key stays in the
+  `BuildRequest` query and the upload form contains the NZB as `name`.
+- [SABnzbd 5.0.4 documents lowercase query `apikey`](https://sabnzbd.org/wiki/configuration/5.0/api).
   Form support remains a Pinrail compatibility carrier; no researched current
   client requires a form duplicate. rclone `v1.74.4` uses WebDAV Basic
   `Authorization` and does not consume this parser.
@@ -376,9 +381,13 @@ same-value header-plus-form, query-plus-form, and all-three-location cases
 against unchanged production code (`3` failed, `26` passed). Minimal GREEN
 passed the focused class `29/29` and the parser/SAB/ARR/add-file affected gate
 `91/91`, both with zero skips. Production and test Release builds passed with
-warnings as errors, and scoped formatter verification passed. This freezes the
-backend parser only; production proxy work remains blocked on the RED
-route/method/credential matrix and independent review.
+warnings as errors, and scoped formatter verification passed. Review
+characterization for missing, 512-character, and mixed-case-header boundaries
+now passes focused `34/34` and affected `96/96`, with no production-code change.
+The first independent specification, quality, and bounded-security reviews
+found no P0/P1/P2 and no functional parser defect. The backend parser remains
+unsealed pending review-fix re-review and exact remote CI; production proxy work
+remains blocked on the RED route/method/credential matrix.
 
 **Files:**
 

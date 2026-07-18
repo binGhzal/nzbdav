@@ -2,9 +2,10 @@
 
 ## Authority and scope
 
-Work only in `/opt/pinrail` on the checkout whose task base is
-`df41e0c15504ad87fb2aaa211c59700a26917b7c`. Read `AGENTS.md`, `HANDOFF.md`,
-Task 2 of the canonical V1 plan, and the governing design before editing.
+Work only from this repository root, represented as `.`, on the checkout whose
+task base is `df41e0c15504ad87fb2aaa211c59700a26917b7c`. Read `AGENTS.md`,
+`HANDOFF.md`, Task 2 of the canonical V1 plan, and the governing design before
+editing.
 
 This slice is deliberately narrower than the complete Task 2B proxy work. It
 freezes the backend public/protocol API-key parser and reconciles the canonical
@@ -24,9 +25,11 @@ containers, databases, Git refs, or production state.
 2. Sonarr `v4.0.19.2979` (`4ff1b780010d3d9ec76a4864dce96b6494e9caea`),
    Radarr `v6.3.0.10514` (`7827e5368947f158ad06f757334f5cde6c406411`),
    and Lidarr `v3.1.0.4875` (`350860e524029b7fb4165ed14fbcabb11217ada2`)
-   have byte-identical SAB request logic: exactly one lowercase query
-   `apikey`. Multipart `addfile` puts only the NZB in form field `name`; the key
-   remains in the query. No API-key header or camel-case key is emitted.
+   have byte-identical `BuildRequest` lowercase query-carrier logic: exactly
+   one lowercase query `apikey`. Their multipart `DownloadNzb` category
+   properties differ, but carrier placement is structurally equivalent: the
+   key remains in the query and the NZB is in form field `name`. No API-key
+   header or camel-case key is emitted.
 3. SABnzbd `5.0.4` (`128e0d03d7cc61af7e73b18376b880219fbc3596`)
    documents lowercase query `apikey`. Form support remains a Pinrail
    compatibility carrier already present in the frozen candidate contract; no
@@ -38,10 +41,10 @@ Primary evidence links belong in the canonical documentation update:
 
 - `https://github.com/Viren070/AIOStreams/blob/ccc25bc65d3abbc9d0cd61c547b2725bfbe20fe0/packages/core/src/debrid/usenet-stream-base.ts#L132-L173`
 - `https://github.com/Viren070/AIOStreams/blob/ccc25bc65d3abbc9d0cd61c547b2725bfbe20fe0/packages/core/src/debrid/usenet-stream-base.ts#L273-L347`
-- `https://github.com/Sonarr/Sonarr/blob/v4.0.19.2979/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L46-L53`
 - `https://github.com/Sonarr/Sonarr/blob/v4.0.19.2979/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L162-L184`
+- `https://github.com/Sonarr/Sonarr/blob/v4.0.19.2979/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L46-L53`
 - equivalent pinned Radarr and Lidarr sources, plus
-  `https://sabnzbd.org/wiki/advanced/api`.
+  `https://sabnzbd.org/wiki/configuration/5.0/api`.
 
 ## Exact contract to freeze
 

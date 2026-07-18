@@ -45,6 +45,15 @@ public sealed class HttpContextExtensionsTests
     }
 
     [Fact]
+    public void GetProtocolRequestApiKey_AcceptsMixedCaseHeaderName()
+    {
+        var context = Context();
+        context.Request.Headers["X-Api-Key"] = "public-key";
+
+        Assert.Equal("public-key", context.GetProtocolRequestApiKey());
+    }
+
+    [Fact]
     public void GetProtocolRequestApiKey_AcceptsLowercaseQueryOnlyForArrClients()
     {
         var context = Context();
@@ -70,6 +79,12 @@ public sealed class HttpContextExtensionsTests
         context.Request.QueryString = new QueryString("?mode=queue&apikey=public-key");
 
         Assert.Equal("public-key", context.GetProtocolRequestApiKey());
+    }
+
+    [Fact]
+    public void GetProtocolRequestApiKey_ReturnsNullWhenCarrierIsMissing()
+    {
+        Assert.Null(Context().GetProtocolRequestApiKey());
     }
 
     [Theory]
@@ -192,6 +207,19 @@ public sealed class HttpContextExtensionsTests
         SetCarrier(context, carrier, "");
 
         Assert.Throws<BadHttpRequestException>(() => context.GetProtocolRequestApiKey());
+    }
+
+    [Theory]
+    [InlineData("header")]
+    [InlineData("query")]
+    [InlineData("form")]
+    public void GetProtocolRequestApiKey_AcceptsMaximumLengthCarrier(string carrier)
+    {
+        var context = Context();
+        var value = new string('a', 512);
+        SetCarrier(context, carrier, value);
+
+        Assert.Equal(value, context.GetProtocolRequestApiKey());
     }
 
     [Theory]

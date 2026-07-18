@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Content verification cutoff | 2026-07-18T20:51:53+00:00 |
+| Content verification cutoff | 2026-07-18T21:21:26+00:00 |
 | Handoff status | AUDITED WIP CHECKPOINT; V1 RELEASE NO-GO |
 | Repository | `pinrail` (NZBDav compatibility names remain until the post-freeze rebrand) |
 | Current branch | `pinrail/v1-backend-wip` |
@@ -13,9 +13,9 @@
 | Upstream | `https://github.com/nzbdav-dev/nzbdav.git` |
 | Default remote branch | `origin/main` |
 | Base and merge base | `origin/main` at merge base `86af7b816c496aea2654c438be7fa553b98bb91c` |
-| Current relation | Carrier-slice base `df41e0c15504ad87fb2aaa211c59700a26917b7c` matched `origin/pinrail/v1-backend-wip`; this signed slice is its direct child, 1 ahead of that remote branch and 204 ahead, 0 behind `upstream/main` |
-| Worktree | Clean after the signed carrier-contract slice. Ordinary ignored build/test outputs were refreshed, not staged or deleted. |
-| Durability boundary | All reviewed worktree source is tracked in the signed WIP checkpoint. It is safe for remote continuation only, not merge, deployment, image publication, or release. Private Phase 4 remains unreachable and post-V1. |
+| Current relation | Carrier implementation `5e5c94a21ad26e432fa10160bf955ee2756d76b6` is the direct child of base `df41e0c15504ad87fb2aaa211c59700a26917b7c`; the signed review-fix checkpoint is its direct child, 2 ahead of `origin/pinrail/v1-backend-wip` and 205 ahead, 0 behind `upstream/main` |
+| Worktree | Tracked files are clean after the signed review-fix checkpoint. The controller-generated review diff remains intentionally untracked; ordinary ignored build/test outputs were refreshed, not staged or deleted. |
+| Durability boundary | Review fixes are tracked in a signed WIP checkpoint but require independent re-review before push. This is not merge, deployment, image-publication, or release evidence. Private Phase 4 remains unreachable and post-V1. |
 | Canonical active plan | [V1 backend release implementation plan](docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md) |
 | Governing design | [V1 backend release design](docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md) |
 | Related pull request or issue | No pull request found for this branch by an authenticated read-only `gh pr view` query on 2026-07-16; no linked issue was identified from repository evidence |
@@ -144,12 +144,17 @@ and release-candidate gates pass.
 5. Continue Task 2, `Secure sessions, proxying, errors, and logs`. Do not begin
    readiness, lifecycle, rclone, frontend rebrand, or release-candidate work
    first.
-6. Task 2A and the backend carrier-parser slice are complete. Treat
+6. Task 2A is complete and the backend carrier-parser implementation is
+   committed, but the carrier slice remains unsealed. The first independent
+   specification, quality, and bounded-security reviews found no P0/P1/P2 or
+   functional parser defect; their documentation and characterization fixes are
+   applied in an unreviewed signed child. Treat
    `frontend/server/request-policy.ts` as an unsealed draft because production
-   does not import it. First exact next action: independently review the signed
-   carrier slice, then finish the route/method/WebSocket inventory and Task 2B
-   council synthesis before writing the RED proxy matrix. Do not wire
-   production proxy code first.
+   does not import it. First exact next action: independently re-review the
+   signed review-fix commit before push, then verify exact remote CI. After
+   acceptance, finish the route/method/WebSocket inventory and Task 2B council
+   synthesis before writing the RED proxy matrix. Do not wire production proxy
+   code first.
 7. Build the Task 2B RED matrix beside `frontend/server/*.test.ts`: anonymous,
    local-authenticated, trusted Authentik, untrusted source, wrong application,
    encoded/double-encoded separator, prefix-confusion, conflicting API-key, and
@@ -322,9 +327,10 @@ underlying UsenetSharp client at the cancellation boundary.
 **VERIFIED FACT:** Tasks 0-7 are `COMPLETE` in the reconciled plan. Current
 2026-07-16 pure regression ran 1,372 Transfer-v3 tests. Its 1,370 passes cover
 the completed foundations; the only two failures are new Task 8 structural
-tests. Historical focused counts and reviews remain recorded in the local
-progress ledger, but the canonical completion evidence required for continuation
-is reproduced in this handoff and the active plan.
+tests. Historical focused counts and reviews are reproduced in this handoff and
+the deferred Phase 4 plan; the old local Phase 4 progress/brief artifacts are
+absent. Canonical continuation remains governed only by `AGENTS.md`, this
+handoff, the active V1 plan, and the governing V1 design.
 
 Per-task implementation and evidence:
 
@@ -469,8 +475,8 @@ Do not interpret either plan's future task text as implemented behavior.
 | `docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md` | Created by this V1 pivot | Governing V1 design | Freezes Docker/SQLite/one-owner/clean-install boundary and release definition of done | Implement active plan | Six-seat council plus current executable evidence | Durable in the signed WIP checkpoint |
 | `docs/superpowers/plans/2026-07-14-nzbdav-transfer-v3-phase-4.md` | Tracked, modified by this V1 pivot | Deferred post-V1 plan | Preserves Tasks 0-7 and unsealed Task 8 evidence without governing continuation | Resolve catalog-memory finding post-V1 | Current source/tests and conflicting reviews | Planned behavior remains private and non-shipped |
 | `docs/superpowers/specs/2026-07-14-nzbdav-transfer-v3-phase-4-design.md` | Tracked, unchanged by this V1 pivot | Deferred Phase 4 design | Preserves the private PostgreSQL design and memory contract | Post-V1 only | Source/design comparison | Do not broaden runtime reachability |
-| `.superpowers/sdd/progress.md` | Pre-existing, locally excluded | Supplemental local execution ledger | Points to Phase 4 and records Task 8 failures/accounting repair | Optional local update after repair | Local file review | Deliberately noncanonical and not committed; no continuation step depends on it |
-| `.superpowers/sdd/phase4/task-8/task-8-brief.md` | Pre-existing, locally excluded | Supplemental task-scoped brief | Reconciled with six-argument admission and current gates | Optional local update after repair | Local file review | Deliberately noncanonical and not committed; no continuation step depends on it |
+| `.superpowers/sdd/progress.md` | Tracked, added by the carrier slice | Supplemental carrier execution ledger | Records the carrier base, RED/GREEN, review, and review-fix gate state | Re-review, push, and exact remote CI | Local evidence plus canonical-document reconciliation | Noncanonical; no continuation step depends on it |
+| `.superpowers/sdd/task-2-carrier-contract-brief.md` | Tracked, added by the carrier slice | Supplemental task-scoped brief | Freezes the narrow carrier contract, pinned evidence, scope, and TDD handback | Historical/supporting only after carrier re-review | Source review and canonical-document reconciliation | Noncanonical; canonical continuation remains in `AGENTS.md`, this handoff, the active plan, and design |
 
 ### Historical Task 8 implementation ledger, now deferred post-V1
 
@@ -597,7 +603,7 @@ CAS or destructive cleanup.
 | `AGENTS.md` | Created as Hermes project context/resume pointer and included in the authorized documentation commit |
 | Phase 4 plan | Reconciled statuses, Task 8 scope/interfaces/failures/next action and included in the authorized documentation commit |
 | Phase 4 design | Updated exact same-budget canonical-buffer admission lifecycle and included in the authorized documentation commit |
-| Local progress and Task 8 brief | Reconciled but deliberately left locally excluded, supplemental, and noncanonical |
+| Carrier progress and Task 2 carrier brief | Tracked as supplemental, noncanonical carrier evidence; historical local Phase 4 progress/brief artifacts are absent |
 | `CONTRIBUTING.md` | Updated declared runtimes and tracked verification surface, then included in the authorized documentation commit |
 | `README.md` | Reviewed, no Phase 4 change required |
 | `docs/setup-guide.md` | Reviewed, already correctly keeps SQLite supported and PostgreSQL disabled |
@@ -689,6 +695,10 @@ container.
 | 2026-07-18 | `dotnet format backend.Tests/backend.Tests.csproj --no-restore --verify-no-changes --include backend/Extensions/HttpContextExtensions.cs backend.Tests/Extensions/HttpContextExtensionsTests.cs` | `.` | PASS | 0 | Scoped formatter verification produced no changes or diagnostics | None |
 | 2026-07-18 | First documentation validation using Ruby | `.` | BLOCKED | unavailable | Ruby is not installed and the non-fail-fast shell continued; this was not accepted as evidence | Repeated with available Python under `set -euo pipefail` |
 | 2026-07-18 | Fail-fast relative-link, handoff-schema, carrier/CI consistency, stale-text, trailing-whitespace, and `git diff --check` gate | `.` | PASS | 0 | All edited documentation/code passed with no output | Rerun after the final ledger edit |
+| 2026-07-18 | Focused Release `HttpContextExtensionsTests` review-characterization gate | `.` | PASS | 0 | 34 passed, 0 failed, 0 skipped | Existing production passed; no RED or production change claimed |
+| 2026-07-18 | Same Release parser/SAB/ARR/add-file affected filter | `.` | PASS | 0 | 96 passed, 0 failed, 0 skipped | Complete combined backend regression remains pending and unsealed |
+| 2026-07-18 | Scoped test-file `dotnet format --verify-no-changes` | `.` | PASS | 0 | Exit 0 with no output or change | Warning-as-error build was not rerun because tests compiled and production did not change |
+| 2026-07-18 | Final relative-link, consistency, stale-local-path, review-artifact integrity, and `git diff --check` gates | `.` | PASS | 0 | All checks exited 0; controller review artifact remained byte-identical and untracked | Independent review-fix re-review and exact remote CI remain pending |
 
 The .NET commands refreshed only ordinary ignored build/test outputs. The final
 Git-visible set comparison found no generated path attributable to verification,
@@ -750,8 +760,8 @@ so nothing was cleaned. Documentation checks generated no files.
 - V1 WebDAV authentication is fail-closed. `DISABLE_WEBDAV_AUTH=true` now fails
   startup, NWebDav always requires authentication, focused tests pass `8/8`,
   and Release build/format gates are green. The carrier slice's affected gate
-  passed `91/91`; a complete backend regression was not run by this narrow
-  slice and remains unsealed.
+  passed `91/91` initially and `96/96` with review characterization; a complete
+  combined backend regression was not run and remains pending and unsealed.
 - Verified V1 import/media scope: hard symlink-only imports. Remove STRM/both
   settings and generation/recreation/conversion surfaces. Plex/ARR use mounted
   `/completed-symlinks` → `/.ids`; AIOStreams uses authenticated WebDAV; Dav
@@ -768,6 +778,11 @@ so nothing was cleaned. Documentation checks generated no files.
   Sonarr, Radarr, and Lidarr use one lowercase query key, SABnzbd documents it,
   and rclone uses WebDAV Basic authentication. Primary links and revisions are
   recorded in the active plan and governing design.
+- The first independent carrier specification, quality, and bounded-security
+  reviews found no P0/P1/P2 and no functional parser defect. Their
+  documentation and characterization fixes are committed without a production
+  change. Independent review-fix re-review and exact remote CI remain pending;
+  do not call the carrier slice sealed.
 - The adjacent ARR helper defect is GREEN locally, pending independent review.
   `/api/arr/validation` now returns only derived configured-app/search-mode/
   duplicate-policy fields and the helper no longer calls internal-only
@@ -783,9 +798,10 @@ so nothing was cleaned. Documentation checks generated no files.
   `SESSION_KEY_PREVIOUS` provides one-step rotation. Authentik mode requires
   trusted outpost source CIDRs and expected application metadata, and the app
   port must not be exposed as a browser-auth bypass.
-- Next action: independently review the signed carrier slice, finish the Task
-  2B council synthesis, then write the RED route/method/credential matrix
-  before any production proxy edit.
+- Next action: independently re-review the signed carrier review-fix commit
+  before push, verify exact remote CI after an accepted push, finish the Task 2B
+  council synthesis, then write the RED route/method/credential matrix before
+  any production proxy edit.
 
 ### 5. Liveness, public errors, and repair lifecycle
 
@@ -844,10 +860,10 @@ fixtures only.
 
 ## Exact next actions
 
-1. **Review the carrier slice.** Independently inspect the signed diff and
-   executable RED/GREEN evidence for fail-open behavior, secret leakage, and
-   exact adherence to the pinned client inventory. Do not push before that
-   review is resolved.
+1. **Re-review the carrier review-fix commit.** Independently inspect its exact
+   diff and executable evidence for fail-open behavior, secret leakage, source
+   accuracy, and adherence to the frozen contract. Do not push before that
+   re-review accepts the commit; verify exact remote CI after an accepted push.
 2. **Finish the wider independent review.** Read every completed Task 2B council report,
    bind it to the recorded file hashes, and synthesize consensus/conflicts. Do
    not treat pending or truncated reports as approvals.
@@ -929,9 +945,11 @@ Full rebrand remains deferred until the backend passes.
   their scopes exclude both files.
 - Phase 4 PostgreSQL results are post-V1 implementation evidence, not an
   unresolved V1 decision. Do not use an existing server.
-- Local `.superpowers/sdd/**` evidence remains deliberately excluded,
-  supplemental, and noncanonical. Canonical continuation depends only on
-  `AGENTS.md`, `HANDOFF.md`, the active V1 plan, and the V1 design.
+- Tracked `.superpowers/sdd/progress.md` and
+  `.superpowers/sdd/task-2-carrier-contract-brief.md` are supplemental and
+  noncanonical. Historical Phase 4 local progress/brief artifacts previously
+  described here are absent. Canonical continuation depends only on `AGENTS.md`,
+  `HANDOFF.md`, the active V1 plan, and the V1 design.
 - Current V1 documentation and executable implementation are durable on
   `pinrail/v1-backend-wip`. Continue there; never treat it as a release branch.
 
@@ -1426,6 +1444,9 @@ tests/test_runtime_release_contract.py
 tests/test_validate_trx_results.py
 ```
 
-`.superpowers/sdd/**` is absent from Appendix B because local
-`.git/info/exclude` excludes it. Those files existed before this documentation
-pass and are listed explicitly in the Changed-file ledger.
+Appendix B is the historical pre-edit untracked snapshot. The current tracked
+`.superpowers/sdd/progress.md` and
+`.superpowers/sdd/task-2-carrier-contract-brief.md` therefore do not appear in
+that snapshot; both are supplemental and listed in the Changed-file ledger.
+The older local Phase 4 progress/brief artifacts previously described here are
+absent.
