@@ -4,18 +4,18 @@
 
 | Field | Value |
 | --- | --- |
-| Content verification cutoff | 2026-07-17T19:59:38+04:00 |
-| Handoff status | V1 BACKEND IMPLEMENTATION READY; RELEASE NO-GO |
-| Repository | `nzbdav` |
-| Current branch | `codex/single-host-role-separation-design` |
+| Content verification cutoff | 2026-07-18T22:55:28+04:00 |
+| Handoff status | AUDITED WIP CHECKPOINT; V1 RELEASE NO-GO |
+| Repository | `pinrail` (NZBDav compatibility names remain until the post-freeze rebrand) |
+| Current branch | `pinrail/v1-backend-wip` |
 | Initial documentation baseline HEAD | `8c06d9caacd8c0d2ab5d69f47e3b230b75b16704`, HEAD immediately before authorized publication |
 | Initial handoff publication commit | The commit that first adds `AGENTS.md`. Resolve stably with `git log --diff-filter=A -1 --format=%H -- AGENTS.md` |
-| Upstream | No upstream configured |
+| Upstream | `https://github.com/nzbdav-dev/nzbdav.git` |
 | Default remote branch | `origin/main` |
 | Base and merge base | `origin/main` at merge base `86af7b816c496aea2654c438be7fa553b98bb91c` |
-| Initial publication relation | Direct child of the initial documentation baseline; 30 ahead, 0 behind `origin/main` immediately after publication |
-| Worktree | Dirty and shared. Current snapshot: 189 tracked modifications, 145 untracked files, and 0 staged files. Current authorized worktree changes include the V1 documentation pivot, Task 1 timeout/cancellation/cleanup repairs, and Task 2A session/Authen­tik/container-contract hardening; preserve every unexplained difference. |
-| Durability boundary | The initial handoff publication commit is `HEAD` and remains the immutable anchor. Current V1 documentation and implementation remain worktree-only until a separate commit is authorized. Private Phase 4 implementation remains preserved-worktree-only. |
+| Current relation | Checkpoint `fb03b0e6a247dfeaff9e9965f045a1fb1e6a11cc` is an ancestor; this handoff refresh makes the branch 32 ahead, 0 behind `origin/main` |
+| Worktree | Clean after the signed checkpoint. Ignored env, Finder, bytecode, TRX, and local artifact files were excluded, not deleted. |
+| Durability boundary | All reviewed worktree source is tracked in the signed WIP checkpoint. It is safe for remote continuation only, not merge, deployment, image publication, or release. Private Phase 4 remains unreachable and post-V1. |
 | Canonical active plan | [V1 backend release implementation plan](docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md) |
 | Governing design | [V1 backend release design](docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md) |
 | Related pull request or issue | No pull request found for this branch by an authenticated read-only `gh pr view` query on 2026-07-16; no linked issue was identified from repository evidence |
@@ -46,6 +46,67 @@ materialization in `PostgreSqlPhysicalCatalogContract`. Because the green
 reviews did not address that path, Task 8 is not sealed; the whole Phase 4 plan
 is deferred post-V1.
 
+## 2026-07-18 consolidation audit
+
+The sole registered worktree was recovered without discarding content. Nineteen
+dangling tips, including a deleted stash with divergent tracked content, were
+anchored under local `refs/rescue/pre-pinrail-20260718/*`. A verified all-ref
+bundle plus tracked and untracked worktree backups exist outside the repository.
+No unreachable object was pruned and no rescue ref was published.
+
+All 28 open upstream pull-request heads were already ancestors of `origin/main`.
+Closed PR 466 was rejected because its unbounded in-memory concurrency design is
+superseded by the durable bounded worker lanes in this checkpoint. Closed PR 473
+was rejected as written because its telemetry lifecycle, WebSocket routing,
+payload bounds, and UI work violate V1 contracts. Its raw NNTP byte-accounting
+idea may be reconsidered during Task 6 after backend lifecycle ownership exists.
+
+Local verification on the checkpoint source:
+
+- Release backend and test builds: zero warnings and zero errors.
+- Complete backend with required PostgreSQL integration: 2,966 passed, zero
+  failed, zero skipped.
+- Pinned Alpine musl PostgreSQL integration: 942 passed, zero failed or skipped.
+- Python: 110 passed.
+- Frontend typecheck, 261 Vitest tests, client build, and server build: pass.
+- Playwright Chromium: 5/5 pass.
+- Candidate image build and exact Node, npm, Alpine, and .NET runtime assertions:
+  pass. This local image is evidence only, never a publishable candidate.
+- Staged secret scan: eight fixed synthetic test canaries only; ignored runtime
+  env and local auth state were not staged.
+
+The audit found and repaired two cross-platform test-gate defects before the
+checkpoint: unsupported PostgreSQL `EXTRACT(ERA FROM timestamp)` usage and a
+musl-only nanosecond fixture violating the whole-microsecond timestamp contract.
+
+All GHCR publication is deliberately disabled while V1 is NO-GO. Branch,
+Dependabot, main, and tag workflows now have read-only contents permission and
+run the reusable verification gate only. The gate fails closed on NuGet audit
+findings and includes the shell/container lifecycle contracts.
+
+Two independent whole-diff reviews found no P0. They found these reachable P1
+blockers, which make this branch WIP-only:
+
+1. The exact `/protocol` proxy policy is draft test-only code; production still
+   uses broad pre-auth forwarding and unrestricted WebSocket upgrade paths.
+2. API-key duplicate-carrier behavior contradicts the canonical fail-closed
+   plan and must be frozen from an executable client inventory.
+3. Raw exceptions remain exposed or persisted through public responses, logs,
+   queue history, and maintenance records.
+4. Missing-file repair still performs detached persistence mutation with
+   unbounded `Task.Run` work.
+5. STRM generation and maintenance/controller surfaces remain reachable despite
+   the V1 hard-symlink-only contract.
+6. Entrypoint treats process-only `/health` as readiness; dependency readiness
+   remains absent.
+7. Blob cleanup deletes the file before durable database commit.
+8. Safe-rclone records or trusts fingerprints without proving live container,
+   RC, mount, and traversal postconditions.
+
+The existing Pinrail Figma file was authenticated and its metadata resolved on
+2026-07-18. No design was changed. Visual work stays blocked until backend freeze
+and release-candidate gates pass.
+
 ## Resume in 60 seconds
 
 1. Work from repository root, represented as `.`.
@@ -53,20 +114,16 @@ is deferred post-V1.
    [active plan](docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md),
    and the
    [design](docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md).
-3. Verify initial publication ancestry and compare live state with this snapshot:
+3. Verify checkpoint identity and compare live state with this snapshot:
 
    `git branch --show-current`
 
-   `initial_handoff_commit="$(git log --diff-filter=A -1 --format=%H -- AGENTS.md)"`
-
-   `test "$(git rev-parse "${initial_handoff_commit}^")" = "8c06d9caacd8c0d2ab5d69f47e3b230b75b16704"`
-
-   `git merge-base --is-ancestor "$initial_handoff_commit" HEAD`
+   `git merge-base --is-ancestor fb03b0e6a247dfeaff9e9965f045a1fb1e6a11cc HEAD`
 
    `git status --short --branch`
 
-   Expected branch is the metadata value and the initial publication commit
-   must be an ancestor of `HEAD`. Do not discard any worktree difference.
+   Expected branch is the metadata value. Do not merge it to `main`, publish an
+   image, or discard any new worktree difference.
 4. Confirm the active V1 documents exist. If either is absent, stop rather than
    continuing the historical Phase 4 plan:
 
@@ -74,11 +131,11 @@ is deferred post-V1.
 5. Continue Task 2, `Secure sessions, proxying, errors, and logs`. Do not begin
    readiness, lifecycle, rclone, frontend rebrand, or release-candidate work
    first.
-6. Task 2A is complete. First exact next action: inventory every frontend API,
-   WebDAV, content, SAB, WebSocket, and health call plus every matching backend
-   route before defining the Task 2B proxy allowlist. Do not edit
-   `frontend/server/app.ts` until the route/method inventory is complete and any
-   genuine product-access choice has been presented to the user.
+6. Task 2A is complete. Treat `frontend/server/request-policy.ts` as an unsealed
+   draft because production does not import it. First exact next action: finish
+   the frontend/backend route, method, key-carrier, and WebSocket inventory;
+   reconcile it with the active plan; then freeze exact duplicate/conflict
+   behavior before wiring production proxy code.
 7. Build the Task 2B RED matrix beside `frontend/server/*.test.ts`: anonymous,
    local-authenticated, trusted Authentik, untrusted source, wrong application,
    encoded/double-encoded separator, prefix-confusion, conflicting API-key, and
@@ -195,10 +252,9 @@ and the Phase 4 design. It contains no implementation file and was not pushed.
 **VERIFIED FACT:** All 30 current files under
 `backend/Database/Transfer/Phase4/**` and
 `backend.Tests/Database/Transfer/Phase4/**` are absent from the documentation
-baseline HEAD. Therefore the canonical context is durable in a fresh checkout,
-but the executable 24/26 Task 8 state is resumable only in this preserved dirty
-worktree. Making implementation portable requires a separate implementation
-review and explicit commit authorization; it is outside this docs-only scope.
+baseline HEAD. That was true for the initial documentation-only publication.
+The 2026-07-18 audit and signed WIP checkpoint supersede this portability limit:
+the implementation is now durable in Git, while remaining non-releaseable.
 
 ### Attribution rule
 
@@ -211,11 +267,11 @@ implementation file was edited, removed, staged, or cleaned by this pass.
 
 The V1 boundary and implementation sequence are frozen. The current release is
 NO-GO. Release builds, disposable SQLite migration, frontend build gates,
-5/5 Playwright tests, 108/108 Python tests, npm and NuGet vulnerability scans,
-Docker image build, and entrypoint shell/container smoke are green in the dirty
-worktree.
+5/5 Playwright tests, 110/110 Python tests, npm and NuGet vulnerability scans,
+Docker image build, and entrypoint shell/container smoke are green in the
+checkpoint source.
 
-Task 1 backend truth is green in the current dirty worktree:
+Task 1 backend truth is green in the current checkpoint source:
 
 - the complete hermetic Release backend assembly passed 2,824 with 84
   deliberate PostgreSQL-only skips and zero failures or exclusions;
@@ -392,11 +448,11 @@ Do not interpret either plan's future task text as implemented behavior.
 
 | Path | Pre-edit Git state | Role in the work | Verified current behavior | Remaining work | Evidence | Risk or caution |
 | --- | --- | --- | --- | --- | --- | --- |
-| `AGENTS.md` | Tracked, modified by this V1 pivot | Hermes project context | Points to the V1 handoff, plan, design, scope, and stable safety constraints | Remove active pointer only after V1 completion | Path/link audit | Initial version is in the handoff publication commit; current pivot is worktree-only |
+| `AGENTS.md` | Tracked, modified by this V1 pivot | Project context | Points to the V1 handoff, plan, design, scope, and stable safety constraints | Remove active pointer only after V1 completion | Path/link audit | Durable in the signed WIP checkpoint |
 | `HANDOFF.md` | Tracked, modified by this V1 pivot | Sole canonical handoff | Records the V1 boundary, council, blockers, current evidence, and exact continuation | Maintain each session | Final consistency audit | Do not add another competing handoff |
 | `CONTRIBUTING.md` | Clean tracked file | Developer setup/verification | Declares .NET 10, Node 24/npm 11, `npm ci`, current local/CI gates | Keep synchronized with CI | Source review | Frontend cannot run under current Node 22/npm 10 |
-| `docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md` | Created by this V1 pivot | Canonical active plan | Orders deterministic backend, security, readiness, lifecycle, rclone, resilience, behavioral E2E, artifact, and RC gates | Start Task 1 after Task 0 docs verification | Six-seat council plus current executable evidence | Worktree-only until a commit is authorized |
-| `docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md` | Created by this V1 pivot | Governing V1 design | Freezes Docker/SQLite/one-owner/clean-install boundary and release definition of done | Implement active plan | Six-seat council plus current executable evidence | Worktree-only until a commit is authorized |
+| `docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md` | Created by this V1 pivot | Canonical active plan | Orders deterministic backend, security, readiness, lifecycle, rclone, resilience, behavioral E2E, artifact, and RC gates | Continue Task 2 | Six-seat council plus current executable evidence | Durable in the signed WIP checkpoint |
+| `docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md` | Created by this V1 pivot | Governing V1 design | Freezes Docker/SQLite/one-owner/clean-install boundary and release definition of done | Implement active plan | Six-seat council plus current executable evidence | Durable in the signed WIP checkpoint |
 | `docs/superpowers/plans/2026-07-14-nzbdav-transfer-v3-phase-4.md` | Tracked, modified by this V1 pivot | Deferred post-V1 plan | Preserves Tasks 0-7 and unsealed Task 8 evidence without governing continuation | Resolve catalog-memory finding post-V1 | Current source/tests and conflicting reviews | Planned behavior remains private and non-shipped |
 | `docs/superpowers/specs/2026-07-14-nzbdav-transfer-v3-phase-4-design.md` | Tracked, unchanged by this V1 pivot | Deferred Phase 4 design | Preserves the private PostgreSQL design and memory contract | Post-V1 only | Source/design comparison | Do not broaden runtime reachability |
 | `.superpowers/sdd/progress.md` | Pre-existing, locally excluded | Supplemental local execution ledger | Points to Phase 4 and records Task 8 failures/accounting repair | Optional local update after repair | Local file review | Deliberately noncanonical and not committed; no continuation step depends on it |
@@ -494,12 +550,12 @@ CAS or destructive cleanup.
 | Exact `READ COMMITTED` | VERIFIED FACT | Advisory `SELECT` precedes relation lock; stronger snapshot levels could freeze stale state |
 | Raw canonical CAS is additive | VERIFIED FACT | Avoids uncharged digest string/state allocations while preserving Task 7 API |
 | Live PostgreSQL proof deferred to Task 20 | VERIFIED FACT | Task 8 must remain pure and must not use external/unowned databases |
-| Commit canonical documentation only | VERIFIED FACT | User selected documentation durability, not implementation publication; all Phase 4 implementation remains preserved-worktree-only |
+| Preserve the complete implementation in a WIP checkpoint | VERIFIED FACT | User authorized consolidation after review; checkpoint is durable but explicitly blocked from main, deployment, and release |
 | PostgreSQL promotion/cutover rejected now | VERIFIED FACT | Outside Phase 4; exact completion and runtime enablement gates are unfinished |
 
 ## Invariants and constraints
 
-- Preserve the dirty worktree and every unexplained path.
+- Preserve the signed WIP checkpoint and every unexplained new path.
 - No reset, clean, restore, checkout, stash, rebase, merge, pull, branch switch,
   stage, commit, push, PR, remote mutation, or force operation without explicit
   authorization.
@@ -704,9 +760,9 @@ so nothing was cleaned. Documentation checks generated no files.
 
 ### 6. Immutable release provenance is absent
 
-Existing evidence belongs to a 321-path dirty worktree, not one publishable
-revision and image digest. Final multi-arch build, SBOM, provenance, and
-acceptance must bind one immutable candidate.
+Existing evidence belongs to a signed WIP revision, not one publishable image
+digest. Final multi-arch build, SBOM, provenance, and acceptance must bind one
+immutable candidate after every P1 closes.
 
 ### 7. Transfer-v3 Phase 4 review conflict
 
@@ -836,19 +892,19 @@ Full rebrand remains deferred until the backend passes.
 - Local `.superpowers/sdd/**` evidence remains deliberately excluded,
   supplemental, and noncanonical. Canonical continuation depends only on
   `AGENTS.md`, `HANDOFF.md`, the active V1 plan, and the V1 design.
-- Current V1 documentation and executable implementation are worktree-only.
-  Continue only in the preserved worktree unless a separate commit is
-  explicitly authorized.
+- Current V1 documentation and executable implementation are durable on
+  `pinrail/v1-backend-wip`. Continue there; never treat it as a release branch.
 
 ## Recovery and rollback
 
-The current V1 state is worktree-only. Recovery means preserving it, not
-resetting it.
+The current V1 state is anchored by signed checkpoint
+`fb03b0e6a247dfeaff9e9965f045a1fb1e6a11cc`. Recovery means returning to that
+checkpoint or the external recovery bundle, never deleting unexplained work.
 
 - Verify the handoff publication commit is an ancestor of `HEAD`, then compare
   branch and status with this handoff.
-- Use the active V1 plan, current dirty diff, and exact Task 1 filters to
-  identify scope. Local snapshot files are optional corroboration only.
+- Use the active V1 plan, checkpoint diff, and exact Task 2 filters to identify
+  scope. Local snapshot files are optional corroboration only.
 - Inspect only scoped diffs/source. Untracked files have no Git base, so never
   assume they are disposable.
 - If an edit fails, re-read and repair only that exact edit. Do not use reset,

@@ -2,7 +2,7 @@
 
 **Status:** ACTIVE
 
-**Last reconciled:** 2026-07-17
+**Last reconciled:** 2026-07-18
 
 **Canonical handoff:** [`HANDOFF.md`](../../../HANDOFF.md)
 
@@ -29,16 +29,30 @@ separately planned full rebrand.
   stash, stage, commit, push, or delete unexplained files without explicit user
   authorization.
 
+## Consolidation state
+
+The formerly dirty implementation is preserved in signed checkpoint
+`fb03b0e6a247dfeaff9e9965f045a1fb1e6a11cc` on
+`pinrail/v1-backend-wip`. This is a continuation branch only. Two independent
+reviews found no P0 and multiple reachable P1 blockers. Do not merge it to
+`main`, deploy it, publish an image, or describe it as V1-ready.
+
+All GHCR publication paths are disabled while V1 is NO-GO. Branch, Dependabot,
+main, and tag workflows run the reusable read-only verifier only. Reintroduce
+publication in Task 9 only after one immutable multi-arch artifact is built,
+verified by digest, attested, and explicitly authorized.
+
 ## Current evidence baseline
 
-Evidence below was executed in the current dirty worktree and is not final
+Evidence below was executed against the checkpoint source and is not final
 release provenance.
 
 | Gate | Current result |
 | --- | --- |
 | Backend/test Release builds with warnings as errors | PASS |
 | Disposable SQLite migration smoke | PASS |
-| Backend broad non-live suite | 2,820 passed, 84 deliberate PostgreSQL-only skips, 0 failed |
+| Complete backend with required PostgreSQL integration | 2,966 passed, 0 skipped, 0 failed |
+| Pinned Alpine musl PostgreSQL integration | 942 passed, 0 skipped, 0 failed |
 | Usenet controller class | 2/2 PASS; recursive test logger ownership fixed |
 | Transfer-v3 Task 8 focused gate | 26/26 passed, but independent review found a P1 pre-budget catalog materialization path; deferred post-V1 |
 | Frontend typecheck, unit, client build, server build | PASS |
@@ -46,9 +60,16 @@ release provenance.
 | npm audit, moderate threshold | 0 vulnerabilities |
 | NuGet vulnerable-package review | No known vulnerable package reported in current scan |
 | Entrypoint shell contract | PASS |
-| Docker image build | PASS for local `nzbdav:entrypoint-smoke` |
+| Python tooling | 110 tests passed |
+| Docker image build and exact runtime assertions | PASS for local evidence image only |
 | Entrypoint container smoke | PASS |
 | `git diff --check` | PASS at last execution |
+
+The 2026-07-18 whole-diff review keeps Task 2 open. Exact proxy policy remains
+test-only draft code; duplicate key-carrier behavior conflicts with this plan;
+raw errors remain exposed or persisted; detached repair work, STRM surfaces,
+false readiness, delete-before-commit blob cleanup, and unsafe rclone state
+recording remain release blockers. See `HANDOFF.md` for exact paths and order.
 
 ## Task status
 
