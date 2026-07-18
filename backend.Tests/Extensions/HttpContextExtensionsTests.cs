@@ -35,14 +35,29 @@ public sealed class HttpContextExtensionsTests
         Assert.Throws<BadHttpRequestException>(() => context.GetInternalRequestApiKey());
     }
 
-    [Theory]
-    [InlineData("header")]
-    [InlineData("query")]
-    [InlineData("form")]
-    public void GetProtocolRequestApiKey_AcceptsEachCanonicalCarrier(string carrier)
+    [Fact]
+    public void GetProtocolRequestApiKey_AcceptsHeaderOnly()
     {
         var context = Context();
-        SetCarrier(context, carrier, "public-key");
+        context.Request.Headers["x-api-key"] = "public-key";
+
+        Assert.Equal("public-key", context.GetProtocolRequestApiKey());
+    }
+
+    [Fact]
+    public void GetProtocolRequestApiKey_AcceptsLowercaseQueryOnlyForArrClients()
+    {
+        var context = Context();
+        context.Request.QueryString = new QueryString("?apikey=public-key");
+
+        Assert.Equal("public-key", context.GetProtocolRequestApiKey());
+    }
+
+    [Fact]
+    public void GetProtocolRequestApiKey_AcceptsLowercaseFormOnlyCompatibilityCarrier()
+    {
+        var context = Context();
+        context.Request.Form = Form(("apikey", "public-key"));
 
         Assert.Equal("public-key", context.GetProtocolRequestApiKey());
     }
@@ -57,15 +72,31 @@ public sealed class HttpContextExtensionsTests
         Assert.Equal("public-key", context.GetProtocolRequestApiKey());
     }
 
-    [Fact]
-    public void GetProtocolRequestApiKey_AcceptsIdenticalHeaderQueryAndForm()
+    [Theory]
+    [InlineData("header-form")]
+    [InlineData("query-form")]
+    [InlineData("header-query-form")]
+    public void GetProtocolRequestApiKey_RejectsSameValueOutsideAiostreamsHeaderQueryPair(string carriers)
     {
         var context = Context();
-        context.Request.Headers["x-api-key"] = "public-key";
-        context.Request.QueryString = new QueryString("?apikey=public-key");
-        context.Request.Form = Form(("apikey", "public-key"));
+        switch (carriers)
+        {
+            case "header-form":
+                context.Request.Headers["x-api-key"] = "public-key";
+                context.Request.Form = Form(("apikey", "public-key"));
+                break;
+            case "query-form":
+                context.Request.QueryString = new QueryString("?apikey=public-key");
+                context.Request.Form = Form(("apikey", "public-key"));
+                break;
+            case "header-query-form":
+                context.Request.Headers["x-api-key"] = "public-key";
+                context.Request.QueryString = new QueryString("?apikey=public-key");
+                context.Request.Form = Form(("apikey", "public-key"));
+                break;
+        }
 
-        Assert.Equal("public-key", context.GetProtocolRequestApiKey());
+        Assert.Throws<BadHttpRequestException>(() => context.GetProtocolRequestApiKey());
     }
 
     [Theory]
@@ -95,24 +126,36 @@ public sealed class HttpContextExtensionsTests
     }
 
     [Theory]
-    [InlineData("?apikey=one&apikey=one")]
-    [InlineData("?apikey=one&apikey=two")]
-    public void GetProtocolRequestApiKey_RejectsRepeatedQueryCarrier(string query)
+    [InlineData("header", "one")]
+    [InlineData("header", "two")]
+    [InlineData("query", "one")]
+    [InlineData("query", "two")]
+    [InlineData("form", "one")]
+    [InlineData("form", "two")]
+    public void GetProtocolRequestApiKey_RejectsRepeatedValuesWithinCarrier(
+        string carrier,
+        string secondValue)
     {
         var context = Context();
-        context.Request.QueryString = new QueryString(query);
-
-        Assert.Throws<BadHttpRequestException>(() => context.GetProtocolRequestApiKey());
-    }
-
-    [Fact]
-    public void GetProtocolRequestApiKey_RejectsRepeatedFormCarrier()
-    {
-        var context = Context();
-        context.Request.Form = new FormCollection(new Dictionary<string, StringValues>
+        var values = new StringValues(["one", secondValue]);
+        switch (carrier)
         {
-            ["apikey"] = new StringValues(["one", "one"])
-        });
+            case "header":
+                context.Request.Headers["x-api-key"] = values;
+                break;
+            case "query":
+                context.Request.Query = new QueryCollection(new Dictionary<string, StringValues>
+                {
+                    ["apikey"] = values
+                });
+                break;
+            case "form":
+                context.Request.Form = new FormCollection(new Dictionary<string, StringValues>
+                {
+                    ["apikey"] = values
+                });
+                break;
+        }
 
         Assert.Throws<BadHttpRequestException>(() => context.GetProtocolRequestApiKey());
     }

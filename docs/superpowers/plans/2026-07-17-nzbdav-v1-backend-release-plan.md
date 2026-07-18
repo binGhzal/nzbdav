@@ -65,11 +65,12 @@ release provenance.
 | Entrypoint container smoke | PASS |
 | `git diff --check` | PASS at last execution |
 
-The 2026-07-18 whole-diff review keeps Task 2 open. Exact proxy policy remains
-test-only draft code; duplicate key-carrier behavior conflicts with this plan;
-raw errors remain exposed or persisted; detached repair work, STRM surfaces,
-false readiness, delete-before-commit blob cleanup, and unsafe rclone state
-recording remain release blockers. See `HANDOFF.md` for exact paths and order.
+The 2026-07-18 whole-diff review keeps Task 2 open. The backend public API-key
+carrier contract is now frozen, but exact proxy policy remains test-only draft
+code and is not wired to production; raw errors remain exposed or persisted;
+detached repair work, STRM surfaces, false readiness, delete-before-commit blob
+cleanup, and unsafe rclone state recording remain release blockers. See
+`HANDOFF.md` for exact paths and order.
 
 ## Task status
 
@@ -272,9 +273,11 @@ mode without `SESSION_KEY` exits nonzero with the exact startup diagnostic and
 that the same image becomes healthy and stops cleanly with an explicit
 synthetic 64-hex key. Shell syntax validation passed. `.env.example` documents
 both supported modes, rotation, secure-cookie policy, trusted outpost CIDRs,
-and the no-direct-ingress requirement. The current CI workflow does not invoke
-`tests/test_entrypoint_container.sh`; close that parity gap in the release
-workflow task rather than treating local smoke evidence as CI evidence.
+and the no-direct-ingress requirement. Exact-HEAD GitHub Actions run
+[`29658476416`](https://github.com/binGhzal/pinrail/actions/runs/29658476416)
+passed the container lifecycle smoke and every stated native Transfer job on
+glibc/musl and x64/arm64 at the carrier-slice base. This is CI evidence for the
+slice base, not final release-candidate provenance.
 
 ### 2B. Exact proxy boundary
 
@@ -330,13 +333,52 @@ contract. Preserve the shared symlink and `/.ids` implementation and prove ARR
 completed-path behavior, rclone `--links`, DFS symlink resolution, cleanup, and
 organized-link discovery still pass.
 
-**Remaining unresolved product contract; do not implement production proxy
-changes until resolved:**
+**Frozen public API-key carrier contract (2026-07-18):**
 
-- the exact supported API-key carriers. Current backend evidence supports
-  `x-api-key` and lowercase `apikey` query/form values, while the frontend also
-  recognizes unsupported camel-case `apiKey`; conflicting or duplicate carriers
-  must fail closed.
+- Accept exactly one `x-api-key` header, with normal HTTP header-name
+  case-insensitivity; exactly one lowercase query `apikey`; or exactly one
+  lowercase form `apikey` for a form content type.
+- Preserve exactly one multi-location compatibility shape: one header plus one
+  query carrier with equal values under the existing constant-time comparison
+  and no form carrier. This is the pinned AIOStreams request shape.
+- Reject repeated values within a location, header-plus-form,
+  query-plus-form, all three locations, conflicting header-plus-query values,
+  noncanonical `apiKey`/`APIKEY` query or form names, empty values, and values
+  over 512 characters. Missing carriers return null. The internal API parser
+  remains separate and header-only.
+
+Pinned client evidence:
+
+- AIOStreams stable `v2.31.1` at
+  `ccc25bc65d3abbc9d0cd61c547b2725bfbe20fe0` and observed main
+  `4f0c4aace62d5981f495f42659b1ae4e83764b11` have byte-identical integration
+  files. Its [`GET` request builder](https://github.com/Viren070/AIOStreams/blob/ccc25bc65d3abbc9d0cd61c547b2725bfbe20fe0/packages/core/src/debrid/usenet-stream-base.ts#L132-L173)
+  and [`addurl`/`history` callers](https://github.com/Viren070/AIOStreams/blob/ccc25bc65d3abbc9d0cd61c547b2725bfbe20fe0/packages/core/src/debrid/usenet-stream-base.ts#L273-L347)
+  send the same key in lowercase query `apikey` and header `x-api-key`.
+- Sonarr `v4.0.19.2979` uses one lowercase query key in its
+  [request builder](https://github.com/Sonarr/Sonarr/blob/v4.0.19.2979/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L46-L53)
+  and keeps that key in the query for
+  [multipart `addfile`](https://github.com/Sonarr/Sonarr/blob/v4.0.19.2979/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L162-L184).
+  Radarr `v6.3.0.10514` has the byte-identical
+  [request](https://github.com/Radarr/Radarr/blob/v6.3.0.10514/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L46-L53)
+  and [`addfile`](https://github.com/Radarr/Radarr/blob/v6.3.0.10514/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L162-L184)
+  logic; Lidarr `v3.1.0.4875` has the byte-identical
+  [request](https://github.com/Lidarr/Lidarr/blob/v3.1.0.4875/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L46-L53)
+  and [`addfile`](https://github.com/Lidarr/Lidarr/blob/v3.1.0.4875/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs#L162-L184)
+  logic.
+- [SABnzbd 5.0.4 documents lowercase query `apikey`](https://sabnzbd.org/wiki/advanced/api).
+  Form support remains a Pinrail compatibility carrier; no researched current
+  client requires a form duplicate. rclone `v1.74.4` uses WebDAV Basic
+  `Authorization` and does not consume this parser.
+
+**Carrier-slice evidence (2026-07-18):** tests-only RED failed exactly the
+same-value header-plus-form, query-plus-form, and all-three-location cases
+against unchanged production code (`3` failed, `26` passed). Minimal GREEN
+passed the focused class `29/29` and the parser/SAB/ARR/add-file affected gate
+`91/91`, both with zero skips. Production and test Release builds passed with
+warnings as errors, and scoped formatter verification passed. This freezes the
+backend parser only; production proxy work remains blocked on the RED
+route/method/credential matrix and independent review.
 
 **Files:**
 

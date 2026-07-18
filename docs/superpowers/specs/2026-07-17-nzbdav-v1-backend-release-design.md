@@ -248,6 +248,26 @@ The server classifies routes before implementation:
 - encoded-separator, double-encoding, prefix-confusion, conflicting-header,
   oversized-header, and client-supplied-key cases fail closed.
 
+The public/protocol API-key parser has one frozen compatibility exception.
+Individually it accepts exactly one `x-api-key` header, exactly one lowercase
+query `apikey`, or exactly one lowercase form `apikey` for a form content type.
+It also accepts exactly one equal header-plus-query pair, with no form carrier,
+using the existing constant-time comparison. This is the pinned AIOStreams
+`v2.31.1` shape: its
+[`GET` builder](https://github.com/Viren070/AIOStreams/blob/ccc25bc65d3abbc9d0cd61c547b2725bfbe20fe0/packages/core/src/debrid/usenet-stream-base.ts#L132-L173)
+sends the same value in header `x-api-key` and lowercase query `apikey`.
+Sonarr `v4.0.19.2979`, Radarr `v6.3.0.10514`, and Lidarr `v3.1.0.4875` use one
+lowercase query `apikey`; SABnzbd 5.0.4 documents that query spelling; rclone
+v1.74.4 uses WebDAV Basic `Authorization` instead.
+
+Repeated values within one location, every form-plus-other-location shape, all
+three locations, a conflicting header-plus-query pair, noncanonical query/form
+name casing, empty values, and values over 512 characters fail closed with the
+existing stable malformed-carrier exception. Missing carriers return null. The
+internal parser remains separate and header-only. This parser contract does not
+authorize a proxy route or widen browser authority; the production proxy still
+requires the complete reviewed route/method/credential matrix before wiring.
+
 ### 7.3 Error and log contract
 
 - Public failures use a bounded envelope: stable code, safe message, correlation

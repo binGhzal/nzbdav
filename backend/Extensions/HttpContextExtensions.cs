@@ -40,35 +40,41 @@ public static class HttpContextExtensions
 
     public static string? GetProtocolRequestApiKey(this HttpContext httpContext)
     {
-        var candidates = new List<string>();
-        AddCandidate(candidates, httpContext.Request.Headers["x-api-key"]);
-        AddCanonicalParameterCandidates(candidates, httpContext.Request.Query.Keys,
+        var header = ReadSingleCarrier(httpContext.Request.Headers["x-api-key"]);
+        var query = ReadCanonicalParameterCarrier(httpContext.Request.Query.Keys,
             key => httpContext.Request.Query[key]);
+        var form = httpContext.Request.HasFormContentType
+            ? ReadCanonicalParameterCarrier(httpContext.Request.Form.Keys,
+                key => httpContext.Request.Form[key])
+            : null;
 
-        if (httpContext.Request.HasFormContentType)
+        if (form is not null && (header is not null || query is not null))
+            throw InvalidApiKeyCarrier();
+        if (header is not null && query is not null)
         {
-            AddCanonicalParameterCandidates(candidates, httpContext.Request.Form.Keys,
-                key => httpContext.Request.Form[key]);
+            if (!FixedTimeEquals(header, query))
+                throw InvalidApiKeyCarrier();
+            return header;
         }
 
-        if (candidates.Count == 0) return null;
-        var selected = candidates[0];
-        if (candidates.Skip(1).Any(candidate => !FixedTimeEquals(selected, candidate)))
-            throw InvalidApiKeyCarrier();
-        return selected;
+        return header ?? query ?? form;
     }
 
-    private static void AddCanonicalParameterCandidates(
-        ICollection<string> candidates,
+    private static string? ReadCanonicalParameterCarrier(
         IEnumerable<string> keys,
         Func<string, Microsoft.Extensions.Primitives.StringValues> getValues)
     {
+        string? candidate = null;
         foreach (var key in keys.Where(key => key.Equals("apikey", StringComparison.OrdinalIgnoreCase)))
         {
             if (!key.Equals("apikey", StringComparison.Ordinal))
                 throw InvalidApiKeyCarrier();
-            AddCandidate(candidates, getValues(key));
+            if (candidate is not null)
+                throw InvalidApiKeyCarrier();
+            candidate = ReadSingleCarrier(getValues(key));
         }
+
+        return candidate;
     }
 
     private static string? ReadSingleCarrier(Microsoft.Extensions.Primitives.StringValues values)
@@ -79,14 +85,6 @@ public static class HttpContextExtensions
         if (string.IsNullOrEmpty(value) || value.Length > MaxApiKeyLength)
             throw InvalidApiKeyCarrier();
         return value;
-    }
-
-    private static void AddCandidate(
-        ICollection<string> candidates,
-        Microsoft.Extensions.Primitives.StringValues values)
-    {
-        var value = ReadSingleCarrier(values);
-        if (value is not null) candidates.Add(value);
     }
 
     private static bool FixedTimeEquals(string left, string right)

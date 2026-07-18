@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Content verification cutoff | 2026-07-18T23:47:26+04:00 |
+| Content verification cutoff | 2026-07-18T20:51:53+00:00 |
 | Handoff status | AUDITED WIP CHECKPOINT; V1 RELEASE NO-GO |
 | Repository | `pinrail` (NZBDav compatibility names remain until the post-freeze rebrand) |
 | Current branch | `pinrail/v1-backend-wip` |
@@ -13,8 +13,8 @@
 | Upstream | `https://github.com/nzbdav-dev/nzbdav.git` |
 | Default remote branch | `origin/main` |
 | Base and merge base | `origin/main` at merge base `86af7b816c496aea2654c438be7fa553b98bb91c` |
-| Current relation | Checkpoint `fb03b0e6a247dfeaff9e9965f045a1fb1e6a11cc` is an ancestor; this handoff, the CI repair, and its verification record make the branch 34 ahead, 0 behind `origin/main` |
-| Worktree | Clean after the signed checkpoint, CI repair, and verification record. Ignored env, Finder, bytecode, TRX, and local artifact files were excluded, not deleted. |
+| Current relation | Carrier-slice base `df41e0c15504ad87fb2aaa211c59700a26917b7c` matched `origin/pinrail/v1-backend-wip`; this signed slice is its direct child, 1 ahead of that remote branch and 204 ahead, 0 behind `upstream/main` |
+| Worktree | Clean after the signed carrier-contract slice. Ordinary ignored build/test outputs were refreshed, not staged or deleted. |
 | Durability boundary | All reviewed worktree source is tracked in the signed WIP checkpoint. It is safe for remote continuation only, not merge, deployment, image publication, or release. Private Phase 4 remains unreachable and post-V1. |
 | Canonical active plan | [V1 backend release implementation plan](docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md) |
 | Governing design | [V1 backend release design](docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md) |
@@ -97,23 +97,23 @@ Dependabot, main, and tag workflows now have read-only contents permission and
 run the reusable verification gate only. The gate fails closed on NuGet audit
 findings and includes the shell/container lifecycle contracts.
 
-Two independent whole-diff reviews found no P0. They found these reachable P1
-blockers, which make this branch WIP-only:
+Two independent whole-diff reviews found no P0. The carrier-parser conflict has
+since been resolved without wiring the production proxy. These remaining
+reachable P1 blockers make this branch WIP-only:
 
 1. The exact `/protocol` proxy policy is draft test-only code; production still
-   uses broad pre-auth forwarding and unrestricted WebSocket upgrade paths.
-2. API-key duplicate-carrier behavior contradicts the canonical fail-closed
-   plan and must be frozen from an executable client inventory.
-3. Raw exceptions remain exposed or persisted through public responses, logs,
+   uses broad pre-auth forwarding and unrestricted WebSocket upgrade paths. The
+   frozen backend carrier parser does not close this production boundary.
+2. Raw exceptions remain exposed or persisted through public responses, logs,
    queue history, and maintenance records.
-4. Missing-file repair still performs detached persistence mutation with
+3. Missing-file repair still performs detached persistence mutation with
    unbounded `Task.Run` work.
-5. STRM generation and maintenance/controller surfaces remain reachable despite
+4. STRM generation and maintenance/controller surfaces remain reachable despite
    the V1 hard-symlink-only contract.
-6. Entrypoint treats process-only `/health` as readiness; dependency readiness
+5. Entrypoint treats process-only `/health` as readiness; dependency readiness
    remains absent.
-7. Blob cleanup deletes the file before durable database commit.
-8. Safe-rclone records or trusts fingerprints without proving live container,
+6. Blob cleanup deletes the file before durable database commit.
+7. Safe-rclone records or trusts fingerprints without proving live container,
    RC, mount, and traversal postconditions.
 
 The existing Pinrail Figma file was authenticated and its metadata resolved on
@@ -131,7 +131,7 @@ and release-candidate gates pass.
 
    `git branch --show-current`
 
-   `git merge-base --is-ancestor fb03b0e6a247dfeaff9e9965f045a1fb1e6a11cc HEAD`
+   `git merge-base --is-ancestor df41e0c15504ad87fb2aaa211c59700a26917b7c HEAD`
 
    `git status --short --branch`
 
@@ -144,11 +144,12 @@ and release-candidate gates pass.
 5. Continue Task 2, `Secure sessions, proxying, errors, and logs`. Do not begin
    readiness, lifecycle, rclone, frontend rebrand, or release-candidate work
    first.
-6. Task 2A is complete. Treat `frontend/server/request-policy.ts` as an unsealed
-   draft because production does not import it. First exact next action: finish
-   the frontend/backend route, method, key-carrier, and WebSocket inventory;
-   reconcile it with the active plan; then freeze exact duplicate/conflict
-   behavior before wiring production proxy code.
+6. Task 2A and the backend carrier-parser slice are complete. Treat
+   `frontend/server/request-policy.ts` as an unsealed draft because production
+   does not import it. First exact next action: independently review the signed
+   carrier slice, then finish the route/method/WebSocket inventory and Task 2B
+   council synthesis before writing the RED proxy matrix. Do not wire
+   production proxy code first.
 7. Build the Task 2B RED matrix beside `frontend/server/*.test.ts`: anonymous,
    local-authenticated, trusted Authentik, untrusted source, wrong application,
    encoded/double-encoded separator, prefix-confusion, conflicting API-key, and
@@ -679,6 +680,15 @@ container.
 | 2026-07-17 | `docker build --tag nzbdav:entrypoint-smoke .` | `.` | PASS | 0 | Local smoke image built successfully | Final evidence must use immutable multi-arch digest |
 | 2026-07-17 | `bash tests/test_entrypoint_contract.sh && bash tests/test_entrypoint_container.sh` | `.` | PASS | 0 | Shell and container smoke passed | Expand readiness, child-death, migration-failure, and SIGTERM cases |
 | 2026-07-17 | Six-seat V1 council | `.` | NO-GO | not applicable | Six fresh architecture, SRE, security, product, scope, and adversarial seats accepted the frozen topology and unanimously rejected current release fitness | Implement active V1 plan |
+| 2026-07-18 | `dotnet test backend.Tests/backend.Tests.csproj --configuration Release --no-restore --filter 'FullyQualifiedName~HttpContextExtensionsTests' --logger 'console;verbosity=minimal'` before restore | `.` | INCONCLUSIVE | 0 | No output and no tests ran because this checkout had no restored `obj` metadata or Release artifacts | Restored, then repeated unchanged production conclusively |
+| 2026-07-18 | `dotnet restore backend.Tests/backend.Tests.csproj --nologo` | `.` | PASS | 0 | Restored backend and test projects; no source changed | Reran the exact focused command |
+| 2026-07-18 | Exact focused command after tests-only edit, before production edit | `.` | EXPECTED RED | 1 | 3 failed, 26 passed, 0 skipped; equal header-plus-form, query-plus-form, and all-three shapes were accepted without throwing | Implement minimum fail-closed location policy |
+| 2026-07-18 | Exact focused command after production edit | `.` | PASS | 0 | 29 passed, 0 failed, 0 skipped | Run affected SAB/ARR gate |
+| 2026-07-18 | `dotnet test backend.Tests/backend.Tests.csproj --configuration Release --no-restore --filter 'FullyQualifiedName~HttpContextExtensionsTests\|FullyQualifiedName~SabRequestTests\|FullyQualifiedName~ArrOperationsServiceTests\|FullyQualifiedName~AddFileDurabilityTests' --logger 'console;verbosity=minimal'` | `.` | PASS | 0 | 91 passed, 0 failed, 0 skipped | Complete backend regression remains unsealed |
+| 2026-07-18 | Production and test `dotnet build ... --configuration Release --no-restore --no-incremental -warnaserror` | `.` | PASS | 0 | Both builds completed with 0 warnings and 0 errors | None |
+| 2026-07-18 | `dotnet format backend.Tests/backend.Tests.csproj --no-restore --verify-no-changes --include backend/Extensions/HttpContextExtensions.cs backend.Tests/Extensions/HttpContextExtensionsTests.cs` | `.` | PASS | 0 | Scoped formatter verification produced no changes or diagnostics | None |
+| 2026-07-18 | First documentation validation using Ruby | `.` | BLOCKED | unavailable | Ruby is not installed and the non-fail-fast shell continued; this was not accepted as evidence | Repeated with available Python under `set -euo pipefail` |
+| 2026-07-18 | Fail-fast relative-link, handoff-schema, carrier/CI consistency, stale-text, trailing-whitespace, and `git diff --check` gate | `.` | PASS | 0 | All edited documentation/code passed with no output | Rerun after the final ledger edit |
 
 The .NET commands refreshed only ordinary ignored build/test outputs. The final
 Git-visible set comparison found no generated path attributable to verification,
@@ -718,7 +728,10 @@ so nothing was cleaned. Documentation checks generated no files.
 - Local login/onboarding/logout are unavailable in Authentik mode; absent or
   invalid outpost identity fails closed without a local fallback.
 - The rebuilt container contract proves missing-key failure and explicit-key
-  success, but the current CI workflow does not yet invoke that container smoke.
+  success. Exact-HEAD GitHub Actions run
+  [`29658476416`](https://github.com/binGhzal/pinrail/actions/runs/29658476416)
+  also passed the container lifecycle smoke and every stated native Transfer
+  glibc/musl x64/arm64 job at the carrier-slice base.
 - Proxy route/header boundaries still need the Task 2B executable abuse matrix.
 - Verified topology decision: use the same frontend hostname/listener with a
   dedicated mount-relative `/protocol` prefix for independently authenticated
@@ -736,15 +749,25 @@ so nothing was cleaned. Documentation checks generated no files.
   approval.
 - V1 WebDAV authentication is fail-closed. `DISABLE_WEBDAV_AUTH=true` now fails
   startup, NWebDav always requires authentication, focused tests pass `8/8`,
-  and Release build/format gates are green. Combined backend regression remains
-  pending after the key-parser slice.
+  and Release build/format gates are green. The carrier slice's affected gate
+  passed `91/91`; a complete backend regression was not run by this narrow
+  slice and remains unsealed.
 - Verified V1 import/media scope: hard symlink-only imports. Remove STRM/both
   settings and generation/recreation/conversion surfaces. Plex/ARR use mounted
   `/completed-symlinks` → `/.ids`; AIOStreams uses authenticated WebDAV; Dav
   Explore `/view` remains frontend-principal-only. No `/protocol/view` route is
   public.
-- Exact key-carrier compatibility remains open; production proxy edits are
-  blocked until that contract is explicit.
+- Exact key-carrier compatibility is frozen. Accept one `x-api-key` header, one
+  lowercase query `apikey`, or one lowercase form `apikey`; additionally accept
+  only the equal header-plus-query AIOStreams pair under the existing
+  constant-time comparison. Reject every repeated single-location value, every
+  form-plus-other-location shape, an unequal header-plus-query pair,
+  noncanonical parameter casing, empty values, and values over 512 characters.
+  Missing carriers remain null and the internal parser remains header-only.
+  AIOStreams stable/main are byte-identical for this request builder; pinned
+  Sonarr, Radarr, and Lidarr use one lowercase query key, SABnzbd documents it,
+  and rclone uses WebDAV Basic authentication. Primary links and revisions are
+  recorded in the active plan and governing design.
 - The adjacent ARR helper defect is GREEN locally, pending independent review.
   `/api/arr/validation` now returns only derived configured-app/search-mode/
   duplicate-policy fields and the helper no longer calls internal-only
@@ -760,9 +783,9 @@ so nothing was cleaned. Documentation checks generated no files.
   `SESSION_KEY_PREVIOUS` provides one-step rotation. Authentik mode requires
   trusted outpost source CIDRs and expected application metadata, and the app
   port must not be exposed as a browser-auth bypass.
-- Next action: resolve Task 2B's remaining key-carrier contract, finish the
-  independent council synthesis, then write the RED route/method/credential
-  matrix before any production proxy edit.
+- Next action: independently review the signed carrier slice, finish the Task
+  2B council synthesis, then write the RED route/method/credential matrix
+  before any production proxy edit.
 
 ### 5. Liveness, public errors, and repair lifecycle
 
@@ -821,10 +844,11 @@ fixtures only.
 
 ## Exact next actions
 
-1. **Resolve API-key carriers.** Confirm `x-api-key` plus lowercase `apikey`
-   query/form support and fail-closed duplicate/conflict behavior; do not treat
-   unsupported camel-case `apiKey` as an established contract.
-2. **Finish independent review.** Read every completed Task 2B council report,
+1. **Review the carrier slice.** Independently inspect the signed diff and
+   executable RED/GREEN evidence for fail-open behavior, secret leakage, and
+   exact adherence to the pinned client inventory. Do not push before that
+   review is resolved.
+2. **Finish the wider independent review.** Read every completed Task 2B council report,
    bind it to the recorded file hashes, and synthesize consensus/conflicts. Do
    not treat pending or truncated reports as approvals.
 3. **Freeze the matrix.** Enumerate exact UI-admin, `/protocol` SAB/ARR, WebDAV,
@@ -853,6 +877,8 @@ fixtures only.
   review of the pass report.
 - Do not treat the 108 passing Python tests as proof that safe-rclone is safe;
   current tests encode the false-success behavior.
+- Do not broaden the one equal header-plus-query AIOStreams exception, accept
+  camel-case query/form key names, or add carrier precedence/fallback behavior.
 - Do not weaken cleanup assertions until whole-cache supersession and consumer
   semantics are executable facts.
 - Do not replace `EXCLUSIVE MODE NOWAIT` with `SHARE ROW EXCLUSIVE`.
@@ -886,10 +912,11 @@ fixtures only.
 ## Open questions
 
 The V1 topology, `/protocol` same-host ingress, scoped public API-key authority,
-path-scoped semantic WebDAV writes, hard symlink-only imports, and authenticated
-UI-only `/view` are fixed. One Task 2B policy question remains open and blocks
-production proxy edits: exact accepted public key carriers and conflict
-behavior.
+the exact carrier/conflict contract, path-scoped semantic WebDAV writes, hard
+symlink-only imports, and authenticated UI-only `/view` are fixed. No product
+question remains open for this carrier slice. Production proxy edits remain
+blocked on the independently reviewed RED route/method/credential matrix, not
+on a carrier-policy decision.
 
 Full rebrand remains deferred until the backend passes.
 
