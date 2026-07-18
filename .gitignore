@@ -35,6 +35,7 @@ artifacts/
 __pycache__/
 *.py[cod]
 *.trx
+graphify-out/
 
 ##############
 # IDE config #
