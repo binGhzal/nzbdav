@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Content verification cutoff | 2026-07-18T22:24:19+00:00 |
+| Content verification cutoff | 2026-07-18T23:09:01+00:00 |
 | Handoff status | AUDITED WIP CHECKPOINT; V1 RELEASE NO-GO |
 | Repository | `pinrail` (NZBDav compatibility names remain until the post-freeze rebrand) |
 | Current branch | `pinrail/v1-backend-wip` |
@@ -13,9 +13,9 @@
 | Upstream | `https://github.com/nzbdav-dev/nzbdav.git` |
 | Default remote branch | `origin/main` |
 | Base and merge base | `origin/main` at merge base `86af7b816c496aea2654c438be7fa553b98bb91c` |
-| Current relation | Carrier implementation `5e5c94a21ad26e432fa10160bf955ee2756d76b6` is the direct child of base `df41e0c15504ad87fb2aaa211c59700a26917b7c`; signed review-fix checkpoint `c550bc61a7d16df17278ec755fc2516015d95b1e` is its direct child, matches `origin/pinrail/v1-backend-wip`, and is 205 ahead, 0 behind `upstream/main` |
-| Worktree | Based on clean checkpoint `c550bc61a7d16df17278ec755fc2516015d95b1e`, with only the independently reviewed gitleaks fixture-cleanup slice and its documentation pending signed commit/push. No Graphify output exists, and ordinary ignored build/test outputs are not staged. |
-| Durability boundary | The carrier parser and review fixes are signed, independently accepted, pushed, and exact-HEAD CI-verified. The gitleaks cleanup is locally green and independently reviewed but is not durable until its signed push and exact-HEAD CI complete. Neither slice seals the production proxy, merge, deployment, image-publication, or release. Private Phase 4 remains unreachable and post-V1. |
+| Current relation | Signed gitleaks checkpoint `c925ebc84dc8e8bdd3e10fb7f35ee3ee249bc622` is the direct child of carrier review checkpoint `c550bc61a7d16df17278ec755fc2516015d95b1e`; externally added signed Graphify configuration `0e9e3583e6b26fedb26c222f06519a02853bc902` is its direct child, matches `origin/pinrail/v1-backend-wip`, and is 207 ahead, 0 behind `upstream/main` |
+| Worktree | Based on `0e9e3583e6b26fedb26c222f06519a02853bc902`, with only the independently reviewed two-file SearchNudge incident RED/GREEN and canonical documentation pending signed commit/push. Generated Graphify output remains ignored and unstaged; ordinary ignored build/test outputs are not staged. |
+| Durability boundary | Carrier, gitleaks, and externally added Graphify configuration checkpoints are signed, pushed, and exact-HEAD CI-verified; code-bearing carrier/gitleaks slices were independently accepted. The SearchNudge repair is locally green and independently accepted but not durable until signed push and exact-HEAD CI. None of these seals the production proxy, merge, deployment, image publication, or release. Private Phase 4 remains unreachable and post-V1. |
 | Canonical active plan | [V1 backend release implementation plan](docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md) |
 | Governing design | [V1 backend release design](docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md) |
 | Related pull request or issue | No pull request found for this branch by an authenticated read-only `gh pr view` query on 2026-07-16; no linked issue was identified from repository evidence |
@@ -109,10 +109,36 @@ and full-history scans are both zero. Focused fixture tests, frontend unit/type/
 build gates, production and test Release warning-as-error builds, scoped .NET
 formatting, shell syntax/key-shape checks, and independent review are green.
 The local Docker build is environment-blocked because this host lacks buildx;
-the prior exact-HEAD container smoke is green and the new exact remote run is
-still required. A full local Playwright run passed 4/5 when the cold first login
+the prior exact-HEAD container smoke is green. A full local Playwright run passed 4/5 when the cold first login
 consumed the 30-second test budget; the isolated health test then passed 3/3,
 including a cold 13.1-second repetition, with no product or fixture failure.
+Signed checkpoint `c925ebc84dc8e8bdd3e10fb7f35ee3ee249bc622`
+was pushed without force and exact-HEAD GitHub Actions run
+[`29663552874`](https://github.com/binGhzal/pinrail/actions/runs/29663552874)
+completed successfully: the main verifier and native Transfer glibc/musl on
+x64/arm64 passed with zero failed jobs or steps.
+
+While the urgent incident gate was in progress, a separate release task added
+signed Graphify configuration commit
+`0e9e3583e6b26fedb26c222f06519a02853bc902` as a direct child of the gitleaks
+checkpoint and pushed it. It changes only `AGENTS.md` and `.gitignore`; generated
+graph output remains clone-local, ignored, and unstaged. This task did not
+install, configure, or manually update Graphify. Exact-parent GitHub Actions run
+[`29663671084`](https://github.com/binGhzal/pinrail/actions/runs/29663671084)
+completed successfully at `0e9e3583e6b26fedb26c222f06519a02853bc902`:
+main verifier and native Transfer glibc/musl x64/arm64, with zero failed jobs or
+steps. This exact-parent result remains distinct from completed gitleaks run
+`29663552874`.
+
+The SearchNudge incident is now locally repaired RED-first. The new regression
+proved unchanged production executed both due Sonarr and Radarr apply rows while
+current normalized mode was `report`. Minimal GREEN gates only pending apply
+processing on current `apply` mode. It then passed focused `1/1`, the complete
+ARR operations class `28/28`, and the complete local Release backend suite with
+2,868 passed, 85 deliberate PostgreSQL-only skips, and zero failures. Production
+and test warning-as-error builds completed with zero warnings/errors; scoped
+formatting, whitespace, gitleaks current/history, and independent review passed
+with no P0-P3 finding. Report planning and disabled/report defaults are unchanged.
 
 All GHCR publication is deliberately disabled while V1 is NO-GO. Branch,
 Dependabot, main, and tag workflows now have read-only contents permission and
@@ -123,11 +149,10 @@ Two independent whole-diff reviews found no P0. The carrier-parser conflict has
 since been resolved without wiring the production proxy. These remaining
 reachable P1 blockers make this branch WIP-only:
 
-1. `ArrSearchNudgeService.RunOnceAsync` drains persisted pending apply commands
-   before planning without checking the current normalized mode. Current report
-   mode can therefore execute stale apply rows. This incident fix preempts the
-   proxy matrix and must prove zero Sonarr/Radarr command POSTs plus unchanged
-   pending rows when enabled report mode encounters pre-existing apply work.
+1. The SearchNudge current-mode defect is locally repaired and independently
+   accepted, but remains a reachable P1 until its signed commit, push, and exact-
+   HEAD CI complete. Its executable regression proves enabled report mode makes
+   zero Sonarr/Radarr command POSTs and leaves pre-existing apply rows pending.
 2. The exact `/protocol` proxy policy is draft test-only code; production still
    uses broad pre-auth forwarding and unrestricted WebSocket upgrade paths. The
    frozen backend carrier parser does not close this production boundary.
@@ -171,18 +196,16 @@ and release-candidate gates pass.
 5. Continue Task 2, `Secure sessions, proxying, errors, and logs`. Do not begin
    readiness, lifecycle, rclone, frontend rebrand, or release-candidate work
    first.
-6. Task 2A and the backend carrier-parser sub-slice are complete. Signed
-   review-fix checkpoint `c550bc61a7d16df17278ec755fc2516015d95b1e` passed
-   independent re-review and exact-HEAD CI run `29661598011`. Treat
-   `frontend/server/request-policy.ts` as an unsealed draft because production
-   does not import it. The deterministic gitleaks cleanup is locally green and
-   independently accepted; first seal it with a signed commit, safe push, and
-   exact-HEAD CI.
-7. Then fix the urgent SearchNudge incident RED-first: enabled current report
-   mode with due pre-existing apply rows must issue zero Sonarr/Radarr command
-   POSTs and leave those rows pending. Gate only pending-command execution on
-   current apply mode; preserve report planning and disabled/report defaults.
-8. After that incident gate, finish the route/method/WebSocket inventory and Task 2B
+6. Task 2A, the backend carrier parser, and deterministic gitleaks cleanup are
+   complete. Gitleaks checkpoint `c925ebc84dc8e8bdd3e10fb7f35ee3ee249bc622`
+   passed independent review and exact-HEAD run `29663552874`. External Graphify
+   configuration `0e9e3583e6b26fedb26c222f06519a02853bc902` is the pushed
+   parent of the current work; do not rerun or modify Graphify in this task.
+7. The SearchNudge report-mode regression, minimal gate, local Release gates,
+   and independent review are complete. First exact next action: commit with
+   sign-off, push without force, require exact-HEAD CI, update the handoff with
+   that immutable result, and stop at the clean checkpoint.
+8. After the explicit continuation, finish the route/method/WebSocket inventory and Task 2B
    council synthesis, then build the RED matrix beside `frontend/server/*.test.ts`:
    anonymous,
    local-authenticated, trusted Authentik, untrusted source, wrong application,
@@ -733,6 +756,13 @@ container.
 | 2026-07-18 | Focused fixture behavior, frontend unit/type/client/server builds, production/test Release warning-as-error builds, scoped format, shell syntax/key-shape | `.` | PASS | 0 | C# fixture filter 170/170; frontend auth 24/24 and full unit 261/261; builds 0 warnings/errors; formatting and shell checks exited 0 | Remote container smoke remains required because local buildx is unavailable |
 | 2026-07-18 | Full Playwright plus isolated health discriminator | `frontend` | BLOCKED | 1 | Full suite passed 4/5 after cold startup consumed the 30-second first-test budget; isolated health repetition passed 3/3 with successful responses, final expected DOM, and no console errors | Treat as local environment/timing evidence; exact remote CI is authoritative and no timeout change belongs in this security slice |
 | 2026-07-18 | Independent bounded gitleaks cleanup review | `.` | PASS | 0 | No P0/P1 security, semantic, runtime-reachability, or production-impact finding; one P2 documentation-freshness finding was corrected before commit | Rerun documentation/whitespace validation after the correction |
+| 2026-07-18 | Exact-HEAD GitHub Actions run [`29663552874`](https://github.com/binGhzal/pinrail/actions/runs/29663552874) | `.` | PASS | 0 | Signed gitleaks checkpoint `c925ebc84dc8e8bdd3e10fb7f35ee3ee249bc622` matched the run head; main verifier and native Transfer glibc/musl x64/arm64 all passed with 0 failed jobs and 0 failed steps | Gitleaks fixture cleanup sealed; V1 remains NO-GO |
+| 2026-07-18 | External Graphify parent exact-HEAD run [`29663671084`](https://github.com/binGhzal/pinrail/actions/runs/29663671084) | `.` | PASS | 0 | Signed external checkpoint `0e9e3583e6b26fedb26c222f06519a02853bc902` matched the run head; main verifier and native Transfer glibc/musl x64/arm64 passed with 0 failed jobs and 0 failed steps | This task did not install or update Graphify; generated output remains ignored and unstaged |
+| 2026-07-18 | SearchNudge report-mode pending-apply regression before production edit | `.` | EXPECTED RED | 1 | Both due persisted Sonarr and Radarr apply rows were executed under current report mode after exact-ID reload; 0 passed, 1 failed | Add only the current-mode gate around pending apply processing |
+| 2026-07-18 | SearchNudge focused GREEN and complete ARR operations class | `.` | PASS | 0 | Exact regression passed 1/1; affected class passed 28/28 with apply planning, retry, saturation, and failure behavior retained | Run complete local Release suite |
+| 2026-07-18 | Complete backend Release suite without external PostgreSQL | `.` | PASS | 0 | 2,868 passed, 85 deliberate PostgreSQL-only skips, 0 failed | Exact remote CI remains required |
+| 2026-07-18 | Production/test Release no-incremental warning-as-error builds, scoped formatter, whitespace, and gitleaks current/history | `.` | PASS | 0 | Both builds completed with 0 warnings/errors; format/diff checks exited 0; scanner counts remained 0/0 | First build invocation named a nonexistent project path and is not accepted as evidence; corrected command passed |
+| 2026-07-18 | Independent bounded SearchNudge RED/GREEN review | `.` | PASS | 0 | Exact two-file diff had no P0-P3 finding; both command sinks, persistence reload, apply-mode regressions, report planning, and defaults were verified | Signed commit, push, and exact-HEAD CI remain pending |
 
 The .NET commands refreshed only ordinary ignored build/test outputs. The final
 Git-visible set comparison found no generated path attributable to verification,
@@ -835,10 +865,11 @@ so nothing was cleaned. Documentation checks generated no files.
   `SESSION_KEY_PREVIOUS` provides one-step rotation. Authentik mode requires
   trusted outpost source CIDRs and expected application metadata, and the app
   port must not be exposed as a browser-auth bypass.
-- The eight deterministic test-fixture gitleaks findings are locally closed
-  without broad suppression or secret output. Seal the signed push/exact CI,
-  then land the urgent SearchNudge current-mode gate before returning to the
-  Task 2B council synthesis and RED route/method/credential matrix.
+- The eight deterministic test-fixture gitleaks findings are sealed at signed
+  checkpoint `c925ebc84dc8e8bdd3e10fb7f35ee3ee249bc622` and exact run
+  `29663552874`, without broad suppression or secret output. The SearchNudge
+  current-mode gate is locally complete; seal its signed push/exact CI and stop
+  before returning to the Task 2B council synthesis and RED proxy matrix.
 
 ### 5. Liveness, public errors, and repair lifecycle
 
@@ -897,18 +928,17 @@ fixtures only.
 
 ## Exact next actions
 
-1. **Seal the locally green gitleaks fixture cleanup.** Commit it with sign-off,
-   push without force, and require exact-HEAD remote CI. Never globally suppress
-   `generic-api-key` or print a candidate value.
-2. **Fix the urgent SearchNudge mode defect RED-first.** Prove that
-   `Enabled=true` plus current `Mode=report` and due pre-existing
-   `pending_apply` rows makes zero Sonarr/Radarr command POSTs and leaves the
-   rows unexecuted. Gate pending-command processing only on current apply mode;
-   preserve disabled/report defaults and report planning. Run focused and full
-   Release gates, independent review, signed push, and exact-HEAD CI.
-3. **Stop at the resulting clean checkpoint for Graphify integration.** Report
-   exact HEAD, worktree/upstream state, and exact-HEAD CI; do not install or
-   modify Graphify in this task.
+1. **Seal the locally green SearchNudge incident fix.** Commit the exact reviewed
+   two-file RED/GREEN plus canonical documentation with sign-off, push without
+   force, and require exact-HEAD remote CI. Preserve disabled/report defaults,
+   report planning, and all apply-mode behavior.
+2. **Record the immutable result and stop.** Update this handoff/plan with exact
+   commit, clean worktree/upstream state, and exact-HEAD CI, make the signed
+   documentation checkpoint if needed, verify its exact run, then stop before
+   another implementation turn.
+3. **Do not rerun or modify Graphify in this task.** External signed commit
+   `0e9e3583e6b26fedb26c222f06519a02853bc902` already added the clone-local
+   configuration. Generated graph output must stay ignored and unstaged.
 4. **After the explicit continuation, finish the wider independent review.** Read every completed Task 2B council report,
    bind it to the recorded file hashes, and synthesize consensus/conflicts. Do
    not treat pending or truncated reports as approvals.

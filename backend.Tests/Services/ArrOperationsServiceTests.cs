@@ -625,6 +625,65 @@ public sealed class ArrOperationsServiceTests
     }
 
     [Fact]
+    public async Task ArrSearchNudgeService_ReportMode_LeavesPendingApplyCommandsUnexecuted()
+    {
+        await using var server = await FakeArrServer.StartAsync();
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var now = DateTimeOffset.UtcNow;
+        var sonarrCommandId = Guid.NewGuid();
+        var radarrCommandId = Guid.NewGuid();
+        dbContext.ArrSearchNudgeCommands.AddRange(
+            new ArrSearchNudgeCommand
+            {
+                Id = sonarrCommandId,
+                ArrApp = "sonarr",
+                InstanceKey = GetInstanceKey("sonarr", server.Url),
+                InstanceHost = server.Url,
+                CommandName = "EpisodeSearch",
+                TargetsJson = "[123]",
+                Mode = "apply",
+                Status = "pending_apply",
+                CooldownKey = "sonarr:episode:123",
+                ReasonsJson = "[]",
+                CreatedAt = now.AddHours(-2),
+                NextAllowedAt = now.AddMinutes(-1)
+            },
+            new ArrSearchNudgeCommand
+            {
+                Id = radarrCommandId,
+                ArrApp = "radarr",
+                InstanceKey = GetInstanceKey("radarr", server.Url),
+                InstanceHost = server.Url,
+                CommandName = "MoviesSearch",
+                TargetsJson = "[456]",
+                Mode = "apply",
+                Status = "pending_apply",
+                CooldownKey = "radarr:movie:456",
+                ReasonsJson = "[]",
+                CreatedAt = now.AddHours(-2),
+                NextAllowedAt = now.AddMinutes(-1)
+            });
+        await dbContext.SaveChangesAsync();
+        var config = CreateArrConfigManager(server.Url, mode: "report", includeRadarr: true);
+
+        await new ArrSearchNudgeService(config).RunOnceAsync();
+
+        dbContext.ChangeTracker.Clear();
+        var commandIds = new[] { sonarrCommandId, radarrCommandId };
+        var commands = await dbContext.ArrSearchNudgeCommands
+            .Where(x => commandIds.Contains(x.Id))
+            .ToListAsync();
+        Assert.Equal(2, commands.Count);
+        Assert.All(commands, command =>
+        {
+            Assert.Equal("pending_apply", command.Status);
+            Assert.Null(command.CommandId);
+            Assert.Null(command.CompletedAt);
+        });
+        Assert.Empty(server.PostedCommands);
+    }
+
+    [Fact]
     public async Task GetSearchNudgeCommandsAsync_FiltersByAppStatusModeCommandAndSearch()
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
@@ -831,7 +890,7 @@ public sealed class ArrOperationsServiceTests
         Assert.Empty(server.PostedCommands);
     }
 
-    private static ConfigManager CreateArrConfigManager(string host, string mode)
+    private static ConfigManager CreateArrConfigManager(string host, string mode, bool includeRadarr = false)
     {
         var config = new ConfigManager();
         config.UpdateValues([
@@ -841,6 +900,9 @@ public sealed class ArrOperationsServiceTests
                 ConfigValue = JsonSerializer.Serialize(new ArrConfig
                 {
                     SonarrInstances = [new ArrConfig.ConnectionDetails { Host = host, ApiKey = "test" }],
+                    RadarrInstances = includeRadarr
+                        ? [new ArrConfig.ConnectionDetails { Host = host, ApiKey = new string('r', 8) }]
+                        : [],
                     SearchNudge = new ArrConfig.SearchNudgeOptions
                     {
                         Enabled = true,

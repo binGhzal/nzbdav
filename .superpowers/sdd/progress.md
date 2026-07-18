@@ -100,7 +100,9 @@ record of a continuation decision.
       Release warning-as-error build, scoped format, and shell gates.
 - [x] Complete independent bounded review with no P0/P1 security, semantic,
       runtime-reachability, or production-impact finding.
-- [ ] Commit with sign-off, push without force, and verify exact-HEAD CI.
+- [x] Commit with sign-off, push without force, and verify exact-HEAD CI at
+      `c925ebc84dc8e8bdd3e10fb7f35ee3ee249bc622`, run `29663552874`, with five
+      successful jobs and zero failed steps.
 
 The full local Playwright suite passed `4/5` when cold startup exhausted the
 first test's 30-second budget. The isolated health test passed `3/3`, including
@@ -114,11 +116,16 @@ new container lifecycle result.
 - [x] Trace the defect read-only: `RunOnceAsync` loads current normalized
       options but drains persisted pending apply rows without checking current
       mode before report planning.
-- [ ] Add conclusive RED for enabled current report mode with due pre-existing
+- [x] Add conclusive RED for enabled current report mode with due pre-existing
       Sonarr/Radarr apply rows: zero command POSTs and rows remain unexecuted.
-- [ ] Gate only pending apply processing on current apply mode; preserve report
+- [x] Gate only pending apply processing on current apply mode; preserve report
       planning and disabled/report deployment defaults.
-- [ ] Run focused/full Release gates, independent review, signed push, and
-      exact-HEAD CI.
-- [ ] Stop at a verified clean checkpoint for the external Graphify integration;
-      do not install or modify Graphify in this task.
+- [x] Run focused `1/1`, affected `28/28`, complete local Release `2,868`
+      passed/85 deliberate PostgreSQL-only skips, warning-as-error builds,
+      scoped format, whitespace, gitleaks, and independent review with no
+      P0-P3 finding.
+- [ ] Commit with sign-off, push without force, and verify exact-HEAD CI.
+- [ ] Stop at a verified clean checkpoint. External signed parent
+      `0e9e3583e6b26fedb26c222f06519a02853bc902` already added Graphify
+      configuration and passed exact run `29663671084`; do not rerun or modify
+      Graphify in this task.

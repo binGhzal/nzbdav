@@ -49,7 +49,8 @@ public sealed class ArrSearchNudgeService(
         if (arrConfig.GetInstanceCount() == 0) return;
 
         await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
-        await ProcessPendingApplyCommandsAsync(dbContext, arrConfig, options, ct).ConfigureAwait(false);
+        if (options.Mode == "apply")
+            await ProcessPendingApplyCommandsAsync(dbContext, arrConfig, options, ct).ConfigureAwait(false);
 
         var activeMediaKeys = await GetActiveMediaKeysAsync(
                 dbContext,

@@ -393,7 +393,7 @@ found no P0/P1/P2 and no functional parser defect. The backend parser is sealed
 after accepted review-fix re-review and exact-HEAD run `29661598011`;
 production proxy work remains blocked on the RED route/method/credential matrix.
 
-**Security-tool gate (2026-07-18, locally complete; remote seal pending):**
+**Security-tool gate (2026-07-18, sealed):**
 gitleaks 8.30.1 identified exactly eight `generic-api-key` findings, all in
 deterministic test fixtures introduced by one consolidation commit. Current
 fixtures now preserve their exact length/shape/distinctness/redaction behavior
@@ -403,18 +403,25 @@ suppression exists. Current-tree and full-history scans report zero. Focused
 C# fixture tests passed `170/170`; frontend auth tests passed `24/24`, the full
 frontend unit suite passed `261/261`, and type/client/server builds passed.
 Production and test Release warning-as-error builds, scoped formatter, shell
-syntax/key-shape, and independent bounded review are green. The signed push and
-exact-HEAD CI still gate durability.
+syntax/key-shape, and independent bounded review are green. Signed checkpoint
+`c925ebc84dc8e8bdd3e10fb7f35ee3ee249bc622` passed exact-HEAD GitHub Actions
+run `29663552874`: main verifier and native Transfer glibc/musl x64/arm64, with
+zero failed jobs or steps.
 
-**Urgent pre-proxy incident gate (2026-07-18):** current report mode must never
-drain persisted apply work. Add a RED regression with `Enabled=true`, current
-`Mode=report`, and due pre-existing Sonarr/Radarr `pending_apply` rows; it must
-observe zero command POSTs and unchanged unexecuted rows. Then gate only pending
-apply-command execution on current normalized `Mode=apply`, preserving report
-planning and the deployment defaults `Enabled=false`, `Mode=report`. Complete
-focused/full Release gates, independent review, signed push, and exact-HEAD CI,
-then stop for the additive Graphify tooling handoff before resuming the proxy
-matrix.
+**Urgent pre-proxy incident gate (2026-07-18, locally complete; remote seal
+pending):** current report mode must never drain persisted apply work. The
+tests-only RED proved due pre-existing Sonarr and Radarr `pending_apply` rows
+were both posted and executed under `Enabled=true`, current `Mode=report`.
+Minimal GREEN gates only pending apply-command processing on current normalized
+`Mode=apply`, preserving report planning and deployment defaults
+`Enabled=false`, `Mode=report`. Focused `1/1`, affected `28/28`, complete local
+Release `2,868` passed with 85 deliberate PostgreSQL-only skips, warning-as-
+error builds, scoped format, whitespace, gitleaks, and independent review are
+green. Complete the signed push and exact-HEAD CI, then stop before resuming the
+proxy matrix. External signed commit
+`0e9e3583e6b26fedb26c222f06519a02853bc902` already added clone-local Graphify
+configuration and passed exact run `29663671084`; this incident task must not
+rerun or modify Graphify.
 
 **Files:**
 
