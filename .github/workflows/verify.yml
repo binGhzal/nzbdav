@@ -64,7 +64,12 @@ jobs:
             "$DOTNET_SDK_IMAGE" sh -euc '
               test "$(uname -m)" = "'"$EXPECTED_UNAME"'"
               mkdir -p /tmp/nzbdav
-              cp -a /source/backend /source/backend.Tests /tmp/nzbdav/
+              cp -a \
+                /source/backend \
+                /source/backend.Tests \
+                /source/docs \
+                /source/entrypoint.sh \
+                /tmp/nzbdav/
               cd /tmp/nzbdav
               dotnet restore backend.Tests/backend.Tests.csproj --nologo
               dotnet test backend.Tests/backend.Tests.csproj \

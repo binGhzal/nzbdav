@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Content verification cutoff | 2026-07-18T22:55:28+04:00 |
+| Content verification cutoff | 2026-07-18T23:12:59+04:00 |
 | Handoff status | AUDITED WIP CHECKPOINT; V1 RELEASE NO-GO |
 | Repository | `pinrail` (NZBDav compatibility names remain until the post-freeze rebrand) |
 | Current branch | `pinrail/v1-backend-wip` |
@@ -13,8 +13,8 @@
 | Upstream | `https://github.com/nzbdav-dev/nzbdav.git` |
 | Default remote branch | `origin/main` |
 | Base and merge base | `origin/main` at merge base `86af7b816c496aea2654c438be7fa553b98bb91c` |
-| Current relation | Checkpoint `fb03b0e6a247dfeaff9e9965f045a1fb1e6a11cc` is an ancestor; this handoff refresh makes the branch 32 ahead, 0 behind `origin/main` |
-| Worktree | Clean after the signed checkpoint. Ignored env, Finder, bytecode, TRX, and local artifact files were excluded, not deleted. |
+| Current relation | Checkpoint `fb03b0e6a247dfeaff9e9965f045a1fb1e6a11cc` is an ancestor; this handoff plus the CI repair makes the branch 33 ahead, 0 behind `origin/main` |
+| Worktree | Clean after the signed checkpoint and CI repair. Ignored env, Finder, bytecode, TRX, and local artifact files were excluded, not deleted. |
 | Durability boundary | All reviewed worktree source is tracked in the signed WIP checkpoint. It is safe for remote continuation only, not merge, deployment, image publication, or release. Private Phase 4 remains unreachable and post-V1. |
 | Canonical active plan | [V1 backend release implementation plan](docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md) |
 | Governing design | [V1 backend release design](docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md) |
@@ -78,6 +78,15 @@ Local verification on the checkpoint source:
 The audit found and repaired two cross-platform test-gate defects before the
 checkpoint: unsupported PostgreSQL `EXTRACT(ERA FROM timestamp)` usage and a
 musl-only nanosecond fixture violating the whole-microsecond timestamp contract.
+
+The first remote branch verifier run, GitHub Actions `29656900140`, then exposed
+one Linux-only test assumption and two missing source-contract fixtures in the
+native matrix sandbox. The repair no longer treats SQLite's platform-dependent
+`pragma_database_list.file` display value as proof of the descriptor route, and
+the matrix now copies the tracked `docs` and `entrypoint.sh` fixtures it tests.
+Before commit, the exact descriptor-plus-isolation filter passed 9/9 on both
+pinned glibc/x64 and musl/x64 images, and the release-workflow contract passed
+9/9. Replacement remote Actions evidence is pending this repair push.
 
 All GHCR publication is deliberately disabled while V1 is NO-GO. Branch,
 Dependabot, main, and tag workflows now have read-only contents permission and
