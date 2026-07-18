@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Content verification cutoff | 2026-07-18T23:09:01+00:00 |
+| Content verification cutoff | 2026-07-18T23:47:30+00:00 |
 | Handoff status | AUDITED WIP CHECKPOINT; V1 RELEASE NO-GO |
 | Repository | `pinrail` (NZBDav compatibility names remain until the post-freeze rebrand) |
 | Current branch | `pinrail/v1-backend-wip` |
@@ -13,9 +13,9 @@
 | Upstream | `https://github.com/nzbdav-dev/nzbdav.git` |
 | Default remote branch | `origin/main` |
 | Base and merge base | `origin/main` at merge base `86af7b816c496aea2654c438be7fa553b98bb91c` |
-| Current relation | Signed gitleaks checkpoint `c925ebc84dc8e8bdd3e10fb7f35ee3ee249bc622` is the direct child of carrier review checkpoint `c550bc61a7d16df17278ec755fc2516015d95b1e`; externally added signed Graphify configuration `0e9e3583e6b26fedb26c222f06519a02853bc902` is its direct child, matches `origin/pinrail/v1-backend-wip`, and is 207 ahead, 0 behind `upstream/main` |
-| Worktree | Based on `0e9e3583e6b26fedb26c222f06519a02853bc902`, with only the independently reviewed two-file SearchNudge incident RED/GREEN and canonical documentation pending signed commit/push. Generated Graphify output remains ignored and unstaged; ordinary ignored build/test outputs are not staged. |
-| Durability boundary | Carrier, gitleaks, and externally added Graphify configuration checkpoints are signed, pushed, and exact-HEAD CI-verified; code-bearing carrier/gitleaks slices were independently accepted. The SearchNudge repair is locally green and independently accepted but not durable until signed push and exact-HEAD CI. None of these seals the production proxy, merge, deployment, image publication, or release. Private Phase 4 remains unreachable and post-V1. |
+| Current relation | Signed SearchNudge checkpoint `88e05f87e37147bf60b7fad8b0914df43e219eab` is the direct child of externally added signed Graphify configuration `0e9e3583e6b26fedb26c222f06519a02853bc902`; before this documentation-only seal it matched `origin/pinrail/v1-backend-wip` and was 208 ahead, 0 behind `upstream/main` |
+| Worktree | Clean and synchronized with `origin/pinrail/v1-backend-wip` at `88e05f87e37147bf60b7fad8b0914df43e219eab` before staging this three-document seal. Generated Graphify output remains ignored and unstaged; ordinary ignored build/test outputs are not staged. |
+| Durability boundary | Carrier, gitleaks, externally added Graphify configuration, and SearchNudge incident checkpoints are signed, pushed, and exact-HEAD CI-verified; all locally authored code-bearing slices were independently accepted. This documentation-only child must also pass exact-HEAD CI before the task stops. None of these seals the production proxy, merge, deployment, image publication, or release. Private Phase 4 remains unreachable and post-V1. |
 | Canonical active plan | [V1 backend release implementation plan](docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md) |
 | Governing design | [V1 backend release design](docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md) |
 | Related pull request or issue | No pull request found for this branch by an authenticated read-only `gh pr view` query on 2026-07-16; no linked issue was identified from repository evidence |
@@ -130,8 +130,9 @@ main verifier and native Transfer glibc/musl x64/arm64, with zero failed jobs or
 steps. This exact-parent result remains distinct from completed gitleaks run
 `29663552874`.
 
-The SearchNudge incident is now locally repaired RED-first. The new regression
-proved unchanged production executed both due Sonarr and Radarr apply rows while
+The SearchNudge incident is sealed RED-first at signed checkpoint
+`88e05f87e37147bf60b7fad8b0914df43e219eab`. The new regression proved
+unchanged production executed both due Sonarr and Radarr apply rows while
 current normalized mode was `report`. Minimal GREEN gates only pending apply
 processing on current `apply` mode. It then passed focused `1/1`, the complete
 ARR operations class `28/28`, and the complete local Release backend suite with
@@ -139,6 +140,10 @@ ARR operations class `28/28`, and the complete local Release backend suite with
 and test warning-as-error builds completed with zero warnings/errors; scoped
 formatting, whitespace, gitleaks current/history, and independent review passed
 with no P0-P3 finding. Report planning and disabled/report defaults are unchanged.
+The commit was pushed without force and exact-HEAD GitHub Actions run
+[`29664771054`](https://github.com/binGhzal/pinrail/actions/runs/29664771054)
+completed successfully: the main verifier and native Transfer glibc/musl on
+x64/arm64 passed with five successful jobs and zero failed steps.
 
 All GHCR publication is deliberately disabled while V1 is NO-GO. Branch,
 Dependabot, main, and tag workflows now have read-only contents permission and
@@ -149,23 +154,19 @@ Two independent whole-diff reviews found no P0. The carrier-parser conflict has
 since been resolved without wiring the production proxy. These remaining
 reachable P1 blockers make this branch WIP-only:
 
-1. The SearchNudge current-mode defect is locally repaired and independently
-   accepted, but remains a reachable P1 until its signed commit, push, and exact-
-   HEAD CI complete. Its executable regression proves enabled report mode makes
-   zero Sonarr/Radarr command POSTs and leaves pre-existing apply rows pending.
-2. The exact `/protocol` proxy policy is draft test-only code; production still
+1. The exact `/protocol` proxy policy is draft test-only code; production still
    uses broad pre-auth forwarding and unrestricted WebSocket upgrade paths. The
    frozen backend carrier parser does not close this production boundary.
-3. Raw exceptions remain exposed or persisted through public responses, logs,
+2. Raw exceptions remain exposed or persisted through public responses, logs,
    queue history, and maintenance records.
-4. Missing-file repair still performs detached persistence mutation with
+3. Missing-file repair still performs detached persistence mutation with
    unbounded `Task.Run` work.
-5. STRM generation and maintenance/controller surfaces remain reachable despite
+4. STRM generation and maintenance/controller surfaces remain reachable despite
    the V1 hard-symlink-only contract.
-6. Entrypoint treats process-only `/health` as readiness; dependency readiness
+5. Entrypoint treats process-only `/health` as readiness; dependency readiness
    remains absent.
-7. Blob cleanup deletes the file before durable database commit.
-8. Safe-rclone records or trusts fingerprints without proving live container,
+6. Blob cleanup deletes the file before durable database commit.
+7. Safe-rclone records or trusts fingerprints without proving live container,
    RC, mount, and traversal postconditions.
 
 The existing Pinrail Figma file was authenticated and its metadata resolved on
@@ -201,10 +202,10 @@ and release-candidate gates pass.
    passed independent review and exact-HEAD run `29663552874`. External Graphify
    configuration `0e9e3583e6b26fedb26c222f06519a02853bc902` is the pushed
    parent of the current work; do not rerun or modify Graphify in this task.
-7. The SearchNudge report-mode regression, minimal gate, local Release gates,
-   and independent review are complete. First exact next action: commit with
-   sign-off, push without force, require exact-HEAD CI, update the handoff with
-   that immutable result, and stop at the clean checkpoint.
+7. The SearchNudge report-mode regression is sealed at signed checkpoint
+   `88e05f87e37147bf60b7fad8b0914df43e219eab` and exact-HEAD run
+   `29664771054`. First exact next action: verify this documentation-only
+   child's exact CI, report the clean checkpoint, and stop.
 8. After the explicit continuation, finish the route/method/WebSocket inventory and Task 2B
    council synthesis, then build the RED matrix beside `frontend/server/*.test.ts`:
    anonymous,
@@ -762,7 +763,10 @@ container.
 | 2026-07-18 | SearchNudge focused GREEN and complete ARR operations class | `.` | PASS | 0 | Exact regression passed 1/1; affected class passed 28/28 with apply planning, retry, saturation, and failure behavior retained | Run complete local Release suite |
 | 2026-07-18 | Complete backend Release suite without external PostgreSQL | `.` | PASS | 0 | 2,868 passed, 85 deliberate PostgreSQL-only skips, 0 failed | Exact remote CI remains required |
 | 2026-07-18 | Production/test Release no-incremental warning-as-error builds, scoped formatter, whitespace, and gitleaks current/history | `.` | PASS | 0 | Both builds completed with 0 warnings/errors; format/diff checks exited 0; scanner counts remained 0/0 | First build invocation named a nonexistent project path and is not accepted as evidence; corrected command passed |
-| 2026-07-18 | Independent bounded SearchNudge RED/GREEN review | `.` | PASS | 0 | Exact two-file diff had no P0-P3 finding; both command sinks, persistence reload, apply-mode regressions, report planning, and defaults were verified | Signed commit, push, and exact-HEAD CI remain pending |
+| 2026-07-18 | Independent bounded SearchNudge RED/GREEN review | `.` | PASS | 0 | Exact two-file diff had no P0-P3 finding; both command sinks, persistence reload, apply-mode regressions, report planning, and defaults were verified | Signed checkpoint and exact remote CI were required before closure |
+| 2026-07-18 | Exact-HEAD GitHub Actions run [`29664771054`](https://github.com/binGhzal/pinrail/actions/runs/29664771054) | `.` | PASS | 0 | Signed SearchNudge checkpoint `88e05f87e37147bf60b7fad8b0914df43e219eab` matched the run head; main verifier and native Transfer glibc/musl x64/arm64 all passed in five successful jobs with 0 failed steps | SearchNudge incident gate sealed; V1 remains NO-GO |
+| 2026-07-18 | Initial documentation-seal validation wrapper | `.` | BLOCKED | unavailable | Command safety rejected the wrapper before process creation because it included temporary-report removal; no scan ran and no file changed | Rerun without temporary files or removal |
+| 2026-07-18 | Fail-fast handoff schema, relative-link, checkpoint-consistency, trailing-whitespace, `git diff --check`, and redacted gitleaks current/history gate | `.` | PASS | 0 | Documentation validation passed; gitleaks 8.30.1 reported current 0 and history 0 without printing candidates | Independent read-only review returned no findings before staging |
 
 The .NET commands refreshed only ordinary ignored build/test outputs. The final
 Git-visible set comparison found no generated path attributable to verification,
@@ -868,8 +872,10 @@ so nothing was cleaned. Documentation checks generated no files.
 - The eight deterministic test-fixture gitleaks findings are sealed at signed
   checkpoint `c925ebc84dc8e8bdd3e10fb7f35ee3ee249bc622` and exact run
   `29663552874`, without broad suppression or secret output. The SearchNudge
-  current-mode gate is locally complete; seal its signed push/exact CI and stop
-  before returning to the Task 2B council synthesis and RED proxy matrix.
+  current-mode gate is sealed at signed checkpoint
+  `88e05f87e37147bf60b7fad8b0914df43e219eab` and exact run `29664771054`.
+  Stop at this clean checkpoint before returning to the Task 2B council
+  synthesis and RED proxy matrix.
 
 ### 5. Liveness, public errors, and repair lifecycle
 
@@ -928,35 +934,32 @@ fixtures only.
 
 ## Exact next actions
 
-1. **Seal the locally green SearchNudge incident fix.** Commit the exact reviewed
-   two-file RED/GREEN plus canonical documentation with sign-off, push without
-   force, and require exact-HEAD remote CI. Preserve disabled/report defaults,
-   report planning, and all apply-mode behavior.
-2. **Record the immutable result and stop.** Update this handoff/plan with exact
-   commit, clean worktree/upstream state, and exact-HEAD CI, make the signed
-   documentation checkpoint if needed, verify its exact run, then stop before
-   another implementation turn.
-3. **Do not rerun or modify Graphify in this task.** External signed commit
+1. **Stop and await explicit continuation.** SearchNudge checkpoint
+   `88e05f87e37147bf60b7fad8b0914df43e219eab` and exact-HEAD run
+   `29664771054` are sealed. Verify this documentation-only child's exact run
+   and clean synchronized worktree, report them, and do not begin another
+   implementation turn.
+2. **Do not rerun or modify Graphify in this task.** External signed commit
    `0e9e3583e6b26fedb26c222f06519a02853bc902` already added the clone-local
    configuration. Generated graph output must stay ignored and unstaged.
-4. **After the explicit continuation, finish the wider independent review.** Read every completed Task 2B council report,
+3. **After the explicit continuation, finish the wider independent review.** Read every completed Task 2B council report,
    bind it to the recorded file hashes, and synthesize consensus/conflicts. Do
    not treat pending or truncated reports as approvals.
-5. **Freeze the matrix.** Enumerate exact UI-admin, `/protocol` SAB/ARR, WebDAV,
+4. **Freeze the matrix.** Enumerate exact UI-admin, `/protocol` SAB/ARR, WebDAV,
    signed-media, health, and `/ws` path/method/credential classes. Include
    `URL_BASE`, encoded/double-encoded paths, conflicting/oversized headers,
    WebDAV `Destination`, and zero-upstream-call negatives.
-6. **Write RED tests before production code.** Use a pure classifier plus a
+5. **Write RED tests before production code.** Use a pure classifier plus a
    disposable capture backend; add a disposable ASP.NET/client integration gate
    for normalization and protocol behavior. Do not use placeholders or weaken
    existing frontend behavior.
-7. **Implement the symlink-only removal slice.** RED-first removal of STRM
+6. **Implement the symlink-only removal slice.** RED-first removal of STRM
    settings, generation, maintenance, seed, UI, and docs, while preserving ARR,
    rclone, DFS, cleanup, and organized-link symlink regressions.
-8. **Seal the ARR helper review.** Read the pending independent report, resolve
+7. **Seal the ARR helper review.** Read the pending independent report, resolve
    any material finding, and rerun its focused and affected gates before marking
    the slice complete.
-9. **Only after RED is reviewed, implement minimal GREEN.** Then run frontend
+8. **Only after RED is reviewed, implement minimal GREEN.** Then run frontend
    unit/type/build/E2E, backend focused/full Release gates, container smoke,
    documentation validation, independent security review, and `git diff --check`.
 

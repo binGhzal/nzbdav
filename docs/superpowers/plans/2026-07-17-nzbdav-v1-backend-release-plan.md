@@ -408,8 +408,8 @@ syntax/key-shape, and independent bounded review are green. Signed checkpoint
 run `29663552874`: main verifier and native Transfer glibc/musl x64/arm64, with
 zero failed jobs or steps.
 
-**Urgent pre-proxy incident gate (2026-07-18, locally complete; remote seal
-pending):** current report mode must never drain persisted apply work. The
+**Urgent pre-proxy incident gate (2026-07-18, sealed):** current report mode
+must never drain persisted apply work. The
 tests-only RED proved due pre-existing Sonarr and Radarr `pending_apply` rows
 were both posted and executed under `Enabled=true`, current `Mode=report`.
 Minimal GREEN gates only pending apply-command processing on current normalized
@@ -417,8 +417,11 @@ Minimal GREEN gates only pending apply-command processing on current normalized
 `Enabled=false`, `Mode=report`. Focused `1/1`, affected `28/28`, complete local
 Release `2,868` passed with 85 deliberate PostgreSQL-only skips, warning-as-
 error builds, scoped format, whitespace, gitleaks, and independent review are
-green. Complete the signed push and exact-HEAD CI, then stop before resuming the
-proxy matrix. External signed commit
+green. Signed checkpoint `88e05f87e37147bf60b7fad8b0914df43e219eab`
+was pushed without force; exact-HEAD run `29664771054` completed with the main
+verifier and native Transfer glibc/musl x64/arm64 all successful, zero failed
+jobs, and zero failed steps. Stop before resuming the proxy matrix. External
+signed commit
 `0e9e3583e6b26fedb26c222f06519a02853bc902` already added clone-local Graphify
 configuration and passed exact run `29663671084`; this incident task must not
 rerun or modify Graphify.

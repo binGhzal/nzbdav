@@ -124,8 +124,11 @@ new container lifecycle result.
       passed/85 deliberate PostgreSQL-only skips, warning-as-error builds,
       scoped format, whitespace, gitleaks, and independent review with no
       P0-P3 finding.
-- [ ] Commit with sign-off, push without force, and verify exact-HEAD CI.
-- [ ] Stop at a verified clean checkpoint. External signed parent
+- [x] Commit with sign-off, push without force, and verify exact-HEAD CI at
+      `88e05f87e37147bf60b7fad8b0914df43e219eab`, run `29664771054`, with five
+      successful jobs and zero failed steps.
+- [x] Record the verified clean stop checkpoint. External signed parent
       `0e9e3583e6b26fedb26c222f06519a02853bc902` already added Graphify
       configuration and passed exact run `29663671084`; do not rerun or modify
-      Graphify in this task.
+      Graphify in this task. Verify the documentation-only child's exact run,
+      report its clean synchronized state, and stop before new implementation.
