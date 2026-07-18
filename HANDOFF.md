@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Content verification cutoff | 2026-07-18T21:21:26+00:00 |
+| Content verification cutoff | 2026-07-18T22:24:19+00:00 |
 | Handoff status | AUDITED WIP CHECKPOINT; V1 RELEASE NO-GO |
 | Repository | `pinrail` (NZBDav compatibility names remain until the post-freeze rebrand) |
 | Current branch | `pinrail/v1-backend-wip` |
@@ -13,9 +13,9 @@
 | Upstream | `https://github.com/nzbdav-dev/nzbdav.git` |
 | Default remote branch | `origin/main` |
 | Base and merge base | `origin/main` at merge base `86af7b816c496aea2654c438be7fa553b98bb91c` |
-| Current relation | Carrier implementation `5e5c94a21ad26e432fa10160bf955ee2756d76b6` is the direct child of base `df41e0c15504ad87fb2aaa211c59700a26917b7c`; the signed review-fix checkpoint is its direct child, 2 ahead of `origin/pinrail/v1-backend-wip` and 205 ahead, 0 behind `upstream/main` |
-| Worktree | Tracked files are clean after the signed review-fix checkpoint. The controller-generated review diff remains intentionally untracked; ordinary ignored build/test outputs were refreshed, not staged or deleted. |
-| Durability boundary | Review fixes are tracked in a signed WIP checkpoint but require independent re-review before push. This is not merge, deployment, image-publication, or release evidence. Private Phase 4 remains unreachable and post-V1. |
+| Current relation | Carrier implementation `5e5c94a21ad26e432fa10160bf955ee2756d76b6` is the direct child of base `df41e0c15504ad87fb2aaa211c59700a26917b7c`; signed review-fix checkpoint `c550bc61a7d16df17278ec755fc2516015d95b1e` is its direct child, matches `origin/pinrail/v1-backend-wip`, and is 205 ahead, 0 behind `upstream/main` |
+| Worktree | Based on clean checkpoint `c550bc61a7d16df17278ec755fc2516015d95b1e`, with only the independently reviewed gitleaks fixture-cleanup slice and its documentation pending signed commit/push. No Graphify output exists, and ordinary ignored build/test outputs are not staged. |
+| Durability boundary | The carrier parser and review fixes are signed, independently accepted, pushed, and exact-HEAD CI-verified. The gitleaks cleanup is locally green and independently reviewed but is not durable until its signed push and exact-HEAD CI complete. Neither slice seals the production proxy, merge, deployment, image-publication, or release. Private Phase 4 remains unreachable and post-V1. |
 | Canonical active plan | [V1 backend release implementation plan](docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md) |
 | Governing design | [V1 backend release design](docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md) |
 | Related pull request or issue | No pull request found for this branch by an authenticated read-only `gh pr view` query on 2026-07-16; no linked issue was identified from repository evidence |
@@ -92,6 +92,28 @@ then completed successfully at exact repair commit
 `83cef06f1d43b285d77e9537feda9963337128f5`. The full reusable verifier and
 all four native Transfer jobs, glibc and musl on x64 and arm64, were green.
 
+The carrier implementation and its signed review-fix child were independently
+re-reviewed with no remaining finding, then pushed without force to
+`origin/pinrail/v1-backend-wip`. Exact-HEAD GitHub Actions run
+[`29661598011`](https://github.com/binGhzal/pinrail/actions/runs/29661598011)
+completed successfully at
+`c550bc61a7d16df17278ec755fc2516015d95b1e`: the full verifier and all four
+native Transfer jobs passed, with zero failed jobs or steps. This closes the
+carrier-parser sub-slice only.
+
+Gitleaks 8.30.1 then reproduced exactly eight `generic-api-key` findings in
+deterministic test-only fixtures. Current fixtures now preserve their behavior
+without key-like literals, and immutable history is covered by exactly eight
+fingerprint-scoped exceptions for the single introduction commit. Current-tree
+and full-history scans are both zero. Focused fixture tests, frontend unit/type/
+build gates, production and test Release warning-as-error builds, scoped .NET
+formatting, shell syntax/key-shape checks, and independent review are green.
+The local Docker build is environment-blocked because this host lacks buildx;
+the prior exact-HEAD container smoke is green and the new exact remote run is
+still required. A full local Playwright run passed 4/5 when the cold first login
+consumed the 30-second test budget; the isolated health test then passed 3/3,
+including a cold 13.1-second repetition, with no product or fixture failure.
+
 All GHCR publication is deliberately disabled while V1 is NO-GO. Branch,
 Dependabot, main, and tag workflows now have read-only contents permission and
 run the reusable verification gate only. The gate fails closed on NuGet audit
@@ -101,19 +123,24 @@ Two independent whole-diff reviews found no P0. The carrier-parser conflict has
 since been resolved without wiring the production proxy. These remaining
 reachable P1 blockers make this branch WIP-only:
 
-1. The exact `/protocol` proxy policy is draft test-only code; production still
+1. `ArrSearchNudgeService.RunOnceAsync` drains persisted pending apply commands
+   before planning without checking the current normalized mode. Current report
+   mode can therefore execute stale apply rows. This incident fix preempts the
+   proxy matrix and must prove zero Sonarr/Radarr command POSTs plus unchanged
+   pending rows when enabled report mode encounters pre-existing apply work.
+2. The exact `/protocol` proxy policy is draft test-only code; production still
    uses broad pre-auth forwarding and unrestricted WebSocket upgrade paths. The
    frozen backend carrier parser does not close this production boundary.
-2. Raw exceptions remain exposed or persisted through public responses, logs,
+3. Raw exceptions remain exposed or persisted through public responses, logs,
    queue history, and maintenance records.
-3. Missing-file repair still performs detached persistence mutation with
+4. Missing-file repair still performs detached persistence mutation with
    unbounded `Task.Run` work.
-4. STRM generation and maintenance/controller surfaces remain reachable despite
+5. STRM generation and maintenance/controller surfaces remain reachable despite
    the V1 hard-symlink-only contract.
-5. Entrypoint treats process-only `/health` as readiness; dependency readiness
+6. Entrypoint treats process-only `/health` as readiness; dependency readiness
    remains absent.
-6. Blob cleanup deletes the file before durable database commit.
-7. Safe-rclone records or trusts fingerprints without proving live container,
+7. Blob cleanup deletes the file before durable database commit.
+8. Safe-rclone records or trusts fingerprints without proving live container,
    RC, mount, and traversal postconditions.
 
 The existing Pinrail Figma file was authenticated and its metadata resolved on
@@ -144,25 +171,27 @@ and release-candidate gates pass.
 5. Continue Task 2, `Secure sessions, proxying, errors, and logs`. Do not begin
    readiness, lifecycle, rclone, frontend rebrand, or release-candidate work
    first.
-6. Task 2A is complete and the backend carrier-parser implementation is
-   committed, but the carrier slice remains unsealed. The first independent
-   specification, quality, and bounded-security reviews found no P0/P1/P2 or
-   functional parser defect; their documentation and characterization fixes are
-   applied in an unreviewed signed child. Treat
+6. Task 2A and the backend carrier-parser sub-slice are complete. Signed
+   review-fix checkpoint `c550bc61a7d16df17278ec755fc2516015d95b1e` passed
+   independent re-review and exact-HEAD CI run `29661598011`. Treat
    `frontend/server/request-policy.ts` as an unsealed draft because production
-   does not import it. First exact next action: independently re-review the
-   signed review-fix commit before push, then verify exact remote CI. After
-   acceptance, finish the route/method/WebSocket inventory and Task 2B council
-   synthesis before writing the RED proxy matrix. Do not wire production proxy
-   code first.
-7. Build the Task 2B RED matrix beside `frontend/server/*.test.ts`: anonymous,
+   does not import it. The deterministic gitleaks cleanup is locally green and
+   independently accepted; first seal it with a signed commit, safe push, and
+   exact-HEAD CI.
+7. Then fix the urgent SearchNudge incident RED-first: enabled current report
+   mode with due pre-existing apply rows must issue zero Sonarr/Radarr command
+   POSTs and leave those rows pending. Gate only pending-command execution on
+   current apply mode; preserve report planning and disabled/report defaults.
+8. After that incident gate, finish the route/method/WebSocket inventory and Task 2B
+   council synthesis, then build the RED matrix beside `frontend/server/*.test.ts`:
+   anonymous,
    local-authenticated, trusted Authentik, untrusted source, wrong application,
    encoded/double-encoded separator, prefix-confusion, conflicting API-key, and
-   oversized-header cases.
-8. Preserve independently API-key-authenticated WebDAV/SAB clients while
+   oversized-header cases. Do not wire production proxy code first.
+9. Preserve independently API-key-authenticated WebDAV/SAB clients while
    proving browser UI-admin routes require the selected frontend principal and
    client-supplied internal keys are stripped before server-side injection.
-9. Immediate acceptance criterion: the exact proxy authorization/header matrix
+10. Immediate acceptance criterion: the exact proxy authorization/header matrix
    is green; then continue public-error and log sanitization.
 
 ## Mission and definition of done
@@ -442,9 +471,9 @@ PostgreSQL remains disabled.
 
 ## Not started
 
-V1 Tasks 2-10 are `NOT STARTED`; V1 Task 11 rebrand is `BLOCKED` pending the
-backend freeze and release-candidate evidence. Historical Phase 4 Tasks 9-21
-remain `NOT STARTED` and post-V1:
+V1 Task 2 is `IN PROGRESS`; V1 Tasks 3-10 are `NOT STARTED`; V1 Task 11
+rebrand is `BLOCKED` pending the backend freeze and release-candidate evidence.
+Historical Phase 4 Tasks 9-21 remain `NOT STARTED` and post-V1:
 
 - Task 9: one-deadline MVCC-safe commit reconciliation;
 - Task 10: async parser observer;
@@ -475,7 +504,7 @@ Do not interpret either plan's future task text as implemented behavior.
 | `docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md` | Created by this V1 pivot | Governing V1 design | Freezes Docker/SQLite/one-owner/clean-install boundary and release definition of done | Implement active plan | Six-seat council plus current executable evidence | Durable in the signed WIP checkpoint |
 | `docs/superpowers/plans/2026-07-14-nzbdav-transfer-v3-phase-4.md` | Tracked, modified by this V1 pivot | Deferred post-V1 plan | Preserves Tasks 0-7 and unsealed Task 8 evidence without governing continuation | Resolve catalog-memory finding post-V1 | Current source/tests and conflicting reviews | Planned behavior remains private and non-shipped |
 | `docs/superpowers/specs/2026-07-14-nzbdav-transfer-v3-phase-4-design.md` | Tracked, unchanged by this V1 pivot | Deferred Phase 4 design | Preserves the private PostgreSQL design and memory contract | Post-V1 only | Source/design comparison | Do not broaden runtime reachability |
-| `.superpowers/sdd/progress.md` | Tracked, added by the carrier slice | Supplemental carrier execution ledger | Records the carrier base, RED/GREEN, review, and review-fix gate state | Re-review, push, and exact remote CI | Local evidence plus canonical-document reconciliation | Noncanonical; no continuation step depends on it |
+| `.superpowers/sdd/progress.md` | Tracked, added by the carrier slice | Supplemental carrier execution ledger | Records the carrier base, RED/GREEN, accepted review-fix re-review, push, and exact remote CI | Historical/supporting only after carrier closure | Local and exact remote evidence plus canonical-document reconciliation | Noncanonical; no continuation step depends on it |
 | `.superpowers/sdd/task-2-carrier-contract-brief.md` | Tracked, added by the carrier slice | Supplemental task-scoped brief | Freezes the narrow carrier contract, pinned evidence, scope, and TDD handback | Historical/supporting only after carrier re-review | Source review and canonical-document reconciliation | Noncanonical; canonical continuation remains in `AGENTS.md`, this handoff, the active plan, and design |
 
 ### Historical Task 8 implementation ledger, now deferred post-V1
@@ -699,6 +728,11 @@ container.
 | 2026-07-18 | Same Release parser/SAB/ARR/add-file affected filter | `.` | PASS | 0 | 96 passed, 0 failed, 0 skipped | Complete combined backend regression remains pending and unsealed |
 | 2026-07-18 | Scoped test-file `dotnet format --verify-no-changes` | `.` | PASS | 0 | Exit 0 with no output or change | Warning-as-error build was not rerun because tests compiled and production did not change |
 | 2026-07-18 | Final relative-link, consistency, stale-local-path, review-artifact integrity, and `git diff --check` gates | `.` | PASS | 0 | All checks exited 0; controller review artifact remained byte-identical and untracked | Independent review-fix re-review and exact remote CI remain pending |
+| 2026-07-18 | Independent review-fix re-review plus exact-HEAD GitHub Actions run [`29661598011`](https://github.com/binGhzal/pinrail/actions/runs/29661598011) | `.` | PASS | 0 | Signed checkpoint `c550bc61a7d16df17278ec755fc2516015d95b1e` was accepted, pushed without force, and matched the run head; full verifier plus native Transfer glibc/musl x64/arm64 completed successfully with 0 failed jobs and 0 failed steps | Carrier parser sub-slice sealed; production proxy and release remain NO-GO |
+| 2026-07-18 | Gitleaks 8.30.1 sanitized RED/current-tree/full-history gate | `.` | PASS | 0 | RED reproduced exactly eight test-only findings; GREEN reports current tree 0 and history 0 with exactly eight fingerprint-scoped historical exceptions and no global/path/rule suppression | Signed push and exact-HEAD CI remain pending |
+| 2026-07-18 | Focused fixture behavior, frontend unit/type/client/server builds, production/test Release warning-as-error builds, scoped format, shell syntax/key-shape | `.` | PASS | 0 | C# fixture filter 170/170; frontend auth 24/24 and full unit 261/261; builds 0 warnings/errors; formatting and shell checks exited 0 | Remote container smoke remains required because local buildx is unavailable |
+| 2026-07-18 | Full Playwright plus isolated health discriminator | `frontend` | BLOCKED | 1 | Full suite passed 4/5 after cold startup consumed the 30-second first-test budget; isolated health repetition passed 3/3 with successful responses, final expected DOM, and no console errors | Treat as local environment/timing evidence; exact remote CI is authoritative and no timeout change belongs in this security slice |
+| 2026-07-18 | Independent bounded gitleaks cleanup review | `.` | PASS | 0 | No P0/P1 security, semantic, runtime-reachability, or production-impact finding; one P2 documentation-freshness finding was corrected before commit | Rerun documentation/whitespace validation after the correction |
 
 The .NET commands refreshed only ordinary ignored build/test outputs. The final
 Git-visible set comparison found no generated path attributable to verification,
@@ -760,8 +794,9 @@ so nothing was cleaned. Documentation checks generated no files.
 - V1 WebDAV authentication is fail-closed. `DISABLE_WEBDAV_AUTH=true` now fails
   startup, NWebDav always requires authentication, focused tests pass `8/8`,
   and Release build/format gates are green. The carrier slice's affected gate
-  passed `91/91` initially and `96/96` with review characterization; a complete
-  combined backend regression was not run and remains pending and unsealed.
+  passed `91/91` initially and `96/96` with review characterization. Exact-HEAD
+  run `29661598011` subsequently passed the complete backend verifier and all
+  native Transfer jobs; final release-candidate regression remains future work.
 - Verified V1 import/media scope: hard symlink-only imports. Remove STRM/both
   settings and generation/recreation/conversion surfaces. Plex/ARR use mounted
   `/completed-symlinks` → `/.ids`; AIOStreams uses authenticated WebDAV; Dav
@@ -781,8 +816,10 @@ so nothing was cleaned. Documentation checks generated no files.
 - The first independent carrier specification, quality, and bounded-security
   reviews found no P0/P1/P2 and no functional parser defect. Their
   documentation and characterization fixes are committed without a production
-  change. Independent review-fix re-review and exact remote CI remain pending;
-  do not call the carrier slice sealed.
+  change. Independent review-fix re-review accepted signed checkpoint
+  `c550bc61a7d16df17278ec755fc2516015d95b1e`; exact-HEAD run `29661598011`
+  passed with zero failed jobs or steps. The carrier sub-slice is sealed; the
+  production proxy is not.
 - The adjacent ARR helper defect is GREEN locally, pending independent review.
   `/api/arr/validation` now returns only derived configured-app/search-mode/
   duplicate-policy fields and the helper no longer calls internal-only
@@ -798,10 +835,10 @@ so nothing was cleaned. Documentation checks generated no files.
   `SESSION_KEY_PREVIOUS` provides one-step rotation. Authentik mode requires
   trusted outpost source CIDRs and expected application metadata, and the app
   port must not be exposed as a browser-auth bypass.
-- Next action: independently re-review the signed carrier review-fix commit
-  before push, verify exact remote CI after an accepted push, finish the Task 2B
-  council synthesis, then write the RED route/method/credential matrix before
-  any production proxy edit.
+- The eight deterministic test-fixture gitleaks findings are locally closed
+  without broad suppression or secret output. Seal the signed push/exact CI,
+  then land the urgent SearchNudge current-mode gate before returning to the
+  Task 2B council synthesis and RED route/method/credential matrix.
 
 ### 5. Liveness, public errors, and repair lifecycle
 
@@ -828,16 +865,16 @@ the V1 plan.
 
 | Tool | Current | Required/relevant |
 | --- | --- | --- |
-| macOS | 27.0, arm64 | Current host for pure gates |
-| .NET SDK | 10.0.301 | V1 backend build/test gate |
+| Linux | 7.0.0-27-generic, x86_64 | Current Cyclops verification host |
+| .NET SDK | 10.0.109 | V1 backend build/test gate |
 | .NET/ASP.NET runtime | 10.0.9 | V1 runtime gate |
 | Npgsql | 10.0.3 exact package range | Private post-V1 code only; no V1 runtime path |
 | EF Core | 10.0.9 | Existing model/migrations only |
 | xUnit | 2.9.2 | Current tests |
-| Python | 3.14.6 | V1 operational scripts/tests |
-| Docker | 29.4.0 | V1 image and entrypoint gates; current local image/smoke passed |
-| Node | 22.22.3 | Does not satisfy declared Node 24 |
-| npm | 10.9.8 | Does not satisfy declared npm 11 |
+| Python | 3.14.4 | V1 operational scripts/tests |
+| Docker | 29.1.3 | V1 image and entrypoint gates; exact remote container smoke passed |
+| Node | 24.18.0 | Satisfies declared Node 24 |
+| npm | 11.16.0 | Satisfies declared npm 11 |
 
 Relevant environment variable names:
 
@@ -860,28 +897,36 @@ fixtures only.
 
 ## Exact next actions
 
-1. **Re-review the carrier review-fix commit.** Independently inspect its exact
-   diff and executable evidence for fail-open behavior, secret leakage, source
-   accuracy, and adherence to the frozen contract. Do not push before that
-   re-review accepts the commit; verify exact remote CI after an accepted push.
-2. **Finish the wider independent review.** Read every completed Task 2B council report,
+1. **Seal the locally green gitleaks fixture cleanup.** Commit it with sign-off,
+   push without force, and require exact-HEAD remote CI. Never globally suppress
+   `generic-api-key` or print a candidate value.
+2. **Fix the urgent SearchNudge mode defect RED-first.** Prove that
+   `Enabled=true` plus current `Mode=report` and due pre-existing
+   `pending_apply` rows makes zero Sonarr/Radarr command POSTs and leaves the
+   rows unexecuted. Gate pending-command processing only on current apply mode;
+   preserve disabled/report defaults and report planning. Run focused and full
+   Release gates, independent review, signed push, and exact-HEAD CI.
+3. **Stop at the resulting clean checkpoint for Graphify integration.** Report
+   exact HEAD, worktree/upstream state, and exact-HEAD CI; do not install or
+   modify Graphify in this task.
+4. **After the explicit continuation, finish the wider independent review.** Read every completed Task 2B council report,
    bind it to the recorded file hashes, and synthesize consensus/conflicts. Do
    not treat pending or truncated reports as approvals.
-3. **Freeze the matrix.** Enumerate exact UI-admin, `/protocol` SAB/ARR, WebDAV,
+5. **Freeze the matrix.** Enumerate exact UI-admin, `/protocol` SAB/ARR, WebDAV,
    signed-media, health, and `/ws` path/method/credential classes. Include
    `URL_BASE`, encoded/double-encoded paths, conflicting/oversized headers,
    WebDAV `Destination`, and zero-upstream-call negatives.
-4. **Write RED tests before production code.** Use a pure classifier plus a
+6. **Write RED tests before production code.** Use a pure classifier plus a
    disposable capture backend; add a disposable ASP.NET/client integration gate
    for normalization and protocol behavior. Do not use placeholders or weaken
    existing frontend behavior.
-5. **Implement the symlink-only removal slice.** RED-first removal of STRM
+7. **Implement the symlink-only removal slice.** RED-first removal of STRM
    settings, generation, maintenance, seed, UI, and docs, while preserving ARR,
    rclone, DFS, cleanup, and organized-link symlink regressions.
-6. **Seal the ARR helper review.** Read the pending independent report, resolve
+8. **Seal the ARR helper review.** Read the pending independent report, resolve
    any material finding, and rerun its focused and affected gates before marking
    the slice complete.
-7. **Only after RED is reviewed, implement minimal GREEN.** Then run frontend
+9. **Only after RED is reviewed, implement minimal GREEN.** Then run frontend
    unit/type/build/E2E, backend focused/full Release gates, container smoke,
    documentation validation, independent security review, and `git diff --check`.
 
@@ -955,9 +1000,11 @@ Full rebrand remains deferred until the backend passes.
 
 ## Recovery and rollback
 
-The current V1 state is anchored by signed checkpoint
-`fb03b0e6a247dfeaff9e9965f045a1fb1e6a11cc`. Recovery means returning to that
-checkpoint or the external recovery bundle, never deleting unexplained work.
+The current V1 state is anchored by signed review-fix checkpoint
+`c550bc61a7d16df17278ec755fc2516015d95b1e`, a descendant of consolidation
+checkpoint `fb03b0e6a247dfeaff9e9965f045a1fb1e6a11cc`. Recovery means returning to
+the latest accepted checkpoint or the external recovery bundle, never deleting
+unexplained work.
 
 - Verify the handoff publication commit is an ancestor of `HEAD`, then compare
   branch and status with this handoff.

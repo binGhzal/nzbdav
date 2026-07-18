@@ -314,9 +314,13 @@ startup with an actionable diagnostic, NWebDav authentication is unconditionally
 required, and the bypass branches have been removed. Focused auth tests pass
 `8/8`; Release warning-as-error build and edited-file formatter checks exit
 zero. The Task 2B key-parser slice has landed: its affected gate passed `91/91`
-before review characterization and now passes `96/96`. A complete combined
-backend regression across the WebDAV-auth and carrier changes has not run and
-remains pending and unsealed.
+before review characterization and now passes `96/96`. Signed review-fix
+checkpoint `c550bc61a7d16df17278ec755fc2516015d95b1e` passed independent re-review
+and exact-HEAD GitHub Actions run
+[`29661598011`](https://github.com/binGhzal/pinrail/actions/runs/29661598011):
+the full verifier and native Transfer glibc/musl x64/arm64 jobs completed with
+zero failed jobs or steps. This seals the carrier sub-slice, not the production
+proxy or final release regression.
 
 **Verified import and signed-media decision (2026-07-17):** V1 is hard
 symlink-only. Remove the `strm` and `both` import settings and every STRM
@@ -385,9 +389,32 @@ warnings as errors, and scoped formatter verification passed. Review
 characterization for missing, 512-character, and mixed-case-header boundaries
 now passes focused `34/34` and affected `96/96`, with no production-code change.
 The first independent specification, quality, and bounded-security reviews
-found no P0/P1/P2 and no functional parser defect. The backend parser remains
-unsealed pending review-fix re-review and exact remote CI; production proxy work
-remains blocked on the RED route/method/credential matrix.
+found no P0/P1/P2 and no functional parser defect. The backend parser is sealed
+after accepted review-fix re-review and exact-HEAD run `29661598011`;
+production proxy work remains blocked on the RED route/method/credential matrix.
+
+**Security-tool gate (2026-07-18, locally complete; remote seal pending):**
+gitleaks 8.30.1 identified exactly eight `generic-api-key` findings, all in
+deterministic test fixtures introduced by one consolidation commit. Current
+fixtures now preserve their exact length/shape/distinctness/redaction behavior
+without key-like literals. Immutable history uses exactly eight fingerprint-
+scoped exceptions for that introduction commit; no rule, path, regex, or global
+suppression exists. Current-tree and full-history scans report zero. Focused
+C# fixture tests passed `170/170`; frontend auth tests passed `24/24`, the full
+frontend unit suite passed `261/261`, and type/client/server builds passed.
+Production and test Release warning-as-error builds, scoped formatter, shell
+syntax/key-shape, and independent bounded review are green. The signed push and
+exact-HEAD CI still gate durability.
+
+**Urgent pre-proxy incident gate (2026-07-18):** current report mode must never
+drain persisted apply work. Add a RED regression with `Enabled=true`, current
+`Mode=report`, and due pre-existing Sonarr/Radarr `pending_apply` rows; it must
+observe zero command POSTs and unchanged unexecuted rows. Then gate only pending
+apply-command execution on current normalized `Mode=apply`, preserving report
+planning and the deployment defaults `Enabled=false`, `Mode=report`. Complete
+focused/full Release gates, independent review, signed push, and exact-HEAD CI,
+then stop for the additive Graphify tooling handoff before resuming the proxy
+matrix.
 
 **Files:**
 

@@ -16,7 +16,7 @@ const authenticationEnvironmentKeys = [
 const originalEnvironment = new Map(
   authenticationEnvironmentKeys.map((key) => [key, process.env[key]]),
 );
-const localSessionKey = "0123456789abcdef".repeat(4);
+const localSessionKey = "4".repeat(64);
 
 function restoreEnvironment() {
   for (const key of authenticationEnvironmentKeys) {

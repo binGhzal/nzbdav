@@ -9,7 +9,7 @@ export_name="${prefix}-export"
 rejected_name="${prefix}-rejected"
 missing_key_name="${prefix}-missing-session-key"
 normal_name="${prefix}-normal"
-session_key="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+session_key=$(printf '%064d' 0)
 
 remove_containers() {
   for container in "$migration_name" "$export_name" "$rejected_name" "$missing_key_name" "$normal_name"; do

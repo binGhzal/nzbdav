@@ -124,7 +124,7 @@ public sealed class TransferV3SnapshotVerifierTests
                 output,
                 new TransferV3Limits(1024 * 1024));
         }
-        const string secret = "0123456789abcdef0123456789abcdef";
+        const string redactionCanary = "redaction canary: hook data";
         const string privateUuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
         const string fullDigest =
             "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -133,7 +133,7 @@ public sealed class TransferV3SnapshotVerifierTests
             {
                 if (string.Equals(point, "before-write", StringComparison.Ordinal))
                     throw new InvalidOperationException(
-                        $"{output}|{secret}|{privateUuid}|{fullDigest}");
+                        $"{output}|{redactionCanary}|{privateUuid}|{fullDigest}");
             })));
 
         var failure = await Assert.ThrowsAsync<TransferV3SnapshotVerificationException>(() =>
@@ -141,7 +141,7 @@ public sealed class TransferV3SnapshotVerifierTests
 
         Assert.Equal("index-write", failure.Code);
         Assert.DoesNotContain(output, failure.ToString(), StringComparison.Ordinal);
-        Assert.DoesNotContain(secret, failure.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(redactionCanary, failure.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain(privateUuid, failure.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain(fullDigest, failure.ToString(), StringComparison.Ordinal);
     }

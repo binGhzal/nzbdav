@@ -7,8 +7,8 @@ namespace backend.Tests.Database;
 
 public sealed class PostgreSqlFreshBootstrapContractTests
 {
-    private const string ApiKey = "0123456789abcdef0123456789abcdef";
-    private const string StrmKey = "fedcba9876543210fedcba9876543210";
+    private static readonly string ApiKey = new('1', 32);
+    private static readonly string StrmKey = new('2', 32);
     private const string Canary = "FRESH-BOOTSTRAP-CANARY-DO-NOT-ECHO";
     private const string RootId = "00000000-0000-0000-0000-000000000000";
     private const string Timestamp = "0001-01-01 00:00:00.000000";
@@ -24,8 +24,8 @@ public sealed class PostgreSqlFreshBootstrapContractTests
 
     private static readonly string[] ConfigRows =
     [
-        """{"ConfigName":"api.key","ConfigValue":"0123456789abcdef0123456789abcdef"}""",
-        """{"ConfigName":"api.strm-key","ConfigValue":"fedcba9876543210fedcba9876543210"}""",
+        ConfigRow("api.key", ApiKey),
+        ConfigRow("api.strm-key", StrmKey),
         """{"ConfigName":"database.import-state","ConfigValue":"{\"formatVersion\":3,\"state\":\"fresh\"}"}"""
     ];
 

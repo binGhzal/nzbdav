@@ -11,9 +11,11 @@ record of a continuation decision.
 - Base matched `origin/pinrail/v1-backend-wip` with a clean worktree.
 - Signed carrier implementation commit:
   `5e5c94a21ad26e432fa10160bf955ee2756d76b6`.
-- Task 2B carrier-contract parser: initial review and local review-fix
-  verification are complete; review-fix re-review, push, and exact remote CI
-  remain pending.
+- Signed carrier review-fix commit:
+  `c550bc61a7d16df17278ec755fc2516015d95b1e`.
+- Task 2B carrier-contract parser: implementation, review fixes, independent
+  re-review, push, and exact remote CI are complete. The production proxy
+  remains a separate unimplemented boundary.
 
 ## Task 2B carrier-contract freeze
 
@@ -32,8 +34,8 @@ record of a continuation decision.
       without changing production code.
 - [x] Run the review-fix focused, affected, scoped-format, documentation, and
       whitespace gates.
-- [ ] Independently re-review the signed review-fix commit before push.
-- [ ] Push safe WIP and verify exact remote CI.
+- [x] Independently re-review the signed review-fix commit before push.
+- [x] Push safe WIP and verify exact remote CI.
 
 ## Local execution evidence (2026-07-18)
 
@@ -76,5 +78,47 @@ record of a continuation decision.
 - Scoped test-file formatting, fail-fast documentation consistency/link/
   stale-local-path validation, and `git diff --check` passed after the final
   review-fix ledger edit.
-- The complete combined backend regression remains pending and unsealed. Exact
-  remote CI must follow an accepted review-fix re-review and authorized push.
+- Independent review-fix re-review accepted
+  `c550bc61a7d16df17278ec755fc2516015d95b1e` with no finding.
+- The signed commits were pushed without force. Exact-HEAD GitHub Actions run
+  `29661598011` completed successfully: full verifier plus native Transfer
+  glibc/musl x64/arm64, with zero failed jobs or steps.
+- The carrier sub-slice is sealed. No production proxy implementation or final
+  release-candidate gate is claimed.
+
+## Gitleaks fixture cleanup (2026-07-18)
+
+- [x] Reproduce exactly eight redacted `generic-api-key` findings in
+      deterministic test-only fixtures.
+- [x] Replace current fixture literals with behavior-preserving constructors or
+      generated values; preserve required lengths, shapes, distinctness, and
+      redaction-canary semantics.
+- [x] Add exactly eight immutable-history fingerprint exceptions for the single
+      introduction commit, with no rule/path/regex/global suppression.
+- [x] Prove current-tree and full-history scanner counts are zero.
+- [x] Run focused fixture, frontend auth/full unit/type/build, production/test
+      Release warning-as-error build, scoped format, and shell gates.
+- [x] Complete independent bounded review with no P0/P1 security, semantic,
+      runtime-reachability, or production-impact finding.
+- [ ] Commit with sign-off, push without force, and verify exact-HEAD CI.
+
+The full local Playwright suite passed `4/5` when cold startup exhausted the
+first test's 30-second budget. The isolated health test passed `3/3`, including
+the cold repetition, with successful responses and the expected final DOM. No
+fixture/product regression or timing change is claimed. Local container build
+is environment-blocked because buildx is unavailable; exact remote CI owns the
+new container lifecycle result.
+
+## Urgent SearchNudge incident gate (2026-07-18)
+
+- [x] Trace the defect read-only: `RunOnceAsync` loads current normalized
+      options but drains persisted pending apply rows without checking current
+      mode before report planning.
+- [ ] Add conclusive RED for enabled current report mode with due pre-existing
+      Sonarr/Radarr apply rows: zero command POSTs and rows remain unexecuted.
+- [ ] Gate only pending apply processing on current apply mode; preserve report
+      planning and disabled/report deployment defaults.
+- [ ] Run focused/full Release gates, independent review, signed push, and
+      exact-HEAD CI.
+- [ ] Stop at a verified clean checkpoint for the external Graphify integration;
+      do not install or modify Graphify in this task.

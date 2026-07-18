@@ -3,7 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:5173";
 const mockBackendURL = process.env.PLAYWRIGHT_BACKEND_URL ?? "http://127.0.0.1:5174";
 const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_SERVER === "true";
-const e2eSessionKey = "0123456789abcdef".repeat(4);
+const e2eSessionKey = "3".repeat(64);
 
 export default defineConfig({
   testDir: "./e2e",

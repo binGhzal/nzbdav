@@ -1,8 +1,8 @@
 import type { IncomingMessage } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const currentKey = "0123456789abcdef".repeat(4);
-const nextKey = "fedcba9876543210".repeat(4);
+const currentKey = "1".repeat(64);
+const nextKey = "2".repeat(64);
 const authenticationEnvironmentKeys = [
   "AUTH_MODE",
   "AUTHENTIK_APP_SLUG",
