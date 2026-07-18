@@ -4,7 +4,7 @@
 
 | Field | Value |
 | --- | --- |
-| Content verification cutoff | 2026-07-18T23:12:59+04:00 |
+| Content verification cutoff | 2026-07-18T23:47:26+04:00 |
 | Handoff status | AUDITED WIP CHECKPOINT; V1 RELEASE NO-GO |
 | Repository | `pinrail` (NZBDav compatibility names remain until the post-freeze rebrand) |
 | Current branch | `pinrail/v1-backend-wip` |
@@ -13,8 +13,8 @@
 | Upstream | `https://github.com/nzbdav-dev/nzbdav.git` |
 | Default remote branch | `origin/main` |
 | Base and merge base | `origin/main` at merge base `86af7b816c496aea2654c438be7fa553b98bb91c` |
-| Current relation | Checkpoint `fb03b0e6a247dfeaff9e9965f045a1fb1e6a11cc` is an ancestor; this handoff plus the CI repair makes the branch 33 ahead, 0 behind `origin/main` |
-| Worktree | Clean after the signed checkpoint and CI repair. Ignored env, Finder, bytecode, TRX, and local artifact files were excluded, not deleted. |
+| Current relation | Checkpoint `fb03b0e6a247dfeaff9e9965f045a1fb1e6a11cc` is an ancestor; this handoff, the CI repair, and its verification record make the branch 34 ahead, 0 behind `origin/main` |
+| Worktree | Clean after the signed checkpoint, CI repair, and verification record. Ignored env, Finder, bytecode, TRX, and local artifact files were excluded, not deleted. |
 | Durability boundary | All reviewed worktree source is tracked in the signed WIP checkpoint. It is safe for remote continuation only, not merge, deployment, image publication, or release. Private Phase 4 remains unreachable and post-V1. |
 | Canonical active plan | [V1 backend release implementation plan](docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md) |
 | Governing design | [V1 backend release design](docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md) |
@@ -86,7 +86,11 @@ native matrix sandbox. The repair no longer treats SQLite's platform-dependent
 the matrix now copies the tracked `docs` and `entrypoint.sh` fixtures it tests.
 Before commit, the exact descriptor-plus-isolation filter passed 9/9 on both
 pinned glibc/x64 and musl/x64 images, and the release-workflow contract passed
-9/9. Replacement remote Actions evidence is pending this repair push.
+9/9. Replacement GitHub Actions run
+[`29657383730`](https://github.com/binGhzal/pinrail/actions/runs/29657383730)
+then completed successfully at exact repair commit
+`83cef06f1d43b285d77e9537feda9963337128f5`. The full reusable verifier and
+all four native Transfer jobs, glibc and musl on x64 and arm64, were green.
 
 All GHCR publication is deliberately disabled while V1 is NO-GO. Branch,
 Dependabot, main, and tag workflows now have read-only contents permission and
