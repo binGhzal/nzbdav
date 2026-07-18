@@ -5,7 +5,6 @@ namespace NzbWebDAV.Api.Controllers.GetConfig;
 public class GetConfigRequest
 {
     public HashSet<string> ConfigKeys { get; init; }
-    public bool IncludeSecrets { get; init; }
 
     public GetConfigRequest(HttpContext context)
     {
@@ -14,7 +13,5 @@ public class GetConfigRequest
             .Where(x => x is not null)
             .Select(x => x!)
             .ToHashSet();
-        IncludeSecrets = bool.TryParse(form["include-secrets"].FirstOrDefault(), out var includeSecrets)
-            && includeSecrets;
     }
 }

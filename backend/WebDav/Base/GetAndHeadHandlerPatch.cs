@@ -96,7 +96,10 @@ public class GetAndHeadHandlerPatch : IRequestHandler
             return true;
         }
 
-        if (isHeadRequest && entry is BaseStoreItem storeItem)
+        // BaseStoreItem exposes an authoritative size without opening the backing
+        // stream. Resolve ranges now so expensive Usenet streams receive the
+        // bounded end hint at construction time, and invalid ranges never open.
+        if (entry is BaseStoreItem storeItem)
         {
             response.SetStatus(DavStatusCode.Ok);
             response.Headers.AcceptRanges = "bytes";
@@ -112,14 +115,16 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                 }
 
                 httpContext.Items["RequestedRangeEnd"] = resolved.End;
+                resolvedRange = resolved;
                 response.Headers.ContentRange = $"bytes {resolved.Start}-{resolved.End}/{length}";
-                response.ContentLength = resolved.Length;
                 response.SetStatus(DavStatusCode.PartialContent);
-                return true;
             }
 
-            response.ContentLength = length;
-            return true;
+            response.ContentLength = resolvedRange?.Length ?? length;
+            if (isHeadRequest)
+            {
+                return true;
+            }
         }
 
         // Stream the actual entry
@@ -129,7 +134,9 @@ public class GetAndHeadHandlerPatch : IRequestHandler
             if (stream != Stream.Null)
             {
                 // Set the response
-                response.SetStatus(DavStatusCode.Ok);
+                response.SetStatus(resolvedRange == null
+                    ? DavStatusCode.Ok
+                    : DavStatusCode.PartialContent);
 
                 // Set the expected content length
                 try
@@ -141,35 +148,30 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                         // Add a header that we accept ranges (bytes only)
                         response.Headers.AcceptRanges = "bytes";
 
-                        // Determine the total length
-                        var length = stream.Length;
-
-                        // Check if a range was specified
-                        if (range != null)
+                        // Non-NZBDav store items do not expose a size before open,
+                        // so retain the stream-length fallback for those items.
+                        if (entry is not BaseStoreItem)
                         {
-                            if (!range.TryResolve(length, out var resolved))
+                            var length = stream.Length;
+                            if (range != null)
                             {
-                                response.Headers.ContentRange = $"bytes */{stream.Length}";
-                                response.SetStatus((DavStatusCode)416);
-                                return true;
+                                if (!range.TryResolve(length, out var resolved))
+                                {
+                                    response.Headers.ContentRange = $"bytes */{length}";
+                                    response.SetStatus((DavStatusCode)416);
+                                    return true;
+                                }
+
+                                resolvedRange = resolved;
+                                httpContext.Items["RequestedRangeEnd"] = resolved.End;
+
+                                // Write the range
+                                response.Headers.ContentRange = $"bytes {resolved.Start}-{resolved.End}/{length}";
+
+                                // A valid Range request should produce a partial-content response.
+                                response.SetStatus(DavStatusCode.PartialContent);
                             }
-
-                            resolvedRange = resolved;
-                            httpContext.Items["RequestedRangeEnd"] = resolved.End;
-                            length = resolved.Length;
-
-                            // Write the range
-                            response.Headers.ContentRange = $"bytes {resolved.Start}-{resolved.End}/{stream.Length}";
-
-                            // A valid Range request should produce a partial-content response.
-                            response.SetStatus(DavStatusCode.PartialContent);
                         }
-
-                        // Avoid fixed-length streaming GET bodies. Usenet/rclone reads can fail
-                        // after headers are sent; chunked GET responses let the connection fail
-                        // cleanly instead of producing noisy Content-Length mismatch errors.
-                        if (isHeadRequest)
-                            response.ContentLength = length;
                     }
                 }
                 catch (NotSupportedException)

@@ -19,7 +19,7 @@ separate product/data-migration decision and is intentionally out of scope.
 
 **Architecture:** Keep one shared EF model/behavior base, but use concrete
 SQLite and PostgreSQL contexts with independent migration identities and
-snapshots. The inherited 46 migrations remain SQLite-only and byte-for-byte
+snapshots. The inherited 49 migrations remain SQLite-only and byte-for-byte
 unchanged in their `Up`/`Down` operations. PostgreSQL receives a native
 greenfield baseline plus one operational-object migration. Every production
 migration call goes through a preflight service before EF can create a history
@@ -29,6 +29,13 @@ and fail-and-recreate semantics for a partial PostgreSQL target.
 
 **Tech stack:** .NET 10, EF Core 10.0.9, Npgsql EF Core 10.0.2,
 Microsoft.Data.Sqlite, PostgreSQL 16, xUnit 2.9.2, Docker, Python 3.9+.
+
+**Phase 3 checkpoint (2026-07-14):** The repository now implements the
+transfer-v3 safety foundations plus the complete private SQLite source
+snapshot, independent offline verifier, and typed sealed reconstruction stage.
+Transfer-v3 commands and normal PostgreSQL runtime remain intentionally
+unavailable. The importer, target mutation, ownership transfer, and activation
+work described below remains deferred to later, separately reviewed phases.
 
 ---
 
@@ -77,8 +84,11 @@ Additional gates:
 
 ## Verified Failure Inventory
 
-The inherited 46-migration chain and a fresh Npgsql `EnsureCreated` control each
-expose 209 application columns, but 50 physical definitions differ. For the
+The inherited shared chain now applies 48 of 49 migrations before failing on
+`20260712123000_Add-Arr-Import-Commands`: it exposes 224 application columns,
+while the current native model exposes 240 columns across 28 entities. The 16
+missing columns are the complete `ArrImportCommands` table, and 51 physical
+definitions among the existing columns differ. For the
 four legacy timestamp fields, neither inherited `text` nor Npgsql's default
 `timestamptz` is the desired PostgreSQL contract; the baseline must explicitly
 use `timestamp without time zone`.
@@ -90,11 +100,12 @@ use `timestamp without time zone`.
 | `text` instead of local-wall timestamp | 4 | `DavItems.CreatedAt`; `HistoryItems.CreatedAt`; `QueueItems.{CreatedAt,PauseUntil}` |
 | `integer` instead of `boolean` | 2 | `ArrDownloadCorrelations.ManualLock`; `HistoryCleanupItems.DeleteMountedFiles` |
 | Lost length contract | 3 | `Accounts.Username` (`varchar(255)`); `ArrDownloadCorrelations.Source` (`varchar(32)`); `DavItems.Name` (`varchar(255)`) |
-| Unwanted legacy default | 3 | `DavItems.IdPrefix`; `DavItems.Path`; `DavItems.SubType` |
+| Unwanted legacy default | 4 | `DavItems.IdPrefix`; `DavItems.Path`; `DavItems.SubType`; `RcloneInvalidationItems.Revision` (`DEFAULT 1` retained by the shared chain but absent from the runtime model) |
 
 Additional verified drift and invariants:
 
-- Both controls have 33 structurally matching application constraints and 76
+- The desired native schema has 36 application PK/FK constraints and 84
+  PostgreSQL indexes. The partial shared schema has 34 constraints and 80
   indexes.
 - Configure these PostgreSQL-only index names before scaffolding so the server
   never truncates them implicitly:
@@ -111,10 +122,10 @@ Additional verified drift and invariants:
   `api.key` and `api.strm-key` values.
 - The broken inherited PostgreSQL schema reproduces SQLSTATE `42883`
   (`text = uuid`) and export fails when EF reads a text identifier as `Guid`.
-- There are 47 current `[DbContext(typeof(DavDatabaseContext))]` metadata
-  attributes under `backend/Database/Migrations`: 46 migration classes and one
-  snapshot. Twelve migration classes carry inline metadata rather than a
-  separate designer. Reattribute all 47.
+- There are 50 current `[DbContext(typeof(DavDatabaseContext))]` metadata
+  attributes under `backend/Database/Migrations`: 49 migration classes and one
+  snapshot. Fifteen migration classes carry inline metadata rather than a
+  separate designer. Reattribute all 50.
 - The transfer model contains more UUID fields than the 28 physical mismatches.
   Freeze and validate the complete raw UUID/FK inventory; do not limit source
   validation to those 28 columns.
@@ -197,7 +208,7 @@ git commit -m "fix: preserve local timestamp semantics consistently"
 - Create: `backend/Database/DatabaseMigrator.cs`
 - Modify: all production `new DavDatabaseContext()` call sites
 - Modify: all production/test `Migrate()` and `MigrateAsync()` call sites
-- Modify: all 47 context metadata attributes under
+- Modify: all 50 context metadata attributes under
   `backend/Database/Migrations`
 - Rename: the SQLite model snapshot class/file
 - Create: `backend.Tests/Database/ProviderMigrationOwnershipTests.cs`
@@ -212,7 +223,7 @@ tool.
 
 - [ ] **Step 2: Write migration-ownership RED tests**
 
-Freeze the exact ordered set of all 46 SQLite migration IDs, not only the
+Freeze the exact ordered set of all 49 SQLite migration IDs, not only the
 count. Assert:
 
 ```csharp
@@ -242,7 +253,7 @@ an `rg` assertion so an omitted call site fails review.
 
 - [ ] **Step 4: Reattribute all inherited metadata mechanically**
 
-Change all 47 attributes, including the 12 standalone migration files, to
+Change all 50 attributes, including the 15 inline-metadata migration files, to
 `SqliteDavDatabaseContext`. Rename the SQLite snapshot class/file. Do not alter
 any migration ID or `Up`/`Down` body. Compare normalized method bodies before
 and after and assert identical hashes in the ownership test.
@@ -250,7 +261,7 @@ and after and assert identical hashes in the ownership test.
 The entity types do not change in this plan, so the SQLite snapshot's four
 legacy properties remain `DateTime`. Assert
 `Database.HasPendingModelChanges()` is false for SQLite after reattribution.
-Apply the exact 46-ID chain to a fresh SQLite database and check in a reviewed
+Apply the exact 49-ID chain to a fresh SQLite database and check in a reviewed
 raw manifest of tables, columns, affinities, nullability/defaults, indexes,
 foreign keys, and triggers. This becomes the source-drift contract for v3.
 
@@ -389,16 +400,17 @@ year-1 local-wall sentinel, and prove the stored text is not `-infinity`. On
 PostgreSQL 16 generate each authentication key with the core CSPRNG-backed
 `replace(gen_random_uuid()::text, '-', '')` expression (or a reviewed equivalent
 with at least the same 122 random bits), assert distinct lowercase 32-hex
-format, and forbid `random()`. Seed the reserved target-local ConfigItem
-`database.import-state=fresh`; reject that key if it appears in a SQLite source.
+format, and forbid `random()`. Seed the reserved target-local ConfigItem with
+the exact value `{"formatVersion":3,"state":"fresh"}`; reject
+`database.import-state` if that key appears in a SQLite source.
 Never embed generated values in source, output, or logs.
 
 - [ ] **Step 6: Check in an exact schema manifest**
 
-The reviewed JSON fixture enumerates every one of the 209 columns by table,
+The reviewed JSON fixture enumerates every one of the 240 columns by table,
 column, data type/UDT, nullability, length, default, and applicable collation;
-all 33 constraints; all
-76 explicit index contracts; five bootstrap roots; and both history-table
+all 36 constraints; all
+84 explicit index contracts; five bootstrap roots; and both history-table
 contracts. It also records the two generated-key names and reserved import-state
 row without their secret/runtime values. Generate it from the reviewed desired
 model, inspect the diff, and make physical-schema tests compare the live
@@ -426,7 +438,8 @@ Do not commit or activate this checkpoint. Production `DatabaseMigrator` must
 continue throwing the explicit refusal from Task 2 until both the baseline and
 `20260711211000_PostgreSqlOperationalObjects` exist and are applied. Baseline
 tests may use an internal test-only migration path that still performs raw
-preflight. Task 3 and Task 4 form one atomic commit/release checkpoint.
+preflight. Task 3 and Task 4 form one atomic schema-review checkpoint, not a
+runtime-release checkpoint.
 
 ---
 
@@ -474,11 +487,13 @@ assigned to the four local-wall properties. Correct only those fixtures to
 local/unspecified wall values; do not change UTC fields. Add a source assertion
 so future UTC assignments to these properties fail review.
 
-- [ ] **Step 5: Lift refusal only after the complete behavioral gate**
+- [ ] **Step 5: Keep normal runtime refusal after the complete behavioral gate**
 
-`DatabaseMigrator` may enable PostgreSQL runtime only when the exact baseline
-and operational migration IDs are present/applied and no import-in-progress
-marker exists. Run:
+The exact baseline and operational migration IDs, physical manifest, and
+behavioral suite must pass, but normal PostgreSQL startup remains fail-closed.
+Only an internal test path may apply the native migrations at this checkpoint;
+the exact offline Transfer-v3 maintenance path is the first non-test path that
+may use them. Run:
 
 ```bash
 NZBDAV_TEST_POSTGRES_CONNECTION_STRING="$NZBDAV_TEST_POSTGRES_CONNECTION_STRING" \
@@ -487,7 +502,9 @@ NZBDAV_TEST_POSTGRES_CONNECTION_STRING="$NZBDAV_TEST_POSTGRES_CONNECTION_STRING"
 dotnet test backend.Tests/backend.Tests.csproj --no-restore
 ```
 
-Require the complete backend suite with zero failures and zero skips. A focused
+Require the complete backend suite with zero failures and zero skips. Do not
+lift production refusal until Transfer v3 also passes and a separate promotion
+decision is made. A focused
 schema suite is not sufficient to activate PostgreSQL.
 
 - [ ] **Step 6: Commit Tasks 3 and 4 atomically**
@@ -520,8 +537,11 @@ git commit -m "feat: add complete native PostgreSQL schema"
 Generate and review a checked-in manifest of every transferred table, stable
 sort/keyset key, `Guid`/`Guid?` column, declared FK, application-level external
 reference, bootstrap row, and provider-specific key collation. The current
-model contains 42 UUID properties; confirm that count from the model and raw
+model contains 46 UUID properties; confirm that count from the model and raw
 SQLite schema rather than assuming the 28 mismatch list is complete.
+The manifest and dependency order must include the current `MaintenanceRuns`
+and `ArrImportCommands` tables; a transfer fixture that omits either table is
+not representative of the 49-migration source schema.
 
 String keysets use provider-neutral ordinal UTF-8 byte ordering: SQLite
 `COLLATE BINARY` and PostgreSQL `COLLATE "C"`. Configure both query paths
@@ -566,7 +586,7 @@ representability failure is source review work; no target history table or
 import-state marker may yet exist.
 
 Before any model query/export, require the private source
-`__EFMigrationsHistory` IDs to equal the exact ordered 46-ID set from Task 2,
+`__EFMigrationsHistory` IDs to equal the exact ordered 49-ID set from Task 2,
 with no missing, duplicate, or future ID. Parse and record each nonblank
 `ProductVersion`; a version outside the reviewed supported history is a manual
 review failure, not an ignored warning. Compare raw `sqlite_master`/PRAGMA
@@ -603,10 +623,63 @@ rather than reflection-dependent serialization. The manifest records:
 }
 ```
 
+The snapshot-exporter residue policy applies to `TransferV3SnapshotDirectory`.
+Its unfinalized/error cleanup removes every sensitive file descriptor-relatively
+through the pinned private directory and durably records those removals. POSIX
+does not provide a portable conditional `rmdir` by an already-open directory
+descriptor, so this exporter never performs a separate inode check followed by
+a name-based `rmdir`: a replacement can win that interval. It leaves the
+resulting empty mode-`0700` directory name in place, reports its path as a
+bounded non-secret cleanup diagnostic when it is still identity-proven, and
+requires any later removal to be a separate operator-audited action. Never
+claim that this exporter removed the empty directory name.
+
+The sealed-stage residue policy applies separately to
+`TransferV3SealedSnapshotStage`. Its unpredictable nonce root is created under
+a pinned trusted parent and cleanup operates under the documented quiescent
+same-UID threat model. For an empty owned root, cleanup performs its identity
+check immediately followed by `unlinkat(AT_REMOVEDIR)`. That adjacent sequence
+narrows the replacement interval but does not claim an atomic conditional
+unlink. Unknown, replaced, and nonempty entries are preserved and reported;
+external hard-link residues are reported without following or removing the
+outside link. Its restart audit reports nonce-shaped candidates plus
+unknown-prefixed and unreadable counts, no-follow opens candidate roots only
+for classification, never enumerates or opens their contents, and never deletes
+anything. Neither cleanup policy claims recovery after SIGKILL, daemon loss, or
+host power loss.
+
+An unpredictable staging name reduces accidental collisions but is not a
+security boundary. The native descriptor layer is enabled only for verified
+Linux x64/arm64 and macOS arm64 ABIs; macOS x64 fails closed until separate
+bindings and native x64 tests prove its inode structure layouts. Linux invokes
+the architecture-pinned `renameat2(RENAME_NOREPLACE)` syscall directly so glibc
+and musl behave identically; `ENOSYS`, `EINVAL`, an unknown ABI, or any other
+inability to prove no-replace semantics fails closed and never falls back to
+overwrite-capable `rename`.
+
 Legacy wall values use an exact offset-free format and deserialize as
-`DateTimeKind.Unspecified`; no UTC conversion occurs. Every table digest is a
-rolling hash of canonical lines in stable order. Logs/manifests contain no
+`DateTimeKind.Unspecified`; no UTC conversion occurs. Logs/manifests contain no
 connection strings, keys, ConfigItem values, or raw rows.
+
+The v3 framing and digest contract is exact:
+
+- A canonical line is the exact compact UTF-8 byte sequence produced by the
+  ordered frame DTO writer followed by one LF byte. CRLF, a missing final LF,
+  alternate escaping/property order, whitespace, duplicate/unknown fields, and
+  trailing content are invalid even when a generic JSON parser would accept
+  them.
+- A batch SHA-256 covers its `batch-start` line plus every `row`, `row-start`,
+  `field-chunk`, and `row-end` line, each including LF. It excludes its
+  `batch-end` line to avoid self-reference. `batch-end` carries the verified
+  row count, decoded payload-byte count, last cursor, and that digest.
+- A table SHA-256 covers the table header, every line included by every batch
+  digest, and each verified `batch-end` line, each including LF. It excludes
+  `table-end` to avoid self-reference. `table-end` and the final manifest carry
+  the same verified table digest and counts.
+- `row-end` retains a separate logical field/chunk payload digest covering each
+  field index, chunk index, decoded length, and payload so reconstruction can
+  be checked independently; it does not replace the canonical batch/table
+  digests.
 
 Keep v1/v2 readers only for small compatibility tests and SQLite-only CLI
 coverage. `Program` and `DatabaseTransferService` must reject legacy JSON
@@ -626,7 +699,8 @@ A newly migrated PostgreSQL target is eligible only when it contains exactly:
 - the expected migration history;
 - the five baseline roots;
 - generated `api.key` and `api.strm-key` rows;
-- one reserved `database.import-state=fresh` ConfigItem;
+- one reserved `database.import-state` ConfigItem with the exact value
+  `{"formatVersion":3,"state":"fresh"}`;
 - no other application rows.
 
 A real SQLite source always carries its fixed roots and existing API keys even
@@ -641,18 +715,27 @@ target-local import-state key from source/target content digests. Refuse
 - [ ] **Step 4: Stream the import in dependency order**
 
 Read and validate one JSONL batch at a time, verify rolling digests/counts, and
-commit in bounded table transactions. Do not hold a single 5+ GB transaction
-or deserialize/sort the whole snapshot in memory. A failure marks the target
-tainted; the only retry is drop/recreate and reapply migrations.
+commit in bounded table transactions. The importer observer stages only the
+current batch and receives `CommitBatch` only after its `batch-end`
+count/cursor/digest verifies. Cancellation, corruption, or an observer failure
+rolls back only the current staged batch; earlier verified batches remain
+committed and the target is marked tainted. `CompleteTable` occurs only after
+the `table-end` count/digest verifies and the physical file reaches EOF;
+trailing data prevents table completion without undoing prior verified batch
+commits. Do not hold a single 5+ GB transaction or deserialize/sort the whole
+snapshot in memory. A failure marks the target tainted; the only retry is
+drop/recreate and reapply migrations.
 
-Before the first data batch, commit
-`database.import-state=importing:<manifest-digest>`. Normal application startup
-and all non-import maintenance commands must refuse `importing` or `failed`.
-After all database table/schema/digest checks succeed, atomically set only
-`database-verified:<manifest-digest>`; that state is still non-usable. Preserve
-this reserved row when importing or clearing ConfigItems. SIGKILL/power-loss
-tests must prove the committed marker survives and blocks startup after an
-arbitrary batch; recovery is drop/recreate, not resumption in place.
+Before the first data batch, commit `database.import-state` with the exact value
+`{"formatVersion":3,"state":"importing","manifestSha256":"<64-lowercase-hex>"}`.
+Normal application startup and all non-import maintenance commands must refuse
+`importing` or `failed`. After all database table/schema/digest checks succeed,
+atomically set only
+`{"formatVersion":3,"state":"database-verified","manifestSha256":"<same-64-lowercase-hex>"}`;
+that state is still non-usable. Preserve this reserved row when importing or
+clearing ConfigItems. SIGKILL/power-loss tests must prove the committed marker
+survives and blocks startup after an arbitrary batch; recovery is drop/recreate,
+not resumption in place.
 
 The outer migration helper may publish a mode-`0600`, target-runtime-owned
 `.nzbdav-migration-complete.json` only after blob publication/digest checks,
@@ -660,8 +743,9 @@ final source database/sidecar/blob stability checks, and sensitive-work cleanup
 are durable. Write/fsync/rename/fsync it atomically under the already verified
 target-config descriptor. It contains only the manifest/database/blob digests
 and format version. A transferred deployment starts only when the DB state is
-`database-verified:<digest>` and this external completion marker exists with
-the same digest; `fresh` remains the separate no-transfer greenfield state.
+the exact canonical `database-verified` JSON value above and this external
+completion marker exists with the same digest; exact canonical `fresh` remains
+the separate no-transfer greenfield state.
 Reject/remove stale marker files before a new run. Test crashes at every
 post-database, blob-stage, blob-publish, source-recheck, cleanup, and
 pre/post-marker boundary.
@@ -669,9 +753,8 @@ pre/post-marker boundary.
 Treat `database.import-state` as an internal reserved key: omit it from ordinary
 config reads/exports, reject it in generic update/insert APIs before saving, and
 reject it in source snapshots. Only a dedicated import-state store may perform
-the finite transitions
-`fresh -> importing(digest) -> database-verified(digest)` or
-`importing(digest) -> failed(digest)` for a catchable failure. No API or retry
+the finite canonical transitions `fresh -> importing(A) -> database-verified(A)`
+or `importing(A) -> failed(A)` for a catchable failure. No API or retry
 may transition `importing`/`failed` back to usable; drop/recreate is required.
 Test authorization, visibility, transition ordering, digest match, and
 concurrent generic-update attempts.
@@ -819,7 +902,7 @@ git commit -m "docs: prove PostgreSQL migration rehearsal and rollback"
 - [ ] UTC `DateTimeOffset`/Unix models remain unchanged.
 - [ ] All mixed local/UTC comparisons and wall-clock duration calculations have
   dedicated regression tests.
-- [ ] All 47 inherited metadata attributes map to SQLite; the exact 46 IDs and
+- [ ] All 50 inherited metadata attributes map to SQLite; the exact 49 IDs and
   every `Up`/`Down` body are unchanged.
 - [ ] The base context owns no migrations and every production construction and
   migration call uses the provider factory/migrator.
@@ -829,7 +912,7 @@ git commit -m "docs: prove PostgreSQL migration rehearsal and rollback"
 - [ ] Raw preflight executes before EF history creation and rejected schema
   digests are byte-for-byte unchanged.
 - [ ] The PostgreSQL baseline's guard is its first mutation.
-- [ ] The checked-in manifest covers all 209 columns, 33 constraints, and 76
+- [ ] The checked-in manifest covers all 240 columns, 36 constraints, and 84
   index contracts, including the two explicit short names.
 - [ ] Exactly nine final triggers/functions exist; the obsolete history cleanup
   trigger does not.
@@ -842,7 +925,7 @@ git commit -m "docs: prove PostgreSQL migration rehearsal and rollback"
 - [ ] UUID pagination uses canonical network-byte order from the normalized
   disk index and passes mixed-case batch-boundary tests.
 - [ ] Private-source migration history and raw SQLite schema exactly match the
-  reviewed 46-migration manifest before model queries.
+  reviewed 49-migration manifest before model queries.
 - [ ] Transfer memory is row-and-byte bounded; giant fields are chunked or
   rejected by the approved ceiling and no whole-database list/sort remains.
 - [ ] String keysets use explicit SQLite BINARY/PostgreSQL C ordering and pass

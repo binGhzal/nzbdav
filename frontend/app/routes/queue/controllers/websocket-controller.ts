@@ -25,6 +25,7 @@ const topicSubscriptions = {
 export function initializeQueueHistoryWebsocket(
     queueEvents: QueueEvents,
     historyEvents: HistoryEvents,
+    requestQueueRefresh: () => void,
 ) {
     const onWebsocketMessage = useCallback((topic: string, message: string) => {
         if (topic == topicNames.queueItemAdded) {
@@ -52,9 +53,12 @@ export function initializeQueueHistoryWebsocket(
         return createReconnectingWebSocket({
             createSocket: () => new WebSocket(getWebsocketUrl()),
             onMessage: onWebsocketMessage,
-            onOpen: socket => socket.send(JSON.stringify(topicSubscriptions)),
+            onOpen: socket => {
+                socket.send(JSON.stringify(topicSubscriptions));
+                requestQueueRefresh();
+            },
         });
-    }, [onWebsocketMessage]);
+    }, [onWebsocketMessage, requestQueueRefresh]);
 }
 
 function parseJsonMessage<T>(message: string): T | null {

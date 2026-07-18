@@ -23,6 +23,18 @@ describe("getQueueRemovalIds", () => {
         expect(result.uploadingIds).toEqual(new Set(["uploading"]));
         expect(result.queuedIds).toEqual(new Set());
     });
+
+    it("does not send automatic repair rows to queue deletion", () => {
+        const repair = {
+            ...queueSlot("repair", false),
+            can_manage: false,
+        } as PresentationQueueSlot;
+
+        const result = getQueueRemovalIds([repair], new Set(["repair"]));
+
+        expect(result.uploadingIds).toEqual(new Set());
+        expect(result.queuedIds).toEqual(new Set());
+    });
 });
 
 function queueSlot(nzo_id: string, isUploading: boolean): PresentationQueueSlot {

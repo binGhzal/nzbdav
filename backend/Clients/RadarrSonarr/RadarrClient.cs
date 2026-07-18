@@ -14,8 +14,14 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     public Task<List<RadarrMovie>> GetMoviesAsync(CancellationToken ct = default) =>
         Get<List<RadarrMovie>>($"/movie", ct);
 
-    public Task<RadarrQueue> GetRadarrQueueAsync(CancellationToken ct = default) =>
+    public virtual Task<RadarrQueue> GetRadarrQueueAsync(CancellationToken ct = default) =>
         Get<RadarrQueue>($"/queue?protocol=usenet&pageSize=5000", ct);
+
+    public virtual Task<ArrCommand> DownloadedMoviesScanAsync(
+        string path,
+        string downloadClientId,
+        CancellationToken ct = default) =>
+        CommandAsync(new { name = "DownloadedMoviesScan", path, downloadClientId, importMode = 0 }, ct);
 
     public Task<ArrPagedResponse<RadarrMissingMovie>> GetMissingMoviesAsync(int pageSize = 500, CancellationToken ct = default) =>
         Get<ArrPagedResponse<RadarrMissingMovie>>(

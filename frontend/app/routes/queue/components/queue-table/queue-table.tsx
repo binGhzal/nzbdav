@@ -68,12 +68,18 @@ export function QueueTable({
     const [isPausingQueue, setIsPausingQueue] = useState(false);
     const [operationError, setOperationError] = useState<string | null>(null);
     const totalPages = Math.max(1, Math.ceil(totalQueueCount / pageSize));
-    const selectedQueueIds = useMemo(
-        () => new Set<string>(queueSlots.filter(x => !!x.isSelected).map(x => x.nzo_id)),
+    const manageableQueueSlots = useMemo(
+        () => queueSlots.filter(x => x.can_manage !== false),
         [queueSlots]
     );
+    const selectedQueueIds = useMemo(
+        () => new Set<string>(manageableQueueSlots.filter(x => !!x.isSelected).map(x => x.nzo_id)),
+        [manageableQueueSlots]
+    );
     var selectedCount = selectedQueueIds.size;
-    var headerCheckboxState: TriCheckboxState = selectedCount === 0 ? 'none' : selectedCount === queueSlots.length ? 'all' : 'some';
+    var headerCheckboxState: TriCheckboxState = selectedCount === 0
+        ? 'none'
+        : selectedCount === manageableQueueSlots.length ? 'all' : 'some';
 
     // row events
     const onRowIsSelectedChanged = useCallback((id: string, isSelected: boolean) => {
@@ -90,8 +96,8 @@ export function QueueTable({
 
     // table events
     const onSelectAll = useCallback((isSelected: boolean) => {
-        onIsSelectedChanged(new Set<string>(queueSlots.map(x => x.nzo_id)), isSelected);
-    }, [queueSlots, onIsSelectedChanged]);
+        onIsSelectedChanged(new Set<string>(manageableQueueSlots.map(x => x.nzo_id)), isSelected);
+    }, [manageableQueueSlots, onIsSelectedChanged]);
 
     const onRemove = useCallback(() => {
         setPendingRemoval({ nzoIds: selectedQueueIds, label: `${selectedCount} selected item(s)` });
@@ -99,7 +105,9 @@ export function QueueTable({
 
     const onBulkRemove = useCallback((category: string | null, label: string) => {
         const nzoIds = new Set(queueSlots
-            .filter(x => !x.isUploading && (category === null || x.cat.toLowerCase() === category))
+            .filter(x => x.can_manage !== false
+                && !x.isUploading
+                && (category === null || x.cat.toLowerCase() === category))
             .map(x => x.nzo_id));
 
         if (nzoIds.size === 0) return;
@@ -179,17 +187,35 @@ export function QueueTable({
 
     const sectionTitle = (
         <div className={styles.sectionTitle}>
-            <h3 onClick={onUploadClicked} style={{ cursor: 'pointer' }}>
-                Queue
-            </h3>
+            <h3>Queue</h3>
+            {onUploadClicked &&
+                <button
+                    type="button"
+                    className={styles.uploadButton}
+                    onClick={onUploadClicked}>
+                    Upload NZB
+                </button>
+            }
             {headerCheckboxState !== 'none' &&
                 <ActionButton type="delete" onClick={onRemove} />
             }
-            {queueSlots.length > 0 &&
+            {manageableQueueSlots.length > 0 &&
                 <>
-                    <ActionButton type="delete" text="All" onClick={() => onBulkRemove(null, "queue")} />
-                    <ActionButton type="delete" text="TV" onClick={() => onBulkRemove("tv", "TV")} />
-                    <ActionButton type="delete" text="Movies" onClick={() => onBulkRemove("movies", "movie")} />
+                    <ActionButton
+                        type="delete"
+                        text="Visible"
+                        ariaLabel="Delete visible queue items"
+                        onClick={() => onBulkRemove(null, "visible queue")} />
+                    <ActionButton
+                        type="delete"
+                        text="Visible TV"
+                        ariaLabel="Delete visible TV queue items"
+                        onClick={() => onBulkRemove("tv", "visible TV")} />
+                    <ActionButton
+                        type="delete"
+                        text="Visible Movies"
+                        ariaLabel="Delete visible movie queue items"
+                        onClick={() => onBulkRemove("movies", "visible movie")} />
                 </>
             }
             <ActionButton
@@ -260,6 +286,7 @@ export function getQueueRemovalIds(queueSlots: PresentationQueueSlot[], selected
 
     for (const slot of queueSlots) {
         if (!selectedIds.has(slot.nzo_id)) continue;
+        if (slot.can_manage === false) continue;
         if (slot.isUploading) uploadingIds.add(slot.nzo_id);
         else queuedIds.add(slot.nzo_id);
     }
@@ -291,6 +318,7 @@ function QueueFilters({
                     key={filter.value}
                     type="button"
                     className={value === filter.value ? styles.queueFilterActive : styles.queueFilter}
+                    aria-pressed={value === filter.value}
                     onClick={() => onChange(filter.value)}
                 >
                     {filter.label}
@@ -329,24 +357,26 @@ export const QueueRow = memo(({
     const [isChangingPriority, setIsChangingPriority] = useState(false);
     const [operationError, setOperationError] = useState<string | null>(null);
     const isActivelyUploading = slot.isUploading && slot.status == "uploading";
+    const canManage = slot.can_manage !== false;
 
     // events
     const onRemove = useCallback(() => {
         // immediately remove uploading items, without need of confirmation.
+        if (!canManage) return;
         if (slot.isUploading) {
             onRemoved(slot.nzo_id);
             return;
         }
 
         setIsConfirmingRemoval(true);
-    }, [setIsConfirmingRemoval]);
+    }, [canManage, slot.isUploading, slot.nzo_id, onRemoved]);
 
     const onCancelRemoval = useCallback(() => {
         setIsConfirmingRemoval(false);
     }, [setIsConfirmingRemoval]);
 
     const onConfirmRemoval = useCallback(async () => {
-        if (slot.isUploading) return;
+        if (!canManage || slot.isUploading) return;
         setIsConfirmingRemoval(false);
         setOperationError(null);
         onIsRemovingChanged(slot.nzo_id, true);
@@ -368,10 +398,10 @@ export const QueueRow = memo(({
             setOperationError(`Failed to remove queue item: ${error instanceof Error ? error.message : "unknown error"}.`);
         }
         onIsRemovingChanged(slot.nzo_id, false);
-    }, [slot.nzo_id, setIsConfirmingRemoval, setOperationError, onIsRemovingChanged, onRemoved]);
+    }, [canManage, slot.isUploading, slot.nzo_id, setIsConfirmingRemoval, setOperationError, onIsRemovingChanged, onRemoved]);
 
     const onChangePriority = useCallback(async (priority: string) => {
-        if (slot.isUploading || priority === slot.priority) return;
+        if (!canManage || slot.isUploading || priority === slot.priority) return;
 
         setOperationError(null);
         setIsChangingPriority(true);
@@ -395,7 +425,7 @@ export const QueueRow = memo(({
             setOperationError(`Failed to change queue item priority: ${error instanceof Error ? error.message : "unknown error"}.`);
         }
         setIsChangingPriority(false);
-    }, [slot.isUploading, slot.priority, slot.nzo_id, onPriorityChanged, setIsChangingPriority, setOperationError]);
+    }, [canManage, slot.isUploading, slot.priority, slot.nzo_id, onPriorityChanged, setIsChangingPriority, setOperationError]);
 
     // view
     const priority = priorityOptions.includes(slot.priority) ? slot.priority : "Normal";
@@ -409,7 +439,7 @@ export const QueueRow = memo(({
         : null;
     const actions = (
         <>
-            {!slot.isUploading &&
+            {canManage && !slot.isUploading &&
                 <div style={{ minWidth: "92px", opacity: isChangingPriority ? 0.5 : 1 }}>
                     <SimpleDropdown
                         type="bordered"
@@ -419,7 +449,10 @@ export const QueueRow = memo(({
                         ariaLabel={`Priority for ${slot.filename}`} />
                 </div>
             }
-            <ActionButton type="delete" disabled={!!slot.isRemoving || isActivelyUploading} onClick={onRemove} />
+            {canManage
+                ? <ActionButton type="delete" disabled={!!slot.isRemoving || isActivelyUploading} onClick={onRemove} />
+                : <span>Automatic</span>
+            }
         </>
     );
 
@@ -436,6 +469,7 @@ export const QueueRow = memo(({
                 fileSizeBytes={Number(slot.mb) * 1024 * 1024}
                 meta={arrMeta}
                 actions={actions}
+                isSelectable={canManage}
                 onRowSelectionChanged={isSelected => onIsSelectedChanged(slot.nzo_id, isSelected)}
                 error={slot.error}
             />

@@ -10,6 +10,21 @@ public class DavDatabaseContextFactory : IDesignTimeDbContextFactory<DavDatabase
 {
     public DavDatabaseContext CreateDbContext(string[] args)
     {
-        return new DavDatabaseContext();
+        return new DavDatabaseContext(
+            DavDatabaseContext.CreateSqliteOptions(enforceProviderSelection: false));
+    }
+}
+
+/// <summary>
+/// Creates the PostgreSQL migration owner for explicit design-time commands.
+/// Normal runtime startup remains refused until its native baseline is installed.
+/// </summary>
+internal sealed class PostgreSqlDavDatabaseContextFactory
+    : IDesignTimeDbContextFactory<PostgreSqlDavDatabaseContext>
+{
+    public PostgreSqlDavDatabaseContext CreateDbContext(string[] args)
+    {
+        return new PostgreSqlDavDatabaseContext(
+            PostgreSqlDavDatabaseContext.CreatePostgreSqlOptions());
     }
 }

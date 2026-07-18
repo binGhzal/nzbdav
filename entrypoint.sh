@@ -30,21 +30,29 @@ maintenance_usage() {
     echo "Usage: /entrypoint.sh [--db-migration [target] | --db-export-json PATH | --db-import-json PATH [--replace]]" >&2
 }
 
+is_maintenance_value() {
+    case "${1:-}" in
+        ""|-*) return 1 ;;
+        *[![:space:]]*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 validate_maintenance_args() {
     case "${1:-}" in
         --db-migration)
             [ "$#" -eq 1 ] || {
-                [ "$#" -eq 2 ] && [ -n "$2" ] && [ "${2#--}" = "$2" ]
+                [ "$#" -eq 2 ] && is_maintenance_value "$2"
             } || return 64
             ;;
         --db-export-json)
-            [ "$#" -eq 2 ] && [ -n "$2" ] && [ "${2#--}" = "$2" ] || return 64
+            [ "$#" -eq 2 ] && is_maintenance_value "$2" || return 64
             ;;
         --db-import-json)
             [ "$#" -eq 2 ] || {
                 [ "$#" -eq 3 ] && [ "$3" = "--replace" ]
             } || return 64
-            [ -n "$2" ] && [ "${2#--}" = "$2" ] || return 64
+            is_maintenance_value "$2" || return 64
             ;;
         *)
             return 64
@@ -78,6 +86,11 @@ terminate() {
 }
 
 main() {
+if [ "$#" -gt 0 ] && ! validate_maintenance_args "$@"; then
+    maintenance_usage
+    return 64
+fi
+
 trap terminate TERM INT
 
 # Use env vars or default to 1000

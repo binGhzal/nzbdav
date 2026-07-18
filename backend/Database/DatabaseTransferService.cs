@@ -1,11 +1,17 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Database.Transfer;
 
 namespace NzbWebDAV.Database;
 
 public static class DatabaseTransferService
 {
+    public const string PostgreSqlLegacyExportRefusalMessage =
+        "Legacy database transfer v2 export is SQLite-only; PostgreSQL requires the provider-neutral transfer v3 workflow.";
+    public const string PostgreSqlLegacyImportRefusalMessage =
+        "Legacy database transfer v2 import is SQLite-only; PostgreSQL requires the provider-neutral transfer v3 workflow.";
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true
@@ -18,6 +24,16 @@ public static class DatabaseTransferService
         CancellationToken ct = default
     )
     {
+        EnsureLegacySqliteOwner(dbContext, PostgreSqlLegacyExportRefusalMessage);
+        var configItems = await dbContext.ConfigItems
+            .AsNoTracking()
+            .Where(x => x.ConfigName != TransferV3ReservedConfigPolicy.ImportStateKey)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        configItems = configItems
+            .Where(item => !TransferV3ReservedConfigPolicy.IsReserved(item.ConfigName))
+            .ToList();
+
         var snapshot = new DatabaseTransferSnapshot
         {
             ExportedAt = DateTimeOffset.UtcNow,
@@ -32,7 +48,7 @@ public static class DatabaseTransferService
             QueueNzbContents = await dbContext.QueueNzbContents.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
             HealthCheckResults = await dbContext.HealthCheckResults.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
             HealthCheckStats = await dbContext.HealthCheckStats.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
-            ConfigItems = await dbContext.ConfigItems.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
+            ConfigItems = configItems,
             BlobCleanupItems = await dbContext.BlobCleanupItems.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
             HistoryCleanupItems = await dbContext.HistoryCleanupItems.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
             DavCleanupItems = await dbContext.DavCleanupItems.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
@@ -47,7 +63,9 @@ public static class DatabaseTransferService
             QueuePriorityHints = await dbContext.QueuePriorityHints.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
             ArrSearchNudgeCommands = await dbContext.ArrSearchNudgeCommands.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
             ArrDownloadLifecycleEvents = await dbContext.ArrDownloadLifecycleEvents.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
-            ImportReceipts = await dbContext.ImportReceipts.AsNoTracking().ToListAsync(ct).ConfigureAwait(false)
+            ImportReceipts = await dbContext.ImportReceipts.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
+            ArrImportCommands = await dbContext.ArrImportCommands.AsNoTracking().ToListAsync(ct).ConfigureAwait(false),
+            MaintenanceRuns = await dbContext.MaintenanceRuns.AsNoTracking().ToListAsync(ct).ConfigureAwait(false)
         };
 
         var directory = Path.GetDirectoryName(Path.GetFullPath(outputPath));
@@ -65,14 +83,19 @@ public static class DatabaseTransferService
         CancellationToken ct = default
     )
     {
+        EnsureLegacySqliteOwner(dbContext, PostgreSqlLegacyImportRefusalMessage);
+
         await using var stream = File.OpenRead(inputPath);
         var snapshot = await JsonSerializer.DeserializeAsync<DatabaseTransferSnapshot>(stream, JsonOptions, ct)
             .ConfigureAwait(false)
             ?? throw new InvalidDataException("Database transfer snapshot is empty or invalid.");
         if (snapshot.Version is not (1 or DatabaseTransferSnapshot.CurrentVersion))
             throw new InvalidDataException($"Unsupported database transfer snapshot version {snapshot.Version}.");
+        if (snapshot.ConfigItems.Any(item =>
+                TransferV3ReservedConfigPolicy.IsReserved(item.ConfigName)))
+            throw new InvalidDataException(TransferV3ReservedConfigPolicy.LegacySnapshotMessage);
 
-        await dbContext.Database.MigrateAsync(cancellationToken: ct).ConfigureAwait(false);
+        await DatabaseMigrator.MigrateAsync(dbContext, cancellationToken: ct).ConfigureAwait(false);
         var hasRows = await HasApplicationRowsAsync(dbContext, ct).ConfigureAwait(false);
         if (hasRows && !replace)
             throw new InvalidOperationException("Target database is not empty. Re-run with --replace to overwrite it.");
@@ -112,6 +135,8 @@ public static class DatabaseTransferService
             await AddAndSaveAsync(dbContext, snapshot.ArrSearchNudgeCommands, ct).ConfigureAwait(false);
             await AddAndSaveAsync(dbContext, snapshot.ArrDownloadLifecycleEvents, ct).ConfigureAwait(false);
             await AddAndSaveAsync(dbContext, snapshot.ImportReceipts, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.ArrImportCommands, ct).ConfigureAwait(false);
+            await AddAndSaveAsync(dbContext, snapshot.MaintenanceRuns, ct).ConfigureAwait(false);
 
             await tx.CommitAsync(ct).ConfigureAwait(false);
             return new DatabaseTransferImportResult(snapshot.TotalRows);
@@ -142,13 +167,20 @@ public static class DatabaseTransferService
                || await dbContext.QueueItems.AnyAsync(ct).ConfigureAwait(false)
                || await dbContext.HistoryItems.AnyAsync(ct).ConfigureAwait(false)
                || await dbContext.ImportReceipts.AnyAsync(ct).ConfigureAwait(false)
-               || await dbContext.ConfigItems.AnyAsync(ct).ConfigureAwait(false)
+               || await dbContext.ArrImportCommands.AnyAsync(ct).ConfigureAwait(false)
+               || await dbContext.MaintenanceRuns.AnyAsync(ct).ConfigureAwait(false)
+               || await dbContext.ConfigItems
+                   .AnyAsync(
+                       x => x.ConfigName != TransferV3ReservedConfigPolicy.ImportStateKey,
+                       ct)
+                   .ConfigureAwait(false)
                || await dbContext.Accounts.AnyAsync(ct).ConfigureAwait(false);
     }
 
     private static async Task ClearApplicationTablesAsync(DavDatabaseContext dbContext, CancellationToken ct)
     {
         await ClearGeneratedOperationalTablesAsync(dbContext, ct).ConfigureAwait(false);
+        await dbContext.ArrImportCommands.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.ImportReceipts.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.ArrDownloadLifecycleEvents.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.ArrSearchNudgeCommands.ExecuteDeleteAsync(ct).ConfigureAwait(false);
@@ -167,8 +199,12 @@ public static class DatabaseTransferService
         await dbContext.QueueItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.HistoryItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.Items.ExecuteDeleteAsync(ct).ConfigureAwait(false);
-        await dbContext.ConfigItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        await dbContext.ConfigItems
+            .Where(x => x.ConfigName != TransferV3ReservedConfigPolicy.ImportStateKey)
+            .ExecuteDeleteAsync(ct)
+            .ConfigureAwait(false);
         await dbContext.Accounts.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        await dbContext.MaintenanceRuns.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await ClearGeneratedOperationalTablesAsync(dbContext, ct).ConfigureAwait(false);
     }
 
@@ -180,6 +216,16 @@ public static class DatabaseTransferService
         await dbContext.DavCleanupItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.HistoryCleanupItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         await dbContext.BlobCleanupItems.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+    }
+
+    private static void EnsureLegacySqliteOwner(DavDatabaseContext dbContext, string refusalMessage)
+    {
+        if (dbContext.GetType() != typeof(DavDatabaseContext)
+            || !string.Equals(
+                dbContext.Database.ProviderName,
+                "Microsoft.EntityFrameworkCore.Sqlite",
+                StringComparison.Ordinal))
+            throw new InvalidOperationException(refusalMessage);
     }
 }
 
@@ -215,6 +261,8 @@ public sealed class DatabaseTransferSnapshot
     public List<ArrSearchNudgeCommand> ArrSearchNudgeCommands { get; set; } = [];
     public List<ArrDownloadLifecycleEvent> ArrDownloadLifecycleEvents { get; set; } = [];
     public List<ImportReceipt> ImportReceipts { get; set; } = [];
+    public List<ArrImportCommand> ArrImportCommands { get; set; } = [];
+    public List<MaintenanceRun> MaintenanceRuns { get; set; } = [];
 
     public int TotalRows =>
         Accounts.Count + Items.Count + NzbFiles.Count + RarFiles.Count + MultipartFiles.Count
@@ -223,7 +271,8 @@ public sealed class DatabaseTransferSnapshot
         + DavCleanupItems.Count + NzbNames.Count + NzbBlobCleanupItems.Count + RcloneInvalidationItems.Count
         + WorkerJobs.Count + RepairRuns.Count + RepairEntryHealth.Count + RepairBrokenFiles.Count
         + ArrDownloadCorrelations.Count + QueuePriorityHints.Count + ArrSearchNudgeCommands.Count
-        + ArrDownloadLifecycleEvents.Count + ImportReceipts.Count;
+        + ArrDownloadLifecycleEvents.Count + ImportReceipts.Count + ArrImportCommands.Count
+        + MaintenanceRuns.Count;
 }
 
 public sealed record DatabaseTransferImportResult(int ImportedRows);

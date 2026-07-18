@@ -5,6 +5,7 @@ namespace NzbWebDAV.Models.Nzb;
 public class NzbFile
 {
     public required string Subject { get; init; }
+    public DateTimeOffset? PostedAt { get; init; }
     public List<NzbSegment> Segments { get; } = [];
 
     public string[] GetSegmentIds()

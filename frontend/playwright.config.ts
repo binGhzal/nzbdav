@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:5173";
 const mockBackendURL = process.env.PLAYWRIGHT_BACKEND_URL ?? "http://127.0.0.1:5174";
 const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_SERVER === "true";
+const e2eSessionKey = "0123456789abcdef".repeat(4);
 
 export default defineConfig({
   testDir: "./e2e",
@@ -31,7 +32,7 @@ export default defineConfig({
           timeout: 120_000,
         },
         {
-          command: `cross-env BACKEND_URL=${mockBackendURL} FRONTEND_BACKEND_API_KEY=e2e DISABLE_FRONTEND_AUTH=true npm run dev`,
+          command: `cross-env BACKEND_URL=${mockBackendURL} FRONTEND_BACKEND_API_KEY=e2e AUTH_MODE=local SESSION_KEY=${e2eSessionKey} SECURE_COOKIES=false ALLOW_INSECURE_COOKIES=true npm run dev`,
           url: `${baseURL}/healthz`,
           reuseExistingServer,
           timeout: 120_000,

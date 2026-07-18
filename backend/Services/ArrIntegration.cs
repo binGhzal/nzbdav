@@ -38,7 +38,7 @@ internal static class ArrIntegration
         return record switch
         {
             SonarrQueueRecord sonarr when sonarr.EpisodeId > 0 => $"{app}:episode:{sonarr.EpisodeId}",
-            SonarrQueueRecord sonarr when sonarr.SeriesId > 0 => $"{app}:series:{sonarr.SeriesId}:season:{sonarr.SeasonNumber}",
+            SonarrQueueRecord sonarr when sonarr.SeriesId > 0 => $"{app}:series:{sonarr.SeriesId}:season:{sonarr.SeasonNumber.GetValueOrDefault()}",
             RadarrQueueRecord radarr when radarr.MovieId > 0 => $"{app}:movie:{radarr.MovieId}",
             LidarrQueueRecord lidarr when lidarr.AlbumId > 0 => $"{app}:album:{lidarr.AlbumId}",
             LidarrQueueRecord lidarr when lidarr.ArtistId > 0 => $"{app}:artist:{lidarr.ArtistId}",

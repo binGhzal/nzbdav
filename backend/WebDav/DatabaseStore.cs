@@ -18,7 +18,8 @@ public class DatabaseStore(
     QueueManager queueManager,
     WebsocketManager websocketManager,
     ArrDownloadReportService arrDownloadReportService,
-    ArrOperationsService arrOperationsService
+    ArrOperationsService arrOperationsService,
+    NzbBlobIngestCoordinator nzbBlobIngestCoordinator
 ) : IStore
 {
     private readonly DatabaseStoreCollection _root = new(
@@ -30,7 +31,8 @@ public class DatabaseStore(
         queueManager,
         websocketManager,
         arrDownloadReportService,
-        arrOperationsService
+        arrOperationsService,
+        nzbBlobIngestCoordinator
     );
 
     public async Task<IStoreItem?> GetItemAsync(string path, CancellationToken cancellationToken)

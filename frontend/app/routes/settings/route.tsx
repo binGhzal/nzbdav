@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useBlocker, useLocation, useNavigate } from "react-router";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { withUrlBase } from "~/utils/url-base";
+import { areEndpointIdentitiesEquivalent } from "~/utils/endpoint-identity";
 
 const defaultConfig = {
     "general.base-url": "",
@@ -51,6 +52,7 @@ const defaultConfig = {
     "rclone.host": "",
     "rclone.user": "",
     "rclone.pass": "",
+    "rclone.fs": "",
     "rclone.mount-dir": "",
     "media.library-dir": "",
     "arr.instances": "{\"RadarrInstances\":[],\"SonarrInstances\":[],\"LidarrInstances\":[],\"QueueRules\":[],\"Prioritization\":{\"Enabled\":false,\"Mode\":\"report\",\"RecomputeIntervalSeconds\":300,\"MaxAutomaticPriority\":1},\"SearchNudge\":{\"Enabled\":false,\"Mode\":\"report\",\"IntervalSeconds\":1800,\"CooldownSeconds\":21600,\"MaxCommandsPerHour\":20,\"SonarrBatchSize\":10,\"RadarrBatchSize\":5,\"ConcurrentCommandsPerInstance\":1}}",
@@ -271,11 +273,15 @@ function areSettingsValuesEquivalent(configKey: string, currentValue: string | u
     }
 
     if (configKey === "rclone.host") {
-        return normalizeEndpoint(currentValue) === normalizeEndpoint(nextValue);
+        return areEndpointIdentitiesEquivalent(currentValue, nextValue);
     }
 
     if (configKey === "rclone.user" || configKey === "rclone.pass") {
         return normalizeOptionalCredential(currentValue) === normalizeOptionalCredential(nextValue);
+    }
+
+    if (configKey === "rclone.fs") {
+        return normalizeOptionalSelector(currentValue) === normalizeOptionalSelector(nextValue);
     }
 
     if (configKey === "rclone.mount-dir") {
@@ -285,16 +291,16 @@ function areSettingsValuesEquivalent(configKey: string, currentValue: string | u
     return false;
 }
 
-function normalizeEndpoint(value: string | undefined): string {
-    return (value ?? "").trim().replace(/\/+$/, "");
-}
-
 function normalizeBoolean(value: string | undefined): string {
     return (value ?? "").toLowerCase();
 }
 
 function normalizeOptionalCredential(value: string | undefined): string {
     return (value ?? "").trim() === "" ? "" : value ?? "";
+}
+
+function normalizeOptionalSelector(value: string | undefined): string {
+    return (value ?? "").trim();
 }
 
 function normalizeMountDirectory(value: string | undefined): string {

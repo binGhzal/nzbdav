@@ -1,4 +1,7 @@
 ﻿using MemoryPack;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using ZstdSharp;
 
 namespace NzbWebDAV.Database;
@@ -34,7 +37,10 @@ public class BlobStore
         return $"{blobPath}.tmp-{Guid.NewGuid():N}";
     }
 
-    private static FileStream OpenBlobWrite(string blobPath, out string tempPath)
+    private static FileStream OpenBlobWrite(
+        string blobPath,
+        out string tempPath,
+        out IReadOnlyList<string> directoriesToFlush)
     {
         var directory = Path.GetDirectoryName(blobPath);
 
@@ -43,6 +49,7 @@ public class BlobStore
         FileStream fileStream;
         lock (LockObj)
         {
+            directoriesToFlush = GetDirectoriesToFlushAfterRename(directory!);
             Directory.CreateDirectory(directory!);
             tempPath = GetBlobTempPath(blobPath);
             fileStream = new FileStream(
@@ -75,12 +82,17 @@ public class BlobStore
     {
         var blobPath = GetBlobPath(id);
         var tempPath = "";
+        IReadOnlyList<string> directoriesToFlush = [];
         try
         {
-            await using (var fileStream = OpenBlobWrite(blobPath, out tempPath))
+            await using (var fileStream = OpenBlobWrite(
+                             blobPath,
+                             out tempPath,
+                             out directoriesToFlush))
             {
                 await writeAsync(fileStream);
-                await fileStream.FlushAsync();
+                await fileStream.FlushAsync().ConfigureAwait(false);
+                fileStream.Flush(flushToDisk: true);
             }
 
             lock (LockObj)
@@ -88,6 +100,8 @@ public class BlobStore
                 if (Directory.Exists(blobPath))
                     TryDeleteBlobPathDirectory(blobPath);
                 File.Move(tempPath, blobPath, overwrite: true);
+                foreach (var directory in directoriesToFlush)
+                    FlushDirectoryToDisk(directory);
             }
         }
         catch
@@ -96,6 +110,97 @@ public class BlobStore
             throw;
         }
     }
+
+    private static IReadOnlyList<string> GetDirectoriesToFlushAfterRename(string leafDirectory)
+    {
+        var blobRoot = Path.Combine(ConfigPath, "blobs");
+        var firstShard = Path.GetDirectoryName(leafDirectory)!;
+        var candidates = new[] { ConfigPath, blobRoot, firstShard, leafDirectory };
+        var existed = candidates.ToDictionary(
+            path => path,
+            Directory.Exists,
+            StringComparer.Ordinal);
+        var result = new List<string> { leafDirectory };
+
+        foreach (var path in candidates.Reverse())
+        {
+            if (existed[path]) continue;
+            var parent = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(parent)) result.Add(parent);
+        }
+
+        return result.Distinct(StringComparer.Ordinal).ToArray();
+    }
+
+    private static void FlushDirectoryToDisk(string directory)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            using var handle = CreateFileW(
+                directory,
+                GenericRead | GenericWrite,
+                FileShareRead | FileShareWrite | FileShareDelete,
+                IntPtr.Zero,
+                OpenExisting,
+                FileFlagBackupSemantics,
+                IntPtr.Zero);
+            if (handle.IsInvalid)
+                ThrowDirectoryFlushError(directory, Marshal.GetLastPInvokeError());
+            if (!FlushFileBuffers(handle))
+                ThrowDirectoryFlushError(directory, Marshal.GetLastPInvokeError());
+            return;
+        }
+
+        var fileDescriptor = OpenUnix(directory, 0);
+        if (fileDescriptor < 0)
+            ThrowDirectoryFlushError(directory, Marshal.GetLastPInvokeError());
+        try
+        {
+            if (FsyncUnix(fileDescriptor) != 0)
+                ThrowDirectoryFlushError(directory, Marshal.GetLastPInvokeError());
+        }
+        finally
+        {
+            CloseUnix(fileDescriptor);
+        }
+    }
+
+    private static void ThrowDirectoryFlushError(string directory, int error)
+    {
+        throw new IOException(
+            $"Could not flush blob directory '{directory}' to disk: {new Win32Exception(error).Message}");
+    }
+
+    private const uint GenericRead = 0x80000000;
+    private const uint GenericWrite = 0x40000000;
+    private const uint FileShareRead = 0x00000001;
+    private const uint FileShareWrite = 0x00000002;
+    private const uint FileShareDelete = 0x00000004;
+    private const uint OpenExisting = 3;
+    private const uint FileFlagBackupSemantics = 0x02000000;
+
+    [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+    private static extern int OpenUnix(string path, int flags);
+
+    [DllImport("libc", EntryPoint = "fsync", SetLastError = true)]
+    private static extern int FsyncUnix(int fileDescriptor);
+
+    [DllImport("libc", EntryPoint = "close", SetLastError = true)]
+    private static extern int CloseUnix(int fileDescriptor);
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(
+        string fileName,
+        uint desiredAccess,
+        uint shareMode,
+        IntPtr securityAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool FlushFileBuffers(SafeFileHandle handle);
 
     public static Stream? ReadBlob(Guid id)
     {
@@ -209,6 +314,8 @@ public class BlobStore
 
         lock (LockObj)
         {
+            DeleteBlobTempFiles(blobPath);
+
             // Clean up empty directories
             // Structure: CONFIG_PATH/blobs/{firstTwo}/{nextTwo}/{fileName}
             var nextTwoDir = Path.GetDirectoryName(blobPath);
@@ -216,6 +323,23 @@ public class BlobStore
 
             TryDeleteEmptyDirectory(nextTwoDir);
             TryDeleteEmptyDirectory(firstTwoDir);
+        }
+    }
+
+    private static void DeleteBlobTempFiles(string blobPath)
+    {
+        var directory = Path.GetDirectoryName(blobPath);
+        if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory)) return;
+
+        try
+        {
+            var pattern = $"{Path.GetFileName(blobPath)}.tmp-*";
+            foreach (var tempPath in Directory.EnumerateFiles(directory, pattern, SearchOption.TopDirectoryOnly))
+                TryDeleteFile(tempPath);
+        }
+        catch (Exception e) when (IsMissingFileRace(e))
+        {
+            // Another cleanup pass may have removed the shard concurrently.
         }
     }
 

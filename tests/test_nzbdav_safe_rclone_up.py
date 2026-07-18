@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import stat
 import subprocess
 import sys
 import tempfile
@@ -72,6 +73,104 @@ class SafeRcloneUpTests(unittest.TestCase):
         self.assertFalse(nzbdav_safe_rclone_up.should_apply(state, "same", force=False))
         self.assertTrue(nzbdav_safe_rclone_up.should_apply(state, "same", force=True))
         self.assertTrue(nzbdav_safe_rclone_up.should_apply(state, "different", force=False))
+
+    def test_save_state_is_atomic_private_and_digest_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = pathlib.Path(directory) / "state.json"
+            state_path.write_text(
+                json.dumps({"payload": {"compose_config": "PASSWORD=hunter2"}}),
+                encoding="utf-8")
+            state_path.chmod(0o644)
+
+            nzbdav_safe_rclone_up.save_state(state_path, "a" * 64)
+
+            persisted = state_path.read_text(encoding="utf-8")
+            state = json.loads(persisted)
+            self.assertEqual(
+                {"format_version", "fingerprint", "updated_at"},
+                set(state))
+            self.assertEqual(1, state["format_version"])
+            self.assertEqual("a" * 64, state["fingerprint"])
+            self.assertNotIn("hunter2", persisted)
+            self.assertNotIn("compose_config", persisted)
+            self.assertEqual(
+                0o600,
+                stat.S_IMODE(state_path.stat().st_mode))
+            self.assertEqual([state_path.name], sorted(path.name for path in state_path.parent.iterdir()))
+
+    def test_save_state_replace_failure_preserves_old_state_and_removes_private_temp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = pathlib.Path(directory) / "state.json"
+            original = b'{"fingerprint":"old"}\n'
+            state_path.write_bytes(original)
+            original_replace = nzbdav_safe_rclone_up.os.replace
+
+            def fail_replace(source, destination, **kwargs):
+                raise OSError("simulated replace failure")
+
+            try:
+                nzbdav_safe_rclone_up.os.replace = fail_replace
+                with self.assertRaisesRegex(OSError, "simulated replace failure"):
+                    nzbdav_safe_rclone_up.save_state(state_path, "b" * 64)
+            finally:
+                nzbdav_safe_rclone_up.os.replace = original_replace
+
+            self.assertEqual(original, state_path.read_bytes())
+            self.assertEqual([state_path.name], sorted(path.name for path in state_path.parent.iterdir()))
+
+    def test_unchanged_legacy_state_is_rewritten_without_compose_or_secret(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_dir = pathlib.Path(directory)
+            compose_config = "services:\n  rclone:\n    environment:\n      PASSWORD: hunter2\n"
+            fingerprint, _ = nzbdav_safe_rclone_up.compute_fingerprint(compose_config, [])
+            state_path = project_dir / ".nzbdav-rclone-state.json"
+            state_path.write_text(
+                json.dumps({
+                    "fingerprint": fingerprint,
+                    "payload": {"compose_config": compose_config},
+                }),
+                encoding="utf-8")
+            state_path.chmod(0o644)
+            commands: list[list[str]] = []
+
+            def fake_run_command(command: list[str], cwd: pathlib.Path, capture: bool):
+                commands.append(command)
+                if command[-2:] == ["config", "nzbdav_rclone"]:
+                    return subprocess.CompletedProcess(command, 0, stdout=compose_config, stderr="")
+                self.fail(f"unchanged state must not inspect or mutate the container: {command}")
+
+            original_run_command = nzbdav_safe_rclone_up.run_command
+            try:
+                nzbdav_safe_rclone_up.run_command = fake_run_command
+                exit_code = nzbdav_safe_rclone_up.main([
+                    "--project-dir", str(project_dir),
+                    "--compose-file", "compose.yml",
+                ])
+            finally:
+                nzbdav_safe_rclone_up.run_command = original_run_command
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual(1, len(commands))
+            persisted = state_path.read_text(encoding="utf-8")
+            self.assertNotIn("hunter2", persisted)
+            self.assertNotIn("payload", json.loads(persisted))
+            self.assertEqual(0o600, stat.S_IMODE(state_path.stat().st_mode))
+
+    def test_load_state_rejects_symlink_without_opening_target(self):
+        if os.name == "nt":
+            self.skipTest("symlink creation is not generally available to unprivileged Windows tests")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            target = root / "target.json"
+            target.write_text('{"fingerprint":"target"}\n', encoding="utf-8")
+            state_path = root / "state.json"
+            state_path.symlink_to(target)
+
+            with self.assertRaisesRegex(ValueError, "regular file"):
+                nzbdav_safe_rclone_up.load_state(state_path)
+
+            self.assertEqual('{"fingerprint":"target"}\n', target.read_text(encoding="utf-8"))
 
     def test_compose_up_command_never_forces_recreate(self):
         command = nzbdav_safe_rclone_up.build_compose_up_command(

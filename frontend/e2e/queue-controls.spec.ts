@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { authenticateE2E } from "./auth";
 
 const mockBackendURL = process.env.PLAYWRIGHT_BACKEND_URL ?? "http://127.0.0.1:5174";
 
-test.beforeEach(async ({ request }) => {
+test.beforeEach(async ({ page, request }) => {
   await request.post(`${mockBackendURL}/__e2e/reset`);
+  await authenticateE2E(page.context().request);
 });
 
 test("queue filters, page size, and pause controls update live UI and backend calls", async ({ page, request }) => {

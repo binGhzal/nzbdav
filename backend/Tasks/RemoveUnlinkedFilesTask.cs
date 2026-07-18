@@ -1,5 +1,8 @@
 ﻿using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using NpgsqlTypes;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -14,8 +17,9 @@ namespace NzbWebDAV.Tasks;
 public class RemoveUnlinkedFilesTask(
     ConfigManager configManager,
     WebsocketManager websocketManager,
-    bool isDryRun
-) : BaseTask(websocketManager, WebsocketTopic.CleanupTaskProgress)
+    bool isDryRun,
+    MaintenanceProgressReporter? progressReporter = null
+) : BaseTask(websocketManager, WebsocketTopic.CleanupTaskProgress, progressReporter)
 {
     private static readonly object AuditReportLock = new();
     private static List<string> _allRemovedPaths = [];
@@ -30,89 +34,199 @@ public class RemoveUnlinkedFilesTask(
         public IEnumerable<string> Paths => ValidItems.Select(x => x.Path).Concat(MalformedItems.Select(x => x.Path));
     }
 
-    protected override async Task ExecuteInternal()
+    protected override Task ExecuteInternal(CancellationToken cancellationToken)
     {
-        try
-        {
-            await RemoveUnlinkedFiles().ConfigureAwait(false);
-        }
-        catch (Exception e)
-        {
-            Report($"Failed: {e.Message}");
-            Log.Error(e, "Failed to remove unlinked files.");
-        }
+        return RemoveUnlinkedFiles(cancellationToken);
     }
 
-    private async Task RemoveUnlinkedFiles()
+    private async Task RemoveUnlinkedFiles(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         ClearAuditReport();
 
-        // get linked file paths
-        Report("Scanning all linked files...");
-        var startTime = DateTime.Now;
-        var linkedIdCount = await WriteLinkedIdsToTable();
-        if (linkedIdCount < 5)
-        {
-            Report($"Aborted: " +
-                   $"There are less than five linked files found in your library. " +
-                   $"Cancelling operation to prevent accidental bulk deletion.");
-            return;
-        }
+        await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
+        await dbContext.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await RunWithConnectionCleanupAsync(
+            async () =>
+            {
+                await CreateLinkedIdsTemporaryTableAsync(dbContext, cancellationToken).ConfigureAwait(false);
 
-        Report("Searching for unlinked webdav items...");
-        var unlinkedItems = await CountUnlinkedItems(startTime);
-        Report($"Found {unlinkedItems} webdav items to remove.");
+                // get linked file paths
+                Report("Scanning all linked files...");
+                var startTime = DateTime.Now;
+                var linkedIdCount = await WriteLinkedIdsToTable(dbContext).ConfigureAwait(false);
+                if (linkedIdCount < 5)
+                {
+                    Report($"Aborted: " +
+                           $"There are less than five unique linked files found in your library. " +
+                           $"Cancelling operation to prevent accidental bulk deletion.");
+                    return;
+                }
 
-        if (isDryRun)
-        {
-            await DryRunIdentifyUnlinkedFiles(startTime);
-            Report($"Done. Identified {GetAuditReportPathCount()} unlinked files.");
-        }
-        else
-        {
-            await RemoveUnlinkedItems(startTime, unlinkedItems);
-            await RemoveEmptyDirectories(startTime);
-            Report($"Done. Removed {GetAuditReportPathCount()} unlinked files.");
-        }
+                Report("Searching for unlinked webdav items...");
+                var unlinkedItems = await CountUnlinkedItems(dbContext, startTime).ConfigureAwait(false);
+                Report($"Found {unlinkedItems} webdav items to remove.");
+
+                if (isDryRun)
+                {
+                    await DryRunIdentifyUnlinkedFiles(dbContext, startTime).ConfigureAwait(false);
+                    Report($"Done. Identified {GetAuditReportPathCount()} unlinked files.");
+                }
+                else
+                {
+                    await RemoveUnlinkedItems(dbContext, startTime, unlinkedItems).ConfigureAwait(false);
+                    await RemoveEmptyDirectories(dbContext, startTime).ConfigureAwait(false);
+                    Report($"Done. Removed {GetAuditReportPathCount()} unlinked files.");
+                }
+            },
+            () => DropLinkedIdsTemporaryTableAsync(dbContext),
+            () => dbContext.Database.CloseConnectionAsync()).ConfigureAwait(false);
     }
 
-    private async Task<int> WriteLinkedIdsToTable()
+    internal static async Task RunWithConnectionCleanupAsync(
+        Func<Task> body,
+        Func<Task> dropTemporaryTable,
+        Func<Task> closeConnection)
     {
-        await using var dbContext = new DavDatabaseContext();
+        ArgumentNullException.ThrowIfNull(body);
+        ArgumentNullException.ThrowIfNull(dropTemporaryTable);
+        ArgumentNullException.ThrowIfNull(closeConnection);
 
-        // Create a new table "TMP_LINKED_FILES", dropping old one if it already exists.
-        // No index initially for fast writes.
+        Exception? primaryFailure = null;
+        try
+        {
+            await body().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            primaryFailure = exception;
+        }
+
+        var cleanupFailures = new List<Exception>(2);
+        try
+        {
+            await dropTemporaryTable().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            cleanupFailures.Add(exception);
+            Log.Error(exception, "Failed to drop the remove-unlinked temporary table during connection cleanup.");
+        }
+
+        try
+        {
+            await closeConnection().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            cleanupFailures.Add(exception);
+            Log.Error(exception, "Failed to close the remove-unlinked database connection during cleanup.");
+        }
+
+        if (primaryFailure is not null)
+            ExceptionDispatchInfo.Capture(primaryFailure).Throw();
+        if (cleanupFailures.Count == 1)
+            ExceptionDispatchInfo.Capture(cleanupFailures[0]).Throw();
+        if (cleanupFailures.Count > 1)
+            throw new AggregateException("Multiple remove-unlinked connection cleanup operations failed.", cleanupFailures);
+    }
+
+    private static async Task CreateLinkedIdsTemporaryTableAsync(
+        DavDatabaseContext dbContext,
+        CancellationToken cancellationToken)
+    {
+        var isPostgreSql = dbContext.Database.IsNpgsql();
+
+        // The repeated unqualified drops clean both a pooled connection's old temp
+        // object and the persistent tables left by older releases. Temporary tables
+        // take name-resolution precedence over application-schema tables.
         await dbContext.Database.ExecuteSqlRawAsync(
-            """
-            DROP TABLE IF EXISTS TMP_LINKED_FILES;
-            CREATE TABLE TMP_LINKED_FILES (Id TEXT NOT NULL);
-            """);
+            isPostgreSql
+                ? """
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES";
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES";
+                  DROP TABLE IF EXISTS tmp_linked_files;
+                  DROP TABLE IF EXISTS tmp_linked_files;
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES_UNIQUE";
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES_UNIQUE";
+                  DROP TABLE IF EXISTS tmp_linked_files_unique;
+                  DROP TABLE IF EXISTS tmp_linked_files_unique;
+                  """
+                : """
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES";
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES";
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES_UNIQUE";
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES_UNIQUE";
+                  """,
+            cancellationToken).ConfigureAwait(false);
 
-        var count = 0;
+        await dbContext.Database.ExecuteSqlRawAsync(
+            isPostgreSql
+                ? """
+                  CREATE TEMPORARY TABLE "TMP_LINKED_FILES" (
+                      "Id" uuid NOT NULL PRIMARY KEY
+                  ) ON COMMIT PRESERVE ROWS;
+                  """
+                : """
+                  CREATE TEMPORARY TABLE "TMP_LINKED_FILES" (
+                      "Id" TEXT NOT NULL PRIMARY KEY
+                  );
+                  """,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static Task DropLinkedIdsTemporaryTableAsync(DavDatabaseContext dbContext)
+    {
+        return dbContext.Database.ExecuteSqlRawAsync(
+            dbContext.Database.IsNpgsql()
+                ? """
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES";
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES";
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES_UNIQUE";
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES_UNIQUE";
+                  DROP TABLE IF EXISTS tmp_linked_files;
+                  DROP TABLE IF EXISTS tmp_linked_files;
+                  DROP TABLE IF EXISTS tmp_linked_files_unique;
+                  DROP TABLE IF EXISTS tmp_linked_files_unique;
+                  """
+                : """
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES";
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES";
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES_UNIQUE";
+                  DROP TABLE IF EXISTS "TMP_LINKED_FILES_UNIQUE";
+                  """,
+            CancellationToken.None);
+    }
+
+    private async Task<long> WriteLinkedIdsToTable(DavDatabaseContext dbContext)
+    {
+        var isPostgreSql = dbContext.Database.IsNpgsql();
+
+        long scannedCount = 0;
+        long uniqueCount = 0;
         var batches = GetLinkedIds().ToBatches(100);
         foreach (var batch in batches)
         {
-            var parameters = batch.Select(id => (object)id.ToString().ToUpperInvariant()).ToArray();
+            ExecutionCancellationToken.ThrowIfCancellationRequested();
+            var parameters = isPostgreSql
+                ? batch.Select(id => (object)id).ToArray()
+                : batch.Select(id => (object)id.ToString().ToUpperInvariant()).ToArray();
             var values = string.Join(",", parameters.Select((_, index) => $"({{{index}}})"));
-            await dbContext.Database.ExecuteSqlAsync(
+            var insertedCount = await dbContext.Database.ExecuteSqlAsync(
                 FormattableStringFactory.Create(
-                    "INSERT INTO TMP_LINKED_FILES (Id) VALUES " + values,
-                    parameters));
-            count += batch.Count;
+                    (isPostgreSql
+                        ? "INSERT INTO \"TMP_LINKED_FILES\" (\"Id\") VALUES " + values
+                          + " ON CONFLICT (\"Id\") DO NOTHING"
+                        : "INSERT OR IGNORE INTO \"TMP_LINKED_FILES\" (\"Id\") VALUES " + values),
+                    parameters),
+                ExecutionCancellationToken).ConfigureAwait(false);
+            scannedCount += batch.Count;
+            uniqueCount += insertedCount;
         }
 
-        // Remove duplicates and add primary key index.
-        // Create a new table with unique constraint, copy distinct values, then swap.
-        Report($"Indexing {count} linked files...");
-        await dbContext.Database.ExecuteSqlRawAsync(
-            """
-            CREATE TABLE TMP_LINKED_FILES_UNIQUE (Id TEXT NOT NULL PRIMARY KEY);
-            INSERT OR IGNORE INTO TMP_LINKED_FILES_UNIQUE (Id) SELECT Id FROM TMP_LINKED_FILES;
-            DROP TABLE TMP_LINKED_FILES;
-            ALTER TABLE TMP_LINKED_FILES_UNIQUE RENAME TO TMP_LINKED_FILES;
-            """);
-
-        return count;
+        Report($"Indexing {uniqueCount} unique linked files from {scannedCount} library entries...");
+        ExecutionCancellationToken.ThrowIfCancellationRequested();
+        return uniqueCount;
     }
 
     private IEnumerable<Guid> GetLinkedIds()
@@ -122,9 +236,10 @@ public class RemoveUnlinkedFilesTask(
             .GetLibraryDavItemLinks(configManager)
             .Select(x => x.DavItemId);
 
-        var count = 0;
+        long count = 0;
         foreach (var linkedId in linkedIds)
         {
+            ExecutionCancellationToken.ThrowIfCancellationRequested();
             count++;
             debounce(() => Report($"Scanning all linked files...\nFound {count}..."));
             yield return linkedId;
@@ -133,51 +248,53 @@ public class RemoveUnlinkedFilesTask(
         Report($"Scanning all linked files...\nFound {count}...");
     }
 
-    private async Task<int> CountUnlinkedItems(DateTime createdBefore)
+    private async Task<long> CountUnlinkedItems(DavDatabaseContext dbContext, DateTime createdBefore)
     {
-        await using var dbContext = new DavDatabaseContext();
-        var createdBeforeStr = createdBefore.ToString("yyyy-MM-dd HH:mm:ss");
+        var createdBeforeParameter = CreateCreatedBeforeParameter(dbContext, createdBefore);
         var usenetFileType = (int)DavItem.ItemType.UsenetFile;
 
         var count = await dbContext.Database
-            .SqlQueryRaw<int>(
+            .SqlQueryRaw<long>(
                 """
-                SELECT COUNT(i.Id) AS Value FROM DavItems i
-                LEFT JOIN TMP_LINKED_FILES t ON i.Id = t.Id
-                WHERE i.Type = {0}
-                  AND i.HistoryItemId IS NULL
-                  AND i.CreatedAt < {1}
-                  AND t.Id IS NULL
+                SELECT COUNT(i."Id") AS "Value" FROM "DavItems" AS i
+                LEFT JOIN "TMP_LINKED_FILES" AS t ON i."Id" = t."Id"
+                WHERE i."Type" = {0}
+                  AND i."HistoryItemId" IS NULL
+                  AND i."CreatedAt" < {1}
+                  AND t."Id" IS NULL
                 """,
                 usenetFileType,
-                createdBeforeStr)
-            .FirstAsync();
+                createdBeforeParameter)
+            .FirstAsync(ExecutionCancellationToken);
 
         return count;
     }
 
-    private async Task RemoveUnlinkedItems(DateTime createdBefore, int totalCount)
+    private async Task RemoveUnlinkedItems(
+        DavDatabaseContext dbContext,
+        DateTime createdBefore,
+        long totalCount)
     {
         Report("Removing unlinked items...");
-        await using var dbContext = new DavDatabaseContext();
-        var removed = 0;
+        long removed = 0;
 
         while (true)
         {
+            ExecutionCancellationToken.ThrowIfCancellationRequested();
             // Select items to delete (batch of 100)
             var itemsToDelete = await dbContext.Database
                 .SqlQueryRaw<UnlinkedItemInfo>(
                     """
-                    SELECT Id, Type, Path FROM DavItems
-                    WHERE Type = {0}
-                      AND HistoryItemId IS NULL
-                      AND CreatedAt < {1}
-                      AND Id NOT IN (SELECT Id FROM TMP_LINKED_FILES)
+                    SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path" FROM "DavItems"
+                    WHERE "Type" = {0}
+                      AND "HistoryItemId" IS NULL
+                      AND "CreatedAt" < {1}
+                      AND "Id" NOT IN (SELECT "Id" FROM "TMP_LINKED_FILES")
                     LIMIT 100
                     """,
                     (int)DavItem.ItemType.UsenetFile,
-                    createdBefore.ToString("yyyy-MM-dd HH:mm:ss"))
-                .ToListAsync();
+                    CreateCreatedBeforeParameter(dbContext, createdBefore))
+                .ToListAsync(ExecutionCancellationToken);
 
             // If there are no more items to delete, we're done.
             if (itemsToDelete.Count == 0)
@@ -190,54 +307,53 @@ public class RemoveUnlinkedFilesTask(
                 break;
             }
 
-            // Delete the items.
-            await DeleteDavItemsAsync(dbContext, itemsToDeleteBatch);
+            await DeleteBatchAndCommitInvalidationsAsync(
+                    dbContext,
+                    itemsToDeleteBatch,
+                    "Committing unlinked item batch...")
+                .ConfigureAwait(false);
 
-            // Queue rclone vfs/forget for deleted items
-            dbContext.EnqueueRcloneVfsForget(itemsToDeleteBatch.ValidItems.Select(x => new DavItem
-            {
-                Id = x.Id,
-                Type = (DavItem.ItemType)x.Type,
-                Path = x.Path
-            }).ToList());
-            dbContext.EnqueueRcloneVfsForgetPaths(GetParentDirectories(itemsToDeleteBatch.MalformedItems.Select(x => x.Path)));
-            ContentIndexSnapshotWriterService.RequestSnapshot();
-            await dbContext.SaveChangesAsync(CancellationToken).ConfigureAwait(false);
-            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken).ConfigureAwait(false);
-
-            // Track removed paths
+            // The database mutation and its visibility fence are durable before
+            // the content snapshot is requested or flushed.
             AddAuditReportPaths(itemsToDeleteBatch.Paths);
+            ContentIndexSnapshotWriterService.RequestSnapshot();
+            await ContentIndexSnapshotWriterService.FlushNowAsync(ExecutionCancellationToken).ConfigureAwait(false);
+
             removed += itemsToDeleteBatch.Count;
 
-            Report($"Removing unlinked items...\nRemoved {removed}/{totalCount}...");
+            var progress = ToProgressValues(removed, totalCount);
+            Report(
+                $"Removing unlinked items...\nRemoved {removed}/{totalCount}...",
+                progress.Current,
+                progress.Total);
         }
 
-        Report($"Removing unlinked items...\nRemoved {removed} of {removed}...");
+        Report($"Removing unlinked items...\nRemoved {removed} of {totalCount}...");
     }
 
-    private async Task RemoveEmptyDirectories(DateTime createdBefore)
+    private async Task RemoveEmptyDirectories(DavDatabaseContext dbContext, DateTime createdBefore)
     {
         Report($"Removing empty directories...");
-        await using var dbContext = new DavDatabaseContext();
         var removed = 0;
 
         while (true)
         {
+            ExecutionCancellationToken.ThrowIfCancellationRequested();
             // Find empty directories (no children).
             // Only target regular directories (SubType = Directory), not root folders.
             var emptyDirs = await dbContext.Database
                 .SqlQueryRaw<UnlinkedItemInfo>(
                     """
-                    SELECT d.Id, d.Type, d.Path FROM DavItems d
-                    LEFT JOIN DavItems c ON c.ParentId = d.Id
-                    WHERE d.SubType = {0}
-                      AND d.CreatedAt < {1}
-                      AND c.Id IS NULL
+                    SELECT CAST(d."Id" AS TEXT) AS "Id", d."Type", d."Path" FROM "DavItems" AS d
+                    LEFT JOIN "DavItems" AS c ON c."ParentId" = d."Id"
+                    WHERE d."SubType" = {0}
+                      AND d."CreatedAt" < {1}
+                      AND c."Id" IS NULL
                     LIMIT 100
                     """,
                     (int)DavItem.ItemSubType.Directory,
-                    createdBefore.ToString("yyyy-MM-dd HH:mm:ss"))
-                .ToListAsync();
+                    CreateCreatedBeforeParameter(dbContext, createdBefore))
+                .ToListAsync(ExecutionCancellationToken);
 
             if (emptyDirs.Count == 0)
                 break;
@@ -249,41 +365,81 @@ public class RemoveUnlinkedFilesTask(
                 break;
             }
 
-            // Delete the empty directories.
-            await DeleteDavItemsAsync(dbContext, emptyDirBatch);
+            await DeleteBatchAndCommitInvalidationsAsync(
+                    dbContext,
+                    emptyDirBatch,
+                    "Committing empty-directory batch...")
+                .ConfigureAwait(false);
 
-            // Queue rclone vfs/forget for deleted directories
-            dbContext.EnqueueRcloneVfsForget(emptyDirBatch.ValidItems.Select(x => new DavItem
-            {
-                Id = x.Id,
-                Type = (DavItem.ItemType)x.Type,
-                Path = x.Path
-            }).ToList());
-            dbContext.EnqueueRcloneVfsForgetPaths(GetParentDirectories(emptyDirBatch.MalformedItems.Select(x => x.Path)));
             ContentIndexSnapshotWriterService.RequestSnapshot();
-            await dbContext.SaveChangesAsync(CancellationToken).ConfigureAwait(false);
-            await ContentIndexSnapshotWriterService.FlushNowAsync(CancellationToken).ConfigureAwait(false);
+            await ContentIndexSnapshotWriterService.FlushNowAsync(ExecutionCancellationToken).ConfigureAwait(false);
 
             removed += emptyDirBatch.Count;
             Report($"Removing empty directories...\nRemoved {removed}...");
         }
     }
 
-    private async Task DryRunIdentifyUnlinkedFiles(DateTime createdBefore)
+    private async Task DeleteBatchAndCommitInvalidationsAsync(
+        DavDatabaseContext dbContext,
+        ParsedUnlinkedItemBatch batch,
+        string commitProgressMessage)
     {
-        await using var dbContext = new DavDatabaseContext();
+        // The durable maintenance reporter writes through a separate context.
+        // Persist this boundary before taking SQLite's single writer lock.
+        Report(commitProgressMessage);
+        ExecutionCancellationToken.ThrowIfCancellationRequested();
+
+        await using var transaction = await dbContext.Database
+            .BeginTransactionAsync(ExecutionCancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            await DeleteDavItemsAsync(dbContext, batch, ExecutionCancellationToken).ConfigureAwait(false);
+
+            dbContext.EnqueueRcloneVfsForget(batch.ValidItems.Select(x => new DavItem
+            {
+                Id = x.Id,
+                Type = (DavItem.ItemType)x.Type,
+                Path = x.Path
+            }).ToList());
+            dbContext.EnqueueRcloneVfsForgetPaths(GetParentDirectories(batch.MalformedItems.Select(x => x.Path)));
+            await dbContext.SaveChangesAsync(ExecutionCancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(ExecutionCancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception primaryFailure)
+        {
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception rollbackFailure)
+            {
+                Log.Error(
+                    rollbackFailure,
+                    "Failed to roll back a remove-unlinked batch after {FailureType}.",
+                    primaryFailure.GetType().Name);
+            }
+
+            dbContext.ClearChangeTracker();
+            ExceptionDispatchInfo.Capture(primaryFailure).Throw();
+            throw;
+        }
+    }
+
+    private async Task DryRunIdentifyUnlinkedFiles(DavDatabaseContext dbContext, DateTime createdBefore)
+    {
         var unlinkedFiles = await dbContext.Database
             .SqlQueryRaw<UnlinkedItemInfo>(
                 """
-                SELECT Id, Type, Path FROM DavItems
-                WHERE Type = {0}
-                  AND HistoryItemId IS NULL
-                  AND CreatedAt < {1}
-                  AND Id NOT IN (SELECT Id FROM TMP_LINKED_FILES)
+                SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path" FROM "DavItems"
+                WHERE "Type" = {0}
+                  AND "HistoryItemId" IS NULL
+                  AND "CreatedAt" < {1}
+                  AND "Id" NOT IN (SELECT "Id" FROM "TMP_LINKED_FILES")
                 """,
                 (int)DavItem.ItemType.UsenetFile,
-                createdBefore.ToString("yyyy-MM-dd HH:mm:ss"))
-            .ToListAsync();
+                CreateCreatedBeforeParameter(dbContext, createdBefore))
+            .ToListAsync(ExecutionCancellationToken);
 
         ReplaceAuditReport(unlinkedFiles.Select(x => x.Path));
     }
@@ -313,15 +469,16 @@ public class RemoveUnlinkedFilesTask(
     private static Task DeleteDavItemsAsync
     (
         DavDatabaseContext dbContext,
-        ParsedUnlinkedItemBatch batch
+        ParsedUnlinkedItemBatch batch,
+        CancellationToken cancellationToken
     )
     {
-        if (DavDatabaseContext.IsPostgres)
+        if (dbContext.Database.IsNpgsql())
         {
             var ids = batch.ValidItems.Select(x => x.Id).ToArray();
             return dbContext.Items
                 .Where(x => ids.Contains(x.Id))
-                .ExecuteDeleteAsync();
+                .ExecuteDeleteAsync(cancellationToken);
         }
 
         var parameters = batch.ValidItems
@@ -331,7 +488,18 @@ public class RemoveUnlinkedFilesTask(
             .ToArray();
         var placeholders = string.Join(",", parameters.Select((_, index) => $"{{{index}}}"));
         var sql = $"""DELETE FROM "DavItems" WHERE "Id" IN ({placeholders})""";
-        return dbContext.Database.ExecuteSqlRawAsync(sql, parameters);
+        return dbContext.Database.ExecuteSqlRawAsync(sql, parameters, cancellationToken);
+    }
+
+    private static object CreateCreatedBeforeParameter(DavDatabaseContext dbContext, DateTime value)
+    {
+        var localWallTime = LocalWallQueryBounds.NormalizeExclusiveUpperBound(dbContext, value);
+        if (!dbContext.Database.IsNpgsql()) return localWallTime;
+
+        return new NpgsqlParameter("createdBefore", NpgsqlDbType.Timestamp)
+        {
+            Value = localWallTime
+        };
     }
 
     private static IEnumerable<string> GetParentDirectories(IEnumerable<string> paths)
@@ -342,10 +510,18 @@ public class RemoveUnlinkedFilesTask(
             .Select(x => x!);
     }
 
-    protected override void Report(string message)
+    internal static (int? Current, int? Total) ToProgressValues(long current, long total)
+    {
+        if (current < 0 || total < 0 || current > int.MaxValue || total > int.MaxValue)
+            return (null, null);
+
+        return (checked((int)current), checked((int)total));
+    }
+
+    protected override void Report(string message, int? current = null, int? total = null)
     {
         var dryRun = isDryRun ? "Dry Run - " : string.Empty;
-        base.Report($"{dryRun}{message}");
+        base.Report($"{dryRun}{message}", current, total);
     }
 
     public static string GetAuditReport()

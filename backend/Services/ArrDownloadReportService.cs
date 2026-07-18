@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Config;
@@ -8,10 +9,23 @@ using Serilog;
 
 namespace NzbWebDAV.Services;
 
-public sealed class ArrDownloadReportService(ConfigManager configManager)
+public sealed class ArrDownloadReportService
 {
     private static readonly TimeSpan RefreshDebounce = TimeSpan.FromSeconds(30);
+    private readonly Func<IEnumerable<ArrClient>> _getArrClients;
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastRefreshByInstance = new();
+
+    public ArrDownloadReportService(ConfigManager configManager)
+        : this(configManager, () => configManager.GetArrConfig().GetArrClients())
+    {
+    }
+
+    public ArrDownloadReportService(
+        ConfigManager configManager,
+        Func<IEnumerable<ArrClient>> getArrClients)
+    {
+        _getArrClients = getArrClients;
+    }
 
     public async Task RecordQueueLifecycleAsync
     (
@@ -19,7 +33,8 @@ public sealed class ArrDownloadReportService(ConfigManager configManager)
         QueueItem queueItem,
         string state,
         string? reason = null,
-        CancellationToken ct = default
+        CancellationToken ct = default,
+        bool saveChanges = true
     )
     {
         var correlations = await dbClient.Ctx.ArrDownloadCorrelations
@@ -40,7 +55,8 @@ public sealed class ArrDownloadReportService(ConfigManager configManager)
                 StateReason = reason,
                 CreatedAt = DateTimeOffset.UtcNow
             });
-            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+            if (saveChanges)
+                await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
             return;
         }
 
@@ -60,7 +76,8 @@ public sealed class ArrDownloadReportService(ConfigManager configManager)
             });
         }
 
-        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        if (saveChanges)
+            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
     public async Task RecordHistoryLifecycleAsync
@@ -69,7 +86,8 @@ public sealed class ArrDownloadReportService(ConfigManager configManager)
         HistoryItem historyItem,
         string state,
         string? reason = null,
-        CancellationToken ct = default
+        CancellationToken ct = default,
+        bool saveChanges = true
     )
     {
         var correlations = await dbClient.Ctx.ArrDownloadCorrelations
@@ -110,7 +128,42 @@ public sealed class ArrDownloadReportService(ConfigManager configManager)
             });
         }
 
-        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        if (saveChanges)
+            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task<bool> StageCompletionRefreshAsync(
+        DavDatabaseClient dbClient,
+        HistoryItem historyItem,
+        IEnumerable<string> requiredInvalidationPaths,
+        CancellationToken ct = default)
+    {
+        var exists = dbClient.Ctx.ArrImportCommands.Local.Any(x => x.HistoryItemId == historyItem.Id)
+                     || await dbClient.Ctx.ArrImportCommands
+                         .AsNoTracking()
+                         .AnyAsync(x => x.HistoryItemId == historyItem.Id, ct)
+                         .ConfigureAwait(false);
+        if (exists) return false;
+
+        var now = DateTimeOffset.UtcNow;
+        var paths = requiredInvalidationPaths
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToArray();
+        dbClient.Ctx.ArrImportCommands.Add(new ArrImportCommand
+        {
+            Id = Guid.NewGuid(),
+            HistoryItemId = historyItem.Id,
+            Category = historyItem.Category,
+            RequiredInvalidationPathsJson = JsonSerializer.Serialize(paths),
+            Status = ArrImportCommandStatus.Pending,
+            CreatedAt = now,
+            UpdatedAt = now,
+            NextAttemptAt = now,
+        });
+        return true;
     }
 
     public async Task RefreshMonitoredDownloadsDebouncedAsync
@@ -119,14 +172,23 @@ public sealed class ArrDownloadReportService(ConfigManager configManager)
         CancellationToken ct = default
     )
     {
-        foreach (var arrClient in configManager.GetArrConfig().GetArrClients())
-            await RefreshMonitoredDownloadsDebouncedAsync(arrClient, category, ct).ConfigureAwait(false);
+        foreach (var arrClient in _getArrClients())
+            await RefreshMonitoredDownloadsAsync(arrClient, category, bypassDebounce: false, ct).ConfigureAwait(false);
     }
 
-    private async Task RefreshMonitoredDownloadsDebouncedAsync
+    public async Task RefreshMonitoredDownloadsOnCompletionAsync(
+        string category,
+        CancellationToken ct = default)
+    {
+        foreach (var arrClient in _getArrClients())
+            await RefreshMonitoredDownloadsAsync(arrClient, category, bypassDebounce: true, ct).ConfigureAwait(false);
+    }
+
+    private async Task RefreshMonitoredDownloadsAsync
     (
         ArrClient arrClient,
         string category,
+        bool bypassDebounce,
         CancellationToken ct
     )
     {
@@ -134,7 +196,8 @@ public sealed class ArrDownloadReportService(ConfigManager configManager)
         {
             var instanceKey = ArrIntegration.GetInstanceKey(GetAppName(arrClient), arrClient.Host);
             var now = DateTimeOffset.UtcNow;
-            if (_lastRefreshByInstance.TryGetValue(instanceKey, out var lastRefresh)
+            if (!bypassDebounce
+                && _lastRefreshByInstance.TryGetValue(instanceKey, out var lastRefresh)
                 && now - lastRefresh < RefreshDebounce)
                 return;
 

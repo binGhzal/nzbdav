@@ -110,6 +110,41 @@ describe("UsenetSettings", () => {
                 .toContain("Connection test failed: provider auth failed");
         });
     });
+
+    it("submits the saved-password marker with the exact TLS and username identity", async () => {
+        vi.stubGlobal("WebSocket", FakeWebSocket);
+        let submittedHost: FormDataEntryValue | null = null;
+        let submittedPort: FormDataEntryValue | null = null;
+        let submittedUseSsl: FormDataEntryValue | null = null;
+        let submittedUser: FormDataEntryValue | null = null;
+        let submittedPassword: FormDataEntryValue | null = null;
+        const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+            const form = init.body as FormData;
+            submittedHost = form.get("host");
+            submittedPort = form.get("port");
+            submittedUseSsl = form.get("use-ssl");
+            submittedUser = form.get("user");
+            submittedPassword = form.get("pass");
+            return Response.json({ status: true, connected: true });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+        const config = {
+            "usenet.providers": JSON.stringify(createProviderConfig()),
+            "usenet.nntp-pipelining.enabled": "true",
+        };
+
+        render(<UsenetSettings config={config} setNewConfig={vi.fn()} />);
+        fireEvent.click(screen.getByTitle("Edit Provider"));
+        fireEvent.change(screen.getByLabelText("Host"), { target: { value: "NEWS.EXAMPLE.INVALID" } });
+        fireEvent.click(screen.getByRole("button", { name: "Test Connection" }));
+
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+        expect(submittedHost).toBe("NEWS.EXAMPLE.INVALID");
+        expect(submittedPort).toBe("563");
+        expect(submittedUseSsl).toBe("true");
+        expect(submittedUser).toBe("user");
+        expect(submittedPassword).toBe(REDACTED_SECRET);
+    });
 });
 
 function createProviderConfig() {

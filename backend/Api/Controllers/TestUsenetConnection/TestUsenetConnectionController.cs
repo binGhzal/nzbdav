@@ -1,5 +1,7 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Config;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using Serilog;
@@ -8,43 +10,101 @@ namespace NzbWebDAV.Api.Controllers.TestUsenetConnection;
 
 [ApiController]
 [Route("api/test-usenet-connection")]
-public class TestUsenetConnectionController() : BaseApiController
+public class TestUsenetConnectionController(ConfigManager? configManager = null) : BaseApiController
 {
-    private async Task<TestUsenetConnectionResponse> TestUsenetConnection(TestUsenetConnectionRequest request)
+    private static readonly TimeSpan DefaultConnectionTimeout = TimeSpan.FromSeconds(10);
+    private TimeSpan _connectionTimeout = DefaultConnectionTimeout;
+
+    internal TestUsenetConnectionController(TimeSpan connectionTimeout)
+        : this(configManager: null)
     {
+        if (connectionTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(connectionTimeout));
+        _connectionTimeout = connectionTimeout;
+    }
+
+    private async Task<IActionResult> TestUsenetConnection(TestUsenetConnectionRequest request)
+    {
+        var password = ResolvePassword(request, configManager);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
+        timeout.CancelAfter(_connectionTimeout);
         try
         {
             using var connection = await UsenetStreamingClient
-                .CreateNewConnection(request.ToConnectionDetails(), HttpContext.RequestAborted)
+                .CreateNewConnection(
+                    request.ToConnectionDetails(password),
+                    timeout.Token)
                 .ConfigureAwait(false);
-            return new TestUsenetConnectionResponse { Status = true, Connected = true };
+            return Ok(new TestUsenetConnectionResponse { Status = true, Connected = true });
         }
-        catch (CouldNotConnectToUsenetException e)
+        catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
         {
-            var inner = e.InnerException?.Message ?? e.Message;
-            Log.Warning("Test connection failed for {Host}:{Port} (ssl={UseSsl}, user={User}): connect error: {Error}",
-                request.Host, request.Port, request.UseSsl, request.User, inner);
-            return new TestUsenetConnectionResponse { Status = true, Connected = false };
+            throw;
         }
-        catch (CouldNotLoginToUsenetException e)
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
-            var inner = e.InnerException?.Message ?? e.Message;
-            Log.Warning("Test connection failed for {Host}:{Port} (ssl={UseSsl}, user={User}): login error: {Error}",
-                request.Host, request.Port, request.UseSsl, request.User, inner);
-            return new TestUsenetConnectionResponse { Status = true, Connected = false };
+            Log.Warning(
+                "Test connection timed out for {Host}:{Port} (ssl={UseSsl}, user={User})",
+                request.Host,
+                request.Port,
+                request.UseSsl,
+                request.User);
+            return StatusCode(
+                StatusCodes.Status504GatewayTimeout,
+                new TestUsenetConnectionResponse { Status = true, Connected = false });
+        }
+        catch (CouldNotConnectToUsenetException)
+        {
+            Log.Warning("Test connection failed for {Host}:{Port} (ssl={UseSsl}, user={User}): connect error",
+                request.Host, request.Port, request.UseSsl, request.User);
+            return Ok(new TestUsenetConnectionResponse { Status = true, Connected = false });
+        }
+        catch (CouldNotLoginToUsenetException)
+        {
+            Log.Warning("Test connection failed for {Host}:{Port} (ssl={UseSsl}, user={User}): login error",
+                request.Host, request.Port, request.UseSsl, request.User);
+            return Ok(new TestUsenetConnectionResponse { Status = true, Connected = false });
         }
         catch (Exception e) when (!e.IsCancellationException())
         {
-            Log.Warning(e, "Test connection failed for {Host}:{Port} (ssl={UseSsl}, user={User}): unexpected error",
-                request.Host, request.Port, request.UseSsl, request.User);
+            Log.Warning(
+                "Test connection failed for {Host}:{Port} (ssl={UseSsl}, user={User}): unexpected {ErrorType}",
+                request.Host,
+                request.Port,
+                request.UseSsl,
+                request.User,
+                e.GetType().Name);
             throw;
         }
+    }
+
+    internal static string ResolvePassword(
+        TestUsenetConnectionRequest request,
+        ConfigManager? configManager)
+    {
+        if (!ConfigSecretRedactor.IsRedactedSecret(request.Pass)) return request.Pass;
+        var effectiveUseSsl = request.ToConnectionDetails().GetEffectiveUseSsl();
+        var matches = configManager?.GetUsenetProviderConfig().Providers
+            .Where(provider =>
+                string.Equals(provider.Host.Trim(), request.Host.Trim(), StringComparison.OrdinalIgnoreCase)
+                && provider.Port == request.Port
+                && provider.GetEffectiveUseSsl() == effectiveUseSsl
+                && string.Equals(provider.User, request.User, StringComparison.Ordinal))
+            .Take(2)
+            .ToArray();
+        if (matches is { Length: 1 }
+            && !string.IsNullOrEmpty(matches[0].Pass)
+            && !ConfigSecretRedactor.IsRedactedSecret(matches[0].Pass))
+        {
+            return matches[0].Pass;
+        }
+        throw new BadHttpRequestException(
+            "Saved Usenet credentials could not be matched to this host, port, TLS mode, and user; re-enter the password.");
     }
 
     protected override async Task<IActionResult> HandleRequest()
     {
         var request = new TestUsenetConnectionRequest(HttpContext);
-        var response = await TestUsenetConnection(request).ConfigureAwait(false);
-        return Ok(response);
+        return await TestUsenetConnection(request).ConfigureAwait(false);
     }
 }

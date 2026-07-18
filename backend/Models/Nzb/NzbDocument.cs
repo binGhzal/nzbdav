@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Xml;
 
 namespace NzbWebDAV.Models.Nzb;
@@ -74,7 +75,8 @@ public class NzbDocument
     {
         var file = new NzbFile
         {
-            Subject = reader.GetAttribute("subject") ?? string.Empty
+            Subject = reader.GetAttribute("subject") ?? string.Empty,
+            PostedAt = ParseUnixTimestamp(reader.GetAttribute("date"))
         };
 
         if (reader.IsEmptyElement)
@@ -92,6 +94,21 @@ public class NzbDocument
         }
 
         return file;
+    }
+
+    private static DateTimeOffset? ParseUnixTimestamp(string? value)
+    {
+        if (!long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var unixSeconds))
+            return null;
+
+        try
+        {
+            return DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
     }
 
     private static async Task ReadSegmentsAsync(XmlReader reader, NzbFile file)

@@ -21,7 +21,7 @@ public class BlobCleanupService : BackgroundService
         {
             try
             {
-                await using var dbContext = new DavDatabaseContext();
+                await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
 
                 var cleanupItems = await dbContext.BlobCleanupItems
                     .Take(BatchSize)

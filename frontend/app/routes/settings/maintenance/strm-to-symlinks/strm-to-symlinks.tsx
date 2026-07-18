@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createReconnectingWebSocket } from "~/utils/websocket-util";
 import { getWebsocketUrl, withUrlBase } from "~/utils/url-base";
 import { startMaintenanceTask } from "../start-maintenance-task";
+import { useMaintenanceRun } from "../use-maintenance-run";
 
 const cleanupTaskTopic = { 'st2sy': 'state' };
 
@@ -13,17 +14,15 @@ type ConvertStrmToSymlinksProps = {
 
 export function ConvertStrmToSymlinks({ savedConfig }: ConvertStrmToSymlinksProps) {
     // stateful variables
-    const [connected, setConnected] = useState<boolean>(false);
-    const [progress, setProgress] = useState<string | null>(null);
     const [isFetching, setIsFetching] = useState<boolean>(false);
     const [requestError, setRequestError] = useState<string | null>(null);
+    const { acceptRun, isActive, progressMessage, refresh } =
+        useMaintenanceRun("convert-strm-to-symlinks");
 
     // derived variables
     const libraryDir = savedConfig["media.library-dir"];
-    const isDone = progress?.startsWith("Done");
-    const isFinished = progress?.startsWith("Done") || progress?.startsWith("Failed");
-    const isRunning = !isFinished && (isFetching || progress !== null);
-    const isRunButtonEnabled = !!libraryDir && connected && !isRunning;
+    const isRunning = isFetching || isActive;
+    const isRunButtonEnabled = !!libraryDir && !isRunning;
     const runButtonVariant = isRunButtonEnabled ? 'success' : 'secondary';
     const runButtonLabel = isRunning ? "⌛ Running.." : '▶ Run Task';
 
@@ -31,27 +30,27 @@ export function ConvertStrmToSymlinks({ savedConfig }: ConvertStrmToSymlinksProp
     useEffect(() => {
         return createReconnectingWebSocket({
             createSocket: () => new WebSocket(getWebsocketUrl()),
-            onMessage: (_, message) => setProgress(message),
+            onMessage: () => void refresh(),
             onOpen: socket => {
-                setConnected(true);
                 socket.send(JSON.stringify(cleanupTaskTopic));
             },
-            onClose: () => {
-                setConnected(false);
-                setProgress(null);
-            },
+            onClose: () => undefined,
         });
-    }, [setProgress, setConnected]);
+    }, [refresh]);
 
     // events
     const onRun = useCallback(async () => {
         setIsFetching(true);
         try {
-            await startMaintenanceTask("/api/convert-strm-to-symlinks", "convert STRM files to symlinks", setRequestError);
+            const run = await startMaintenanceTask(
+                "/api/convert-strm-to-symlinks",
+                "convert STRM files to symlinks",
+                setRequestError);
+            if (run) acceptRun(run);
         } finally {
             setIsFetching(false);
         }
-    }, [setIsFetching, setRequestError]);
+    }, [acceptRun]);
 
     return (
         <>
@@ -96,7 +95,7 @@ export function ConvertStrmToSymlinks({ savedConfig }: ConvertStrmToSymlinksProp
                             {runButtonLabel}
                         </Button>
                         <div className={styles["task-progress"]}>
-                            {progress}
+                            {progressMessage}
                         </div>
                     </div>
                     <Form.Text id="cleanup-task-progress-help" muted>

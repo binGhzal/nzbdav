@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { HistorySlot, QueueSlot, QueueSortField, QueueStatusFilter } from "~/clients/backend-client.server";
 import type { PresentationHistorySlot, PresentationQueueSlot, UploadingFile } from "../route";
 
@@ -21,6 +21,7 @@ export type HistoryEvents = {
 
 export function useQueueEvents(
     setUploadingFiles: (value: React.SetStateAction<UploadingFile[]>) => void,
+    queueSlots: PresentationQueueSlot[],
     setQueueSlots: (value: React.SetStateAction<PresentationQueueSlot[]>) => void,
     setTotalQueueCount: (value: React.SetStateAction<number>) => void,
     uploadQueueRef: React.RefObject<UploadingFile[]>,
@@ -32,6 +33,18 @@ export function useQueueEvents(
 ) {
     const pendingPercentageUpdatesRef = useRef<Map<string, string>>(new Map());
     const percentageFlushTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const queueSlotsRef = useRef(queueSlots);
+
+    useLayoutEffect(() => {
+        queueSlotsRef.current = queueSlots;
+    }, [queueSlots]);
+
+    const applyQueueSlotsUpdate = useCallback((
+        update: (slots: PresentationQueueSlot[]) => PresentationQueueSlot[]
+    ) => {
+        queueSlotsRef.current = update(queueSlotsRef.current);
+        setQueueSlots(update);
+    }, [setQueueSlots]);
 
     const flushPercentageUpdates = useCallback(() => {
         percentageFlushTimerRef.current = undefined;
@@ -39,8 +52,8 @@ export function useQueueEvents(
 
         const updates = pendingPercentageUpdatesRef.current;
         pendingPercentageUpdatesRef.current = new Map();
-        setQueueSlots(slots => applyQueueSlotPercentageChanges(slots, updates));
-    }, [setQueueSlots]);
+        applyQueueSlotsUpdate(slots => applyQueueSlotPercentageChanges(slots, updates));
+    }, [applyQueueSlotsUpdate]);
 
     useEffect(() => () => {
         if (percentageFlushTimerRef.current !== undefined)
@@ -53,70 +66,66 @@ export function useQueueEvents(
         uploadQueueRef.current = uploadQueueRef.current.filter(x => x.queueSlot.status === "uploading" || x.queueSlot.filename !== queueSlot.filename);
         setUploadingFiles(files => files.filter(f => f.queueSlot.filename !== queueSlot.filename));
 
-        setQueueSlots(slots => {
-            const result = applyQueueSlotAdd(slots, queueSlot, {
-                pageNumber,
-                pageSize,
-                queueStatusFilter,
-                queueSort,
-            });
-            if (result.totalCountDelta !== 0)
-                setTotalQueueCount(count => Math.max(0, count + result.totalCountDelta));
-            if (result.needsRefresh)
-                onQueueNeedsRefresh?.();
-            return result.slots;
-        });
-    }, [pageNumber, pageSize, queueStatusFilter, queueSort, setQueueSlots, setTotalQueueCount, onQueueNeedsRefresh]);
+        const options = {
+            pageNumber,
+            pageSize,
+            queueStatusFilter,
+            queueSort,
+        };
+        const result = applyQueueSlotAdd(queueSlotsRef.current, queueSlot, options);
+        applyQueueSlotsUpdate(slots =>
+            applyQueueSlotAdd(slots, queueSlot, options).slots);
+        if (result.totalCountDelta !== 0)
+            setTotalQueueCount(count => Math.max(0, count + result.totalCountDelta));
+        if (result.needsRefresh)
+            onQueueNeedsRefresh?.();
+    }, [pageNumber, pageSize, queueStatusFilter, queueSort, applyQueueSlotsUpdate, setTotalQueueCount, onQueueNeedsRefresh]);
 
     const onSelectQueueSlots = useCallback((ids: Set<string>, isSelected: boolean) => {
         setUploadingFiles(files => files.map(x => ids.has(x.queueSlot.nzo_id) ? { ...x, queueSlot: { ...x.queueSlot, isSelected } } : x));
-        setQueueSlots(slots => slots.map(x => ids.has(x.nzo_id) ? { ...x, isSelected } : x));
-    }, [setQueueSlots]);
+        applyQueueSlotsUpdate(slots => slots.map(x => ids.has(x.nzo_id) ? { ...x, isSelected } : x));
+    }, [applyQueueSlotsUpdate]);
 
     const onRemovingQueueSlots = useCallback((ids: Set<string>, isRemoving: boolean) => {
-        setQueueSlots(slots => slots.map(x => ids.has(x.nzo_id) ? { ...x, isRemoving } : x));
-    }, [setQueueSlots]);
+        applyQueueSlotsUpdate(slots => slots.map(x => ids.has(x.nzo_id) ? { ...x, isRemoving } : x));
+    }, [applyQueueSlotsUpdate]);
 
     const onRemoveQueueSlots = useCallback((ids: Set<string>) => {
         const uploadingIds = new Set(uploadQueueRef.current
             .filter(x => x.queueSlot.status === "uploading")
             .map(x => x.queueSlot.nzo_id));
-        setQueueSlots(slots => {
-            const result = applyQueueSlotRemoval(slots, ids, uploadingIds);
-            if (result.removedVisibleQueuedCount > 0) {
-                setTotalQueueCount(count => Math.max(0, count - result.removedVisibleQueuedCount));
-            }
-            if (result.needsRefresh) {
-                onQueueNeedsRefresh?.();
-            }
-            return result.slots;
-        });
+        const result = applyQueueSlotRemoval(queueSlotsRef.current, ids, uploadingIds);
+        applyQueueSlotsUpdate(slots => applyQueueSlotRemoval(slots, ids, uploadingIds).slots);
+        if (result.removedVisibleQueuedCount > 0)
+            setTotalQueueCount(count => Math.max(0, count - result.removedVisibleQueuedCount));
+        if (result.needsRefresh)
+            onQueueNeedsRefresh?.();
         uploadQueueRef.current = uploadQueueRef.current.filter(x => x.queueSlot.status === "uploading" || !ids.has(x.queueSlot.nzo_id));
         setUploadingFiles(files => files.filter(x => x.queueSlot.status === "uploading" || !ids.has(x.queueSlot.nzo_id)));
-    }, [setQueueSlots, setTotalQueueCount, onQueueNeedsRefresh]);
+    }, [applyQueueSlotsUpdate, setTotalQueueCount, onQueueNeedsRefresh]);
 
     const onChangeQueueSlotPriority = useCallback((id: string, priority: string) => {
-        setQueueSlots(slots => {
-            const result = applyQueueSlotPriorityChange(slots, id, priority, queueStatusFilter, queueSort);
-            if (result.removedVisibleSlot)
-                setTotalQueueCount(count => Math.max(0, count - 1));
-            if (result.removedVisibleSlot || result.needsRefresh)
-                onQueueNeedsRefresh?.();
-            return result.slots;
-        });
-    }, [queueStatusFilter, queueSort, setQueueSlots, setTotalQueueCount, onQueueNeedsRefresh]);
+        const applyUpdate = (slots: PresentationQueueSlot[]) =>
+            applyQueueSlotPriorityChange(slots, id, priority, queueStatusFilter, queueSort);
+        const result = applyUpdate(queueSlotsRef.current);
+        applyQueueSlotsUpdate(slots => applyUpdate(slots).slots);
+        if (result.removedVisibleSlot)
+            setTotalQueueCount(count => Math.max(0, count - 1));
+        if (result.removedVisibleSlot || result.needsRefresh)
+            onQueueNeedsRefresh?.();
+    }, [queueStatusFilter, queueSort, applyQueueSlotsUpdate, setTotalQueueCount, onQueueNeedsRefresh]);
 
     const onChangeQueueSlotStatus = useCallback((message: string) => {
-        setQueueSlots(slots => {
-            const result = applyQueueSlotStatusChange(slots, message, queueStatusFilter, queueSort);
-            if (result.removedVisibleSlot || result.needsRefresh) {
-                if (result.removedVisibleSlot)
-                    setTotalQueueCount(count => Math.max(0, count - 1));
-                onQueueNeedsRefresh?.();
-            }
-            return result.slots;
-        });
-    }, [queueStatusFilter, queueSort, setQueueSlots, setTotalQueueCount, onQueueNeedsRefresh]);
+        const applyUpdate = (slots: PresentationQueueSlot[]) =>
+            applyQueueSlotStatusChange(slots, message, queueStatusFilter, queueSort);
+        const result = applyUpdate(queueSlotsRef.current);
+        applyQueueSlotsUpdate(slots => applyUpdate(slots).slots);
+        if (result.removedVisibleSlot || result.needsRefresh) {
+            if (result.removedVisibleSlot)
+                setTotalQueueCount(count => Math.max(0, count - 1));
+            onQueueNeedsRefresh?.();
+        }
+    }, [queueStatusFilter, queueSort, applyQueueSlotsUpdate, setTotalQueueCount, onQueueNeedsRefresh]);
 
     const onChangeQueueSlotPercentage = useCallback((message: string) => {
         const parsed = parseQueueSlotPercentageMessage(message);
@@ -140,39 +149,73 @@ export function useQueueEvents(
 }
 
 export function useHistoryEvents(
+    historySlots: PresentationHistorySlot[],
     setHistorySlots: (value: React.SetStateAction<PresentationHistorySlot[]>) => void,
     setTotalHistoryCount: (value: React.SetStateAction<number>) => void,
     pageNumber: number,
     pageSize: number,
     onHistoryNeedsRefresh?: () => void
 ) {
+    const addedHistorySlotIdsRef = useRef<Set<string>>(new Set());
+    const historySlotsRef = useRef(historySlots);
+
+    useLayoutEffect(() => {
+        historySlotsRef.current = historySlots;
+    }, [historySlots]);
+
+    const applyHistorySlotsUpdate = useCallback((
+        update: (slots: PresentationHistorySlot[]) => PresentationHistorySlot[]
+    ) => {
+        historySlotsRef.current = update(historySlotsRef.current);
+        setHistorySlots(update);
+    }, [setHistorySlots]);
+
     const onAddHistorySlot = useCallback((historySlot: HistorySlot) => {
+        const isRepeatedAdd = addedHistorySlotIdsRef.current.has(historySlot.nzo_id);
+        addedHistorySlotIdsRef.current.add(historySlot.nzo_id);
+
+        const isVisible = historySlotsRef.current.some(slot => slot.nzo_id === historySlot.nzo_id);
+        applyHistorySlotsUpdate(slots => {
+            const existingIndex = slots.findIndex(slot => slot.nzo_id === historySlot.nzo_id);
+            if (existingIndex >= 0) {
+                const nextSlots = slots.slice();
+                nextSlots[existingIndex] = historySlot;
+                return nextSlots;
+            }
+
+            if (isRepeatedAdd || pageNumber !== 1)
+                return slots;
+
+            return [historySlot, ...slots].slice(0, pageSize);
+        });
+
+        if (isVisible || isRepeatedAdd)
+            return;
+
         setTotalHistoryCount(count => count + 1);
-        if (pageNumber === 1) {
-            setHistorySlots(slots => [historySlot, ...slots].slice(0, pageSize));
-        } else {
-            onHistoryNeedsRefresh?.();
-        }
-    }, [pageNumber, pageSize, setHistorySlots, setTotalHistoryCount, onHistoryNeedsRefresh]);
+        if (pageNumber === 1)
+            return;
+
+        onHistoryNeedsRefresh?.();
+    }, [pageNumber, pageSize, applyHistorySlotsUpdate, setTotalHistoryCount, onHistoryNeedsRefresh]);
 
     const onSelectHistorySlots = useCallback((ids: Set<string>, isSelected: boolean) => {
-        setHistorySlots(slots => slots.map(x => ids.has(x.nzo_id) ? { ...x, isSelected } : x));
-    }, [setHistorySlots]);
+        applyHistorySlotsUpdate(slots => slots.map(x => ids.has(x.nzo_id) ? { ...x, isSelected } : x));
+    }, [applyHistorySlotsUpdate]);
 
     const onRemovingHistorySlots = useCallback((ids: Set<string>, isRemoving: boolean) => {
-        setHistorySlots(slots => slots.map(x => ids.has(x.nzo_id) ? { ...x, isRemoving } : x));
-    }, [setHistorySlots]);
+        applyHistorySlotsUpdate(slots => slots.map(x => ids.has(x.nzo_id) ? { ...x, isRemoving } : x));
+    }, [applyHistorySlotsUpdate]);
 
     const onRemoveHistorySlots = useCallback((ids: Set<string>) => {
+        for (const id of ids)
+            addedHistorySlotIdsRef.current.delete(id);
         setTotalHistoryCount(count => Math.max(0, count - ids.size));
-        setHistorySlots(slots => {
-            const nextSlots = slots.filter(x => !ids.has(x.nzo_id));
-            if (nextSlots.length !== slots.length || pageNumber > 1) {
-                onHistoryNeedsRefresh?.();
-            }
-            return nextSlots;
-        });
-    }, [pageNumber, setHistorySlots, setTotalHistoryCount, onHistoryNeedsRefresh]);
+        const removedVisibleSlot = historySlotsRef.current.some(x => ids.has(x.nzo_id));
+        applyHistorySlotsUpdate(slots => slots.filter(x => !ids.has(x.nzo_id)));
+        if (removedVisibleSlot || pageNumber > 1)
+            onHistoryNeedsRefresh?.();
+    }, [pageNumber, applyHistorySlotsUpdate, setTotalHistoryCount, onHistoryNeedsRefresh]);
 
     return memoize({
         onAddHistorySlot,

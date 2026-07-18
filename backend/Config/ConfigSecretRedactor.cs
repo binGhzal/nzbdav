@@ -30,7 +30,7 @@ public static class ConfigSecretRedactor
     {
         return configName switch
         {
-            "api.key" or "webdav.pass" or "rclone.pass" => RedactScalarSecret(value),
+            "api.key" or "api.strm-key" or "webdav.pass" or "rclone.pass" => RedactScalarSecret(value),
             "usenet.providers" => RedactUsenetProviders(value),
             "arr.instances" => RedactArrInstances(value),
             _ => value
@@ -48,15 +48,28 @@ public static class ConfigSecretRedactor
 
     public static string PreserveExistingSecretValue(string configName, string submittedValue, string? existingValue)
     {
-        if (existingValue is null) return IsRedactedSecret(submittedValue) ? "" : submittedValue;
+        if (existingValue is null)
+        {
+            if (ContainsRedactedSecret(submittedValue))
+                throw CreateResolutionException(configName);
+            return submittedValue;
+        }
 
         return configName switch
         {
-            "api.key" or "webdav.pass" or "rclone.pass" when IsRedactedSecret(submittedValue) => existingValue,
+            "api.key" or "api.strm-key" or "webdav.pass" or "rclone.pass"
+                when IsRedactedSecret(submittedValue) => ResolveScalarSecret(configName, existingValue),
             "usenet.providers" => PreserveUsenetProviderSecrets(submittedValue, existingValue),
             "arr.instances" => PreserveArrInstanceSecrets(submittedValue, existingValue),
             _ => submittedValue
         };
+    }
+
+    private static string ResolveScalarSecret(string configName, string existingValue)
+    {
+        if (string.IsNullOrEmpty(existingValue) || IsRedactedSecret(existingValue))
+            throw CreateResolutionException(configName);
+        return existingValue;
     }
 
     private static string RedactScalarSecret(string value)
@@ -82,15 +95,25 @@ public static class ConfigSecretRedactor
     {
         var submitted = TryDeserialize<UsenetProviderConfig>(submittedValue);
         var existing = TryDeserialize<UsenetProviderConfig>(existingValue);
-        if (submitted is null || existing is null) return submittedValue;
-
-        for (var i = 0; i < submitted.Providers.Count; i++)
+        if (submitted?.Providers is null || existing?.Providers is null)
         {
-            var provider = submitted.Providers[i];
+            if (ContainsRedactedSecret(submittedValue))
+                throw CreateResolutionException("usenet.providers");
+            return submittedValue;
+        }
+
+        foreach (var provider in submitted.Providers)
+        {
             if (!IsRedactedSecret(provider.Pass)) continue;
 
-            var existingProvider = FindMatchingProvider(existing.Providers, provider, i);
-            provider.Pass = existingProvider?.Pass ?? "";
+            var existingProvider = FindMatchingProvider(existing.Providers, provider);
+            if (existingProvider is null
+                || string.IsNullOrEmpty(existingProvider.Pass)
+                || IsRedactedSecret(existingProvider.Pass))
+            {
+                throw CreateResolutionException("usenet.providers");
+            }
+            provider.Pass = existingProvider.Pass;
         }
 
         return JsonSerializer.Serialize(submitted, JsonOptions);
@@ -99,19 +122,18 @@ public static class ConfigSecretRedactor
     private static UsenetProviderConfig.ConnectionDetails? FindMatchingProvider
     (
         IReadOnlyList<UsenetProviderConfig.ConnectionDetails> existingProviders,
-        UsenetProviderConfig.ConnectionDetails submitted,
-        int submittedIndex
+        UsenetProviderConfig.ConnectionDetails submitted
     )
     {
-        var match = existingProviders.FirstOrDefault(existing =>
-            string.Equals(existing.Host.Trim(), submitted.Host.Trim(), StringComparison.OrdinalIgnoreCase)
-            && existing.Port == submitted.Port
-            && string.Equals(existing.User.Trim(), submitted.User.Trim(), StringComparison.Ordinal));
-        if (match is not null) return match;
-
-        return submittedIndex >= 0 && submittedIndex < existingProviders.Count
-            ? existingProviders[submittedIndex]
-            : null;
+        var matches = existingProviders
+            .Where(existing =>
+                string.Equals(existing.Host.Trim(), submitted.Host.Trim(), StringComparison.OrdinalIgnoreCase)
+                && existing.Port == submitted.Port
+                && existing.GetEffectiveUseSsl() == submitted.GetEffectiveUseSsl()
+                && string.Equals(existing.User, submitted.User, StringComparison.Ordinal))
+            .Take(2)
+            .ToArray();
+        return matches.Length == 1 ? matches[0] : null;
     }
 
     private static string RedactArrInstances(string value)
@@ -138,7 +160,19 @@ public static class ConfigSecretRedactor
     {
         var submitted = TryDeserialize<ArrConfig>(submittedValue);
         var existing = TryDeserialize<ArrConfig>(existingValue);
-        if (submitted is null || existing is null) return submittedValue;
+        if (submitted is null
+            || existing is null
+            || submitted.RadarrInstances is null
+            || submitted.SonarrInstances is null
+            || submitted.LidarrInstances is null
+            || existing.RadarrInstances is null
+            || existing.SonarrInstances is null
+            || existing.LidarrInstances is null)
+        {
+            if (ContainsRedactedSecret(submittedValue))
+                throw CreateResolutionException("arr.instances");
+            return submittedValue;
+        }
 
         PreserveArrApiKeys(submitted.RadarrInstances, existing.RadarrInstances);
         PreserveArrApiKeys(submitted.SonarrInstances, existing.SonarrInstances);
@@ -152,36 +186,46 @@ public static class ConfigSecretRedactor
         IReadOnlyList<ArrConfig.ConnectionDetails> existingInstances
     )
     {
-        for (var i = 0; i < submittedInstances.Count; i++)
+        foreach (var instance in submittedInstances)
         {
-            var instance = submittedInstances[i];
-            var existing = FindMatchingArrInstance(existingInstances, instance, i);
-            if (existing is not null && NormalizeEndpoint(existing.Host) == NormalizeEndpoint(instance.Host))
-                instance.Host = existing.Host;
+            var existing = FindMatchingArrInstance(existingInstances, instance);
             if (IsRedactedSecret(instance.ApiKey))
-                instance.ApiKey = existing?.ApiKey ?? "";
+            {
+                if (existing is null
+                    || string.IsNullOrEmpty(existing.ApiKey)
+                    || IsRedactedSecret(existing.ApiKey))
+                {
+                    throw CreateResolutionException("arr.instances");
+                }
+                instance.ApiKey = existing.ApiKey;
+            }
+            if (existing is not null)
+                instance.Host = existing.Host;
         }
     }
 
     private static ArrConfig.ConnectionDetails? FindMatchingArrInstance
     (
         IReadOnlyList<ArrConfig.ConnectionDetails> existingInstances,
-        ArrConfig.ConnectionDetails submitted,
-        int submittedIndex
+        ArrConfig.ConnectionDetails submitted
     )
     {
-        var normalizedHost = NormalizeEndpoint(submitted.Host);
-        var match = existingInstances.FirstOrDefault(existing => NormalizeEndpoint(existing.Host) == normalizedHost);
-        if (match is not null) return match;
-
-        return submittedIndex >= 0 && submittedIndex < existingInstances.Count
-            ? existingInstances[submittedIndex]
-            : null;
+        var matches = existingInstances
+            .Where(existing => EndpointIdentity.AreEquivalent(existing.Host, submitted.Host))
+            .Take(2)
+            .ToArray();
+        return matches.Length == 1 ? matches[0] : null;
     }
 
-    private static string NormalizeEndpoint(string value)
+    private static bool ContainsRedactedSecret(string value)
     {
-        return value.Trim().TrimEnd('/').ToLowerInvariant();
+        return value.Contains(RedactedSecret, StringComparison.Ordinal);
+    }
+
+    private static ConfigSecretResolutionException CreateResolutionException(string configName)
+    {
+        return new ConfigSecretResolutionException(
+            $"Saved credentials for {configName} could not be matched uniquely; re-enter the credential.");
     }
 
     private static T? TryDeserialize<T>(string value)

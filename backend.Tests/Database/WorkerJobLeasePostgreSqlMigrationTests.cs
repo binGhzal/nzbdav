@@ -13,28 +13,13 @@ public sealed class WorkerJobLeasePostgreSqlMigrationTests
     [PostgreSqlFact]
     public async Task Migration_CreatesRenewableWorkerLeaseSchema()
     {
-        var connectionString = Environment.GetEnvironmentVariable(PostgreSqlFactAttribute.TestConnectionStringVariable);
-        Assert.False(string.IsNullOrWhiteSpace(connectionString));
+        await using var schema = await PostgreSqlTestSchema.CreateAsync("worker_lease");
+        await PostgreSqlNativeMigrator.MigrateAsync(schema.ConnectionString);
+        await using var dbContext = new PostgreSqlDavDatabaseContext(schema.CreateOptions());
+        AssertNoPendingMigrationChanges(dbContext);
+        await using var connection = await schema.OpenConnectionAsync();
 
-        var schemaName = $"worker_lease_{Guid.NewGuid():N}";
-        await using var adminConnection = new NpgsqlConnection(connectionString);
-        await adminConnection.OpenAsync();
-        await ExecuteNonQueryAsync(adminConnection, $"CREATE SCHEMA \"{schemaName}\"");
-
-        try
-        {
-            var schemaConnectionString = new NpgsqlConnectionStringBuilder(connectionString)
-            {
-                SearchPath = schemaName
-            }.ConnectionString;
-            var options = new DbContextOptionsBuilder<DavDatabaseContext>()
-                .UseNpgsql(schemaConnectionString)
-                .Options;
-            await using var dbContext = new DavDatabaseContext(options);
-            AssertNoPendingMigrationChanges(dbContext);
-            await dbContext.Database.MigrateAsync();
-
-            var columns = await ReadWorkerJobColumnsAsync(adminConnection, schemaName);
+            var columns = await ReadWorkerJobColumnsAsync(connection, schema.SchemaName);
             var additiveColumns = new[]
             {
                 "LeaseToken",
@@ -61,12 +46,7 @@ public sealed class WorkerJobLeasePostgreSqlMigrationTests
             AssertColumn(columns, "LeaseGeneration", "bigint", isNullable: false);
             Assert.Contains("0", columns["LeaseGeneration"].ColumnDefault ?? string.Empty);
 
-            Assert.True(await WorkerJobLeaseIndexExistsAsync(adminConnection, schemaName));
-        }
-        finally
-        {
-            await ExecuteNonQueryAsync(adminConnection, $"DROP SCHEMA IF EXISTS \"{schemaName}\" CASCADE");
-        }
+            Assert.True(await WorkerJobLeaseIndexExistsAsync(connection, schema.SchemaName));
     }
 
     private static async Task<Dictionary<string, ColumnInfo>> ReadWorkerJobColumnsAsync
@@ -124,13 +104,6 @@ public sealed class WorkerJobLeasePostgreSqlMigrationTests
         var column = columns[columnName];
         Assert.Equal(dataType, column.DataType);
         Assert.Equal(isNullable, column.IsNullable);
-    }
-
-    private static async Task ExecuteNonQueryAsync(NpgsqlConnection connection, string commandText)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = commandText;
-        await command.ExecuteNonQueryAsync();
     }
 
     private static void AssertNoPendingMigrationChanges(DavDatabaseContext dbContext)

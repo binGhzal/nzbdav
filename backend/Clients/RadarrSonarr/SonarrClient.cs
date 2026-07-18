@@ -10,8 +10,14 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     private static readonly Dictionary<string, int> SeriesPathToSeriesIdCache = new();
     private static readonly Dictionary<string, int> SymlinkOrStrmToEpisodeFileIdCache = new();
 
-    public Task<SonarrQueue> GetSonarrQueueAsync(CancellationToken ct = default) =>
+    public virtual Task<SonarrQueue> GetSonarrQueueAsync(CancellationToken ct = default) =>
         Get<SonarrQueue>($"/queue?protocol=usenet&pageSize=5000", ct);
+
+    public virtual Task<ArrCommand> DownloadedEpisodesScanAsync(
+        string path,
+        string downloadClientId,
+        CancellationToken ct = default) =>
+        CommandAsync(new { name = "DownloadedEpisodesScan", path, downloadClientId, importMode = 0 }, ct);
 
     public Task<ArrPagedResponse<SonarrMissingEpisode>> GetMissingEpisodesAsync(int pageSize = 500, CancellationToken ct = default) =>
         Get<ArrPagedResponse<SonarrMissingEpisode>>(

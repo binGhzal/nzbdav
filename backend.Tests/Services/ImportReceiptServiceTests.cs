@@ -94,6 +94,7 @@ public sealed class ImportReceiptServiceTests
     [InlineData(ImportReceiptState.Imported)]
     [InlineData(ImportReceiptState.Removed)]
     [InlineData(ImportReceiptState.NeedsReview)]
+    [InlineData(ImportReceiptState.VerificationQuarantined)]
     public async Task ClaimOnlyChangesAvailable(ImportReceiptState initialState)
     {
         var now = DateTimeOffset.UtcNow;
@@ -114,6 +115,7 @@ public sealed class ImportReceiptServiceTests
     [InlineData(ImportReceiptState.Available, true, ImportReceiptState.Imported)]
     [InlineData(ImportReceiptState.UnlinkClaimed, true, ImportReceiptState.Imported)]
     [InlineData(ImportReceiptState.NeedsReview, true, ImportReceiptState.Imported)]
+    [InlineData(ImportReceiptState.VerificationQuarantined, false, ImportReceiptState.VerificationQuarantined)]
     [InlineData(ImportReceiptState.Imported, false, ImportReceiptState.Imported)]
     [InlineData(ImportReceiptState.Removed, false, ImportReceiptState.Removed)]
     public async Task MarkImportedUsesExplicitAllowedStates(
@@ -135,14 +137,16 @@ public sealed class ImportReceiptServiceTests
     }
 
     [Theory]
-    [InlineData(ImportReceiptState.Available, true)]
-    [InlineData(ImportReceiptState.UnlinkClaimed, true)]
-    [InlineData(ImportReceiptState.Imported, true)]
-    [InlineData(ImportReceiptState.NeedsReview, true)]
-    [InlineData(ImportReceiptState.Removed, false)]
-    public async Task MarkRemovedTerminalizesEveryNonRemovedState(
+    [InlineData(ImportReceiptState.Available, true, ImportReceiptState.Removed)]
+    [InlineData(ImportReceiptState.UnlinkClaimed, true, ImportReceiptState.Removed)]
+    [InlineData(ImportReceiptState.Imported, true, ImportReceiptState.Removed)]
+    [InlineData(ImportReceiptState.NeedsReview, true, ImportReceiptState.Removed)]
+    [InlineData(ImportReceiptState.VerificationQuarantined, false, ImportReceiptState.VerificationQuarantined)]
+    [InlineData(ImportReceiptState.Removed, false, ImportReceiptState.Removed)]
+    public async Task MarkRemovedPreservesTerminalVerificationQuarantine(
         ImportReceiptState initialState,
-        bool expectedChanged)
+        bool expectedChanged,
+        ImportReceiptState expectedState)
     {
         var now = DateTimeOffset.UtcNow;
         var receipt = CreateReceipt(Guid.NewGuid(), Guid.NewGuid(), now, initialState);
@@ -154,7 +158,7 @@ public sealed class ImportReceiptServiceTests
             receipt.HistoryItemId, now.AddMinutes(1), CancellationToken.None));
 
         Assert.Equal(expectedChanged, result.Changed);
-        Assert.Equal(ImportReceiptState.Removed, result.State);
+        Assert.Equal(expectedState, result.State);
     }
 
     [Theory]
@@ -162,6 +166,7 @@ public sealed class ImportReceiptServiceTests
     [InlineData(ImportReceiptState.UnlinkClaimed, true, ImportReceiptState.NeedsReview)]
     [InlineData(ImportReceiptState.Imported, false, ImportReceiptState.Imported)]
     [InlineData(ImportReceiptState.NeedsReview, false, ImportReceiptState.NeedsReview)]
+    [InlineData(ImportReceiptState.VerificationQuarantined, false, ImportReceiptState.VerificationQuarantined)]
     [InlineData(ImportReceiptState.Removed, false, ImportReceiptState.Removed)]
     public async Task MarkNeedsReviewOnlyChangesUnlinkClaimed(
         ImportReceiptState initialState,
@@ -179,6 +184,56 @@ public sealed class ImportReceiptServiceTests
 
         Assert.Equal(expectedChanged, result.Changed);
         Assert.Equal(expectedState, result.State);
+    }
+
+    [Theory]
+    [InlineData(ImportReceiptState.Available, true, ImportReceiptState.VerificationQuarantined)]
+    [InlineData(ImportReceiptState.UnlinkClaimed, true, ImportReceiptState.VerificationQuarantined)]
+    [InlineData(ImportReceiptState.Imported, true, ImportReceiptState.VerificationQuarantined)]
+    [InlineData(ImportReceiptState.NeedsReview, true, ImportReceiptState.VerificationQuarantined)]
+    [InlineData(ImportReceiptState.VerificationQuarantined, true, ImportReceiptState.VerificationQuarantined)]
+    [InlineData(ImportReceiptState.Removed, false, ImportReceiptState.Removed)]
+    public async Task MarkVerificationQuarantineChangesEveryNonRemovedStateWithoutWeakeningReconciliation(
+        ImportReceiptState initialState,
+        bool expectedChanged,
+        ImportReceiptState expectedState
+    )
+    {
+        var now = DateTimeOffset.UtcNow;
+        var receipt = CreateReceipt(Guid.NewGuid(), Guid.NewGuid(), now, initialState);
+        receipt.Detail = "previous receipt detail";
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        dbContext.ImportReceipts.Add(receipt);
+        await dbContext.SaveChangesAsync();
+
+        var results = await new ImportReceiptService(dbContext).MarkVerificationQuarantineAsync(
+            receipt.HistoryItemId,
+            now.AddMinutes(1),
+            "confirmed missing articles",
+            CancellationToken.None);
+
+        var result = Assert.Single(results);
+        Assert.Equal(expectedChanged, result.Changed);
+        Assert.Equal(expectedState, result.State);
+        var durable = await dbContext.ImportReceipts
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == receipt.Id);
+        Assert.Equal(expectedChanged ? now.AddMinutes(1) : now, durable.UpdatedAt);
+        Assert.Equal(
+            expectedChanged ? "confirmed missing articles" : "previous receipt detail",
+            durable.Detail);
+
+        if (initialState == ImportReceiptState.Available)
+        {
+            var reconciliation = await new ImportReceiptService(dbContext).MarkNeedsReviewAsync(
+                receipt.DavItemId,
+                receipt.HistoryItemId,
+                now.AddMinutes(2),
+                "reconciliation",
+                CancellationToken.None);
+            Assert.False(reconciliation.Changed);
+            Assert.Equal(ImportReceiptState.VerificationQuarantined, reconciliation.State);
+        }
     }
 
     private static ImportReceipt CreateReceipt(

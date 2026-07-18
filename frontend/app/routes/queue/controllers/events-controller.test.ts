@@ -11,7 +11,7 @@ import {
     useQueueEvents,
 } from "./events-controller";
 import type { PresentationHistorySlot, PresentationQueueSlot, UploadingFile } from "../route";
-import type { QueueSortField } from "~/clients/backend-client.server";
+import type { QueueSortField, QueueStatusFilter } from "~/clients/backend-client.server";
 
 describe("queue event reducers", () => {
     afterEach(() => {
@@ -297,6 +297,54 @@ describe("queue event reducers", () => {
         expect(result.current.slots.map(slot => slot.true_percentage)).toEqual(["15", "35"]);
     });
 
+    it("does not repeat queue-add count or refresh effects when React replays the slot updater", () => {
+        const { result } = renderHook(() => useQueueEventsHarness(
+            "name",
+            { replayStateUpdaters: true }));
+
+        act(() => result.current.events.onAddQueueSlot(queueSlot("third", "Queued", "0")));
+
+        expect(result.current.slots.map(slot => slot.nzo_id)).toEqual(["first", "second", "third"]);
+        expect(result.current.totalCount).toBe(3);
+        expect(result.current.refreshCount).toBe(1);
+    });
+
+    it("does not repeat queue-removal count or refresh effects when React replays the slot updater", () => {
+        const { result } = renderHook(() => useQueueEventsHarness(
+            "priority",
+            { replayStateUpdaters: true }));
+
+        act(() => result.current.events.onRemoveQueueSlots(new Set(["first"])));
+
+        expect(result.current.slots.map(slot => slot.nzo_id)).toEqual(["second"]);
+        expect(result.current.totalCount).toBe(1);
+        expect(result.current.refreshCount).toBe(1);
+    });
+
+    it("does not repeat priority count or refresh effects when React replays the slot updater", () => {
+        const { result } = renderHook(() => useQueueEventsHarness(
+            "priority",
+            { queueStatusFilter: "queued", replayStateUpdaters: true }));
+
+        act(() => result.current.events.onChangeQueueSlotPriority("first", "Paused"));
+
+        expect(result.current.slots.map(slot => slot.nzo_id)).toEqual(["second"]);
+        expect(result.current.totalCount).toBe(1);
+        expect(result.current.refreshCount).toBe(1);
+    });
+
+    it("does not repeat status count or refresh effects when React replays the slot updater", () => {
+        const { result } = renderHook(() => useQueueEventsHarness(
+            "priority",
+            { queueStatusFilter: "queued", replayStateUpdaters: true }));
+
+        act(() => result.current.events.onChangeQueueSlotStatus("first|Downloading"));
+
+        expect(result.current.slots.map(slot => slot.nzo_id)).toEqual(["second"]);
+        expect(result.current.totalCount).toBe(1);
+        expect(result.current.refreshCount).toBe(1);
+    });
+
     it("requests refresh when a history add shifts a later page", () => {
         const { result } = renderHook(() => useHistoryEventsHarness(2));
 
@@ -305,6 +353,70 @@ describe("queue event reducers", () => {
         expect(result.current.slots.map(slot => slot.nzo_id)).toEqual(["first", "second"]);
         expect(result.current.totalCount).toBe(11);
         expect(result.current.refreshCount).toBe(1);
+    });
+
+    it("replaces an existing history slot without inflating the total count", () => {
+        const { result } = renderHook(() => useHistoryEventsHarness(1));
+        const incoming = {
+            ...historySlot("first"),
+            name: "canonical-history-name.nzb",
+            status: "Failed",
+        };
+
+        act(() => result.current.events.onAddHistorySlot(incoming));
+
+        expect(result.current.slots).toHaveLength(2);
+        expect(result.current.slots[0]).toEqual(incoming);
+        expect(result.current.slots.map(slot => slot.nzo_id)).toEqual(["first", "second"]);
+        expect(result.current.totalCount).toBe(10);
+        expect(result.current.refreshCount).toBe(0);
+    });
+
+    it("counts and refreshes a repeated off-page history add only once", () => {
+        const { result } = renderHook(() => useHistoryEventsHarness(2));
+        const firstDelivery = historySlot("repeated");
+        const repeatedDelivery = {
+            ...firstDelivery,
+            name: "canonical-history-name.nzb",
+            status: "Failed",
+        };
+
+        act(() => result.current.events.onAddHistorySlot(firstDelivery));
+        act(() => result.current.events.onAddHistorySlot(repeatedDelivery));
+
+        expect(result.current.slots.map(slot => slot.nzo_id)).toEqual(["first", "second"]);
+        expect(result.current.totalCount).toBe(11);
+        expect(result.current.refreshCount).toBe(1);
+    });
+
+    it("does not repeat history count or refresh effects when React replays a state updater", () => {
+        const { result } = renderHook(() => useHistoryEventsHarness(2, true));
+
+        act(() => result.current.events.onAddHistorySlot(historySlot("replayed")));
+
+        expect(result.current.slots.map(slot => slot.nzo_id)).toEqual(["first", "second"]);
+        expect(result.current.totalCount).toBe(11);
+        expect(result.current.refreshCount).toBe(1);
+    });
+
+    it("keeps one canonical slot when a new history add is delivered repeatedly", () => {
+        const { result } = renderHook(() => useHistoryEventsHarness(1));
+        const firstDelivery = historySlot("repeated");
+        const repeatedDelivery = {
+            ...firstDelivery,
+            name: "canonical-history-name.nzb",
+            status: "Failed",
+        };
+
+        act(() => {
+            result.current.events.onAddHistorySlot(firstDelivery);
+            result.current.events.onAddHistorySlot(repeatedDelivery);
+        });
+
+        expect(result.current.slots.map(slot => slot.nzo_id)).toEqual(["repeated", "first"]);
+        expect(result.current.slots[0]).toEqual(repeatedDelivery);
+        expect(result.current.totalCount).toBe(11);
+        expect(result.current.refreshCount).toBe(0);
     });
 
     it("requests refresh when a visible history removal leaves the page incomplete", () => {
@@ -342,13 +454,22 @@ class ThrowingMapArray<T> extends Array<T> {
     }
 }
 
-function useQueueEventsHarness(queueSort: QueueSortField) {
+function useQueueEventsHarness(
+    queueSort: QueueSortField,
+    {
+        queueStatusFilter = "all",
+        replayStateUpdaters = false,
+    }: {
+        queueStatusFilter?: QueueStatusFilter;
+        replayStateUpdaters?: boolean;
+    } = {},
+) {
     const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
     const [slots, setSlots] = useState<PresentationQueueSlot[]>([
         queueSlot("first", "Queued", "0"),
         queueSlot("second", "Downloading", "20"),
     ]);
-    const [, setTotalQueueCount] = useState(2);
+    const [totalCount, setTotalQueueCount] = useState(2);
     const uploadQueueRef = useRef<UploadingFile[]>([]);
     const refreshCountRef = useRef(0);
     const slotUpdateCountRef = useRef(0);
@@ -357,30 +478,40 @@ function useQueueEventsHarness(queueSort: QueueSortField) {
     }, []);
     const setSlotsCounting = useCallback((value: React.SetStateAction<PresentationQueueSlot[]>) => {
         slotUpdateCountRef.current++;
-        setSlots(value);
-    }, []);
+        if (!replayStateUpdaters || typeof value !== "function") {
+            setSlots(value);
+            return;
+        }
+
+        setSlots(currentSlots => {
+            value(currentSlots);
+            return value(currentSlots);
+        });
+    }, [replayStateUpdaters]);
 
     const events = useQueueEvents(
         setUploadingFiles,
+        slots,
         setSlotsCounting,
         setTotalQueueCount,
         uploadQueueRef,
         1,
         50,
-        "all",
+        queueStatusFilter,
         queueSort,
         onNeedsRefresh);
 
     return {
         events,
         slots,
+        totalCount,
         uploadingFiles,
         refreshCount: refreshCountRef.current,
         slotUpdateCount: slotUpdateCountRef.current,
     };
 }
 
-function useHistoryEventsHarness(pageNumber: number) {
+function useHistoryEventsHarness(pageNumber: number, replayStateUpdaters = false) {
     const [slots, setSlots] = useState<PresentationHistorySlot[]>([
         historySlot("first"),
         historySlot("second"),
@@ -390,9 +521,21 @@ function useHistoryEventsHarness(pageNumber: number) {
     const onNeedsRefresh = useCallback(() => {
         refreshCountRef.current++;
     }, []);
+    const setSlotsWithOptionalReplay = useCallback((value: React.SetStateAction<PresentationHistorySlot[]>) => {
+        if (!replayStateUpdaters || typeof value !== "function") {
+            setSlots(value);
+            return;
+        }
+
+        setSlots(currentSlots => {
+            value(currentSlots);
+            return value(currentSlots);
+        });
+    }, [replayStateUpdaters]);
 
     const events = useHistoryEvents(
-        setSlots,
+        slots,
+        setSlotsWithOptionalReplay,
         setTotalCount,
         pageNumber,
         2,

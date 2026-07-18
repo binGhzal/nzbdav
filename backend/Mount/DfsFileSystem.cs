@@ -371,7 +371,9 @@ public sealed class DfsFileSystem : FileSystem
         };
     }
 
-    private static Stat CreateStat(DfsDavNode node)
+    private static Stat CreateStat(DfsDavNode node) => CreateStatForTimeZone(node, TimeZoneInfo.Local);
+
+    internal static Stat CreateStatForTimeZone(DfsDavNode node, TimeZoneInfo localTimeZone)
     {
         var mode = node.Kind switch
         {
@@ -386,7 +388,7 @@ public sealed class DfsFileSystem : FileSystem
                 FilePermissions.S_IFREG | FilePermissions.S_IRUSR | FilePermissions.S_IWUSR
                 | FilePermissions.S_IRGRP | FilePermissions.S_IROTH
         };
-        var time = ToUnixTimeSeconds(node.CreatedAt);
+        var time = ToUnixTimeSeconds(node.CreatedAt, localTimeZone);
         return new Stat
         {
             st_ino = GetInode(node),
@@ -401,7 +403,10 @@ public sealed class DfsFileSystem : FileSystem
         };
     }
 
-    private static long ToUnixTimeSeconds(DateTime value)
+    private static long ToUnixTimeSeconds(DateTime value) =>
+        ToUnixTimeSeconds(value, TimeZoneInfo.Local);
+
+    private static long ToUnixTimeSeconds(DateTime value, TimeZoneInfo localTimeZone)
     {
         if (value <= DateTime.UnixEpoch) return 0;
 
@@ -409,7 +414,7 @@ public sealed class DfsFileSystem : FileSystem
         {
             DateTimeKind.Utc => value,
             DateTimeKind.Local => value.ToUniversalTime(),
-            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+            _ => TimeZoneInfo.ConvertTimeToUtc(value, localTimeZone)
         };
         return new DateTimeOffset(utc).ToUnixTimeSeconds();
     }

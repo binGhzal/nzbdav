@@ -29,7 +29,7 @@ public class HistoryCleanupService : BackgroundService
         {
             try
             {
-                await using var dbContext = new DavDatabaseContext();
+                await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
 
                 var cleanupItems = await dbContext.HistoryCleanupItems
                     .Take(BatchSize)

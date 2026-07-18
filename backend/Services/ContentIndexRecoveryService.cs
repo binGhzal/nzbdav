@@ -34,7 +34,7 @@ public sealed class ContentIndexRecoveryService : BackgroundService
                 Log.Warning(warning);
 
             var snapshot = snapshotReadResult.Snapshot;
-            await using var dbContext = new DavDatabaseContext();
+            await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
             if (snapshot == null || snapshot.Items.Count == 0)
             {
                 if (snapshotReadResult.RewriteRecommended)

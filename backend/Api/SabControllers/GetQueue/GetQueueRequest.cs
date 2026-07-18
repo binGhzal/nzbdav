@@ -32,7 +32,7 @@ public class GetQueueRequest
         CancellationToken = context.RequestAborted;
 
         Start = SabPagination.ParseStart(startParam);
-        Limit = SabPagination.ParseLimit(limitParam);
+        Limit = SabPagination.ParseQueueLimit(limitParam);
         NzoIds = SabPagination.ParseNzoIdSet(nzoIdsParam);
     }
 

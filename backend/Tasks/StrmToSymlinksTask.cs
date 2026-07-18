@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
 using NzbWebDAV.Websocket;
@@ -13,21 +14,13 @@ namespace NzbWebDAV.Tasks;
 public class StrmToSymlinksTask(
     ConfigManager configManager,
     DavDatabaseClient dbClient,
-    WebsocketManager websocketManager
-) : BaseTask(websocketManager, WebsocketTopic.StrmToSymlinksTaskProgress)
+    WebsocketManager websocketManager,
+    MaintenanceProgressReporter? progressReporter = null
+) : BaseTask(websocketManager, WebsocketTopic.StrmToSymlinksTaskProgress, progressReporter)
 {
-    protected override async Task ExecuteInternal()
+    protected override Task ExecuteInternal(CancellationToken cancellationToken)
     {
-        try
-        {
-            var ct = SigtermUtil.GetCancellationToken();
-            await ConvertAllStrmFilesToSymlinks(ct).ConfigureAwait(false);
-        }
-        catch (Exception e)
-        {
-            Report($"Failed: {e.Message}");
-            Log.Error(e, "Failed to convert *.strm files to symlinks.");
-        }
+        return ConvertAllStrmFilesToSymlinks(cancellationToken);
     }
 
     private async Task ConvertAllStrmFilesToSymlinks(CancellationToken token)
@@ -39,7 +32,10 @@ public class StrmToSymlinksTask(
 
         ReportProgress("Scanning library for strm files...", completedCount);
         foreach (var batch in batches)
+        {
+            token.ThrowIfCancellationRequested();
             await ConvertBatchOfStrmFilesToSymlinks(batch, OnItemCompleted, token).ConfigureAwait(false);
+        }
         ReportProgress("Done!", completedCount);
         return;
 
@@ -103,6 +99,7 @@ public class StrmToSymlinksTask(
         var mountDir = configManager.GetMountDir();
         foreach (var item in itemsWithExtension)
         {
+            token.ThrowIfCancellationRequested();
             var symlinkPath = PathUtil.ReplaceExtension(item.Link.LinkPath, item.Extension);
             var symlinkTarget = DatabaseStoreSymlinkFile.GetTargetPath(item.Link.DavItemId, mountDir);
             try
@@ -202,7 +199,7 @@ public class StrmToSymlinksTask(
 
     private void ReportProgress(string message, int completedCount, bool debounce = false)
     {
-        Action<string> report = debounce ? ReportDebounced : Report;
-        report($"{message}\nConverted: {completedCount} strm file(s) to symlinks.");
+        Action<string, int?, int?> report = debounce ? ReportDebounced : Report;
+        report($"{message}\nConverted: {completedCount} strm file(s) to symlinks.", completedCount, null);
     }
 }

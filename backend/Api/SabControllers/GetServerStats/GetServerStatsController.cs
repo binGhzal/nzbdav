@@ -16,9 +16,9 @@ public class GetServerStatsController(
     protected override async Task<IActionResult> Handle()
     {
         var now = DateTime.Now;
-        var dayStart = now.Date;
-        var weekStart = now.AddDays(-7);
-        var monthStart = now.AddDays(-30);
+        var dayStart = LocalWallQueryBounds.NormalizeExactBoundary(dbClient.Ctx, now.Date);
+        var weekStart = LocalWallQueryBounds.NormalizeInclusiveLowerBound(dbClient.Ctx, now.AddDays(-7));
+        var monthStart = LocalWallQueryBounds.NormalizeInclusiveLowerBound(dbClient.Ctx, now.AddDays(-30));
         var completedHistory = dbClient.Ctx.HistoryItems
             .Where(x => x.DownloadStatus == HistoryItem.DownloadStatusOption.Completed);
 

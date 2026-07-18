@@ -7,12 +7,16 @@ using NzbWebDAV.WebDav;
 
 namespace NzbWebDAV.Mount;
 
-public sealed class DfsDavPathResolver(DavDatabaseClient dbClient, ConfigManager configManager)
+public sealed class DfsDavPathResolver(
+    DavDatabaseClient dbClient,
+    ConfigManager configManager,
+    TimeProvider? timeProvider = null)
 {
     private const string RcloneLinkSuffix = ".rclonelink";
     private const string HexAlphabet = "0123456789abcdef";
     private static readonly TimeSpan DeletedSymlinkTtl = TimeSpan.FromSeconds(30);
     private static readonly ConcurrentDictionary<string, DateTimeOffset> DeletedSymlinks = new(StringComparer.Ordinal);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<DfsDavNode?> ResolveAsync(string path, CancellationToken ct = default)
     {
@@ -286,7 +290,7 @@ public sealed class DfsDavPathResolver(DavDatabaseClient dbClient, ConfigManager
         };
     }
 
-    private static DavItem CreateVirtualCategory(string category)
+    private DavItem CreateVirtualCategory(string category)
     {
         var id = Guid.NewGuid();
         return new DavItem
@@ -299,7 +303,7 @@ public sealed class DfsDavPathResolver(DavDatabaseClient dbClient, ConfigManager
             Type = DavItem.ItemType.Directory,
             SubType = DavItem.ItemSubType.Directory,
             Path = Path.Join(DavItem.ContentFolder.Path, category),
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = _timeProvider.GetLocalNow().DateTime
         };
     }
 

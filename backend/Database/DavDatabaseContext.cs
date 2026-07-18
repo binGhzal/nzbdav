@@ -3,30 +3,41 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using Npgsql;
 using NzbWebDAV.Clients.Rclone;
 using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Database.Transfer;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
 using Serilog;
 
 namespace NzbWebDAV.Database;
 
-public sealed class DavDatabaseContext : DbContext
+public class DavDatabaseContext : DbContext
 {
+    public const string SqliteOwnerProviderMismatchMessage =
+        "DavDatabaseContext owns the SQLite migration chain and cannot be constructed for PostgreSQL. " +
+        "Use DavDatabaseContextRuntimeFactory for provider selection.";
+
     private const int SqliteBusy = 5;
     private const int SqliteLocked = 6;
+    private const int MaxInvalidationConcurrencyRetries = 5;
     private const int WorkerJobJsonMaxUtf8Bytes = 16 * 1024;
+    private int _pendingRcloneInvalidationWake;
 
-    public DavDatabaseContext() : base(CreateOptions())
+    public DavDatabaseContext() : base(CreateSqliteOptions(enforceProviderSelection: true))
     {
     }
 
-    public DavDatabaseContext(DbContextOptions<DavDatabaseContext> options) : base(options)
+    public DavDatabaseContext(DbContextOptions<DavDatabaseContext> options) : base(ValidateSqliteOwnerOptions(options))
+    {
+    }
+
+    private protected DavDatabaseContext(DbContextOptions options) : base(options)
     {
     }
 
@@ -37,24 +48,15 @@ public sealed class DavDatabaseContext : DbContext
     public static bool IsPostgres => DatabaseProvider.Equals("postgres", StringComparison.OrdinalIgnoreCase)
                                     || DatabaseProvider.Equals("postgresql", StringComparison.OrdinalIgnoreCase);
 
-    private static DbContextOptions<DavDatabaseContext> CreateOptions()
+    internal static DbContextOptions<DavDatabaseContext> CreateSqliteOptions(bool enforceProviderSelection)
     {
-        var options = new DbContextOptionsBuilder<DavDatabaseContext>();
-
-        if (IsPostgres)
+        if (enforceProviderSelection && !IsSqlite)
         {
-            var postgresConnectionString = EnvironmentUtil.GetRequiredVariable("NZBDAV_DATABASE_CONNECTION_STRING");
-            return options
-                .UseNpgsql(postgresConnectionString)
-                .ConfigureWarnings(warnings =>
-                    warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
-                .AddInterceptors(new ContentIndexSnapshotInterceptor())
-                .Options;
-        }
-
-        if (!IsSqlite)
+            if (IsPostgres)
+                throw new InvalidOperationException(SqliteOwnerProviderMismatchMessage);
             throw new InvalidOperationException(
                 "Unsupported database provider. Set NZBDAV_DATABASE_PROVIDER to 'sqlite' or 'postgres'.");
+        }
 
         var sqliteConnectionString = new SqliteConnectionStringBuilder
         {
@@ -69,11 +71,35 @@ public sealed class DavDatabaseContext : DbContext
             DefaultTimeout = 30
         }.ToString();
 
-        return options
-            .UseSqlite(sqliteConnectionString)
-            .AddInterceptors(new SqliteForeignKeyEnabler(), new ContentIndexSnapshotInterceptor())
+        return new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(
+                sqliteConnectionString,
+                sqlite => sqlite.MigrationsHistoryTable(DatabaseMigrationPolicy.SqliteHistoryTableName))
+            .AddInterceptors(
+                new SqliteForeignKeyEnabler(),
+                new ContentIndexSnapshotInterceptor(),
+                new DatabaseCommandTelemetryInterceptor(DatabaseTelemetry.Shared),
+                new DatabaseTransactionTelemetryInterceptor(DatabaseTelemetry.Shared))
             .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
             .Options;
+    }
+
+    private static DbContextOptions<DavDatabaseContext> ValidateSqliteOwnerOptions(
+        DbContextOptions<DavDatabaseContext> options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        var databaseProviderExtensions = options.Extensions
+            .Where(extension => extension.Info.IsDatabaseProvider)
+            .ToArray();
+        if (databaseProviderExtensions.Length != 1
+            || !string.Equals(
+                databaseProviderExtensions[0].GetType().Assembly.GetName().Name,
+                "Microsoft.EntityFrameworkCore.Sqlite",
+                StringComparison.Ordinal))
+            throw new InvalidOperationException(SqliteOwnerProviderMismatchMessage);
+
+        return options;
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -94,7 +120,7 @@ public sealed class DavDatabaseContext : DbContext
 
     public static T ExecuteWithSqliteBusyRetry<T>(Func<T> action)
     {
-        for (var attempt = 1;; attempt++)
+        for (var attempt = 1; ; attempt++)
         {
             try
             {
@@ -102,6 +128,7 @@ public sealed class DavDatabaseContext : DbContext
             }
             catch (Exception ex) when (IsRetryableSqliteLock(ex) && attempt < 6)
             {
+                DatabaseTelemetry.Shared.RecordBusyRetry();
                 Thread.Sleep(GetSqliteRetryDelay(attempt));
             }
         }
@@ -113,7 +140,7 @@ public sealed class DavDatabaseContext : DbContext
         CancellationToken cancellationToken
     )
     {
-        for (var attempt = 1;; attempt++)
+        for (var attempt = 1; ; attempt++)
         {
             try
             {
@@ -121,6 +148,7 @@ public sealed class DavDatabaseContext : DbContext
             }
             catch (Exception ex) when (IsRetryableSqliteLock(ex) && attempt < 6)
             {
+                DatabaseTelemetry.Shared.RecordBusyRetry();
                 await Task.Delay(GetSqliteRetryDelay(attempt), cancellationToken).ConfigureAwait(false);
             }
         }
@@ -175,6 +203,8 @@ public sealed class DavDatabaseContext : DbContext
     public DbSet<ArrSearchNudgeCommand> ArrSearchNudgeCommands => Set<ArrSearchNudgeCommand>();
     public DbSet<ArrDownloadLifecycleEvent> ArrDownloadLifecycleEvents => Set<ArrDownloadLifecycleEvent>();
     public DbSet<ImportReceipt> ImportReceipts => Set<ImportReceipt>();
+    public DbSet<ArrImportCommand> ArrImportCommands => Set<ArrImportCommand>();
+    public DbSet<MaintenanceRun> MaintenanceRuns => Set<MaintenanceRun>();
 
     // blob items
     public List<DavNzbFile> BlobNzbFiles = [];
@@ -742,6 +772,84 @@ public sealed class DavDatabaseContext : DbContext
             e.HasIndex(i => i.UpdatedAt);
         });
 
+        // ArrImportCommand
+        b.Entity<ArrImportCommand>(e =>
+        {
+            e.ToTable("ArrImportCommands");
+            e.HasKey(i => i.Id);
+            e.Property(i => i.Id).ValueGeneratedNever();
+            e.Property(i => i.HistoryItemId).ValueGeneratedNever().IsRequired();
+            e.Property(i => i.Category).HasMaxLength(255).IsRequired();
+            e.Property(i => i.RequiredInvalidationPathsJson).IsRequired();
+            e.Property(i => i.Status).HasConversion<int>().IsRequired();
+            e.Property(i => i.Attempts).IsRequired();
+            e.Property(i => i.CreatedAt).ValueGeneratedNever().HasConversion(
+                x => x.UtcTicks,
+                x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))).IsRequired();
+            e.Property(i => i.UpdatedAt).ValueGeneratedNever().HasConversion(
+                x => x.UtcTicks,
+                x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))).IsRequired();
+            e.Property(i => i.NextAttemptAt).ValueGeneratedNever().HasConversion(
+                x => x.UtcTicks,
+                x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))).IsRequired();
+            e.Property(i => i.LastAttemptAt).ValueGeneratedNever().HasConversion(
+                x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null);
+            e.Property(i => i.LeaseExpiresAt).ValueGeneratedNever().HasConversion(
+                x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null);
+            e.Property(i => i.LeaseToken).ValueGeneratedNever();
+            e.Property(i => i.VisibleAt).ValueGeneratedNever().HasConversion(
+                x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null);
+            e.Property(i => i.CompletedAt).ValueGeneratedNever().HasConversion(
+                x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null);
+            e.Property(i => i.ResultsJson).IsRequired();
+            e.Property(i => i.LastError).HasMaxLength(2048);
+            e.HasIndex(i => i.HistoryItemId).IsUnique();
+            e.HasIndex(i => new { i.Status, i.NextAttemptAt, i.CreatedAt });
+            e.HasIndex(i => new { i.Status, i.LeaseExpiresAt });
+            e.HasOne<HistoryItem>()
+                .WithMany()
+                .HasForeignKey(i => i.HistoryItemId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // MaintenanceRun
+        b.Entity<MaintenanceRun>(e =>
+        {
+            e.ToTable("MaintenanceRuns");
+            e.HasKey(i => i.Id);
+            e.Property(i => i.Id).ValueGeneratedNever();
+            e.Property(i => i.Kind).HasConversion<int>().IsRequired();
+            e.Property(i => i.Status).HasConversion<int>().IsRequired();
+            e.Property(i => i.ActiveSlot);
+            e.Property(i => i.RequestedBy).HasMaxLength(32).IsRequired();
+            e.Property(i => i.CreatedAt).ValueGeneratedNever().HasConversion(
+                x => x.UtcTicks,
+                x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))).IsRequired();
+            e.Property(i => i.StartedAt).ValueGeneratedNever().HasConversion(
+                x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null);
+            e.Property(i => i.UpdatedAt).ValueGeneratedNever().HasConversion(
+                x => x.UtcTicks,
+                x => new DateTimeOffset(new DateTime(x, DateTimeKind.Utc))).IsRequired();
+            e.Property(i => i.CompletedAt).ValueGeneratedNever().HasConversion(
+                x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null);
+            e.Property(i => i.CancellationRequestedAt).ValueGeneratedNever().HasConversion(
+                x => x.HasValue ? x.Value.UtcTicks : (long?)null,
+                x => x.HasValue ? new DateTimeOffset(new DateTime(x.Value, DateTimeKind.Utc)) : null);
+            e.Property(i => i.ProgressCurrent).IsRequired();
+            e.Property(i => i.ProgressTotal);
+            e.Property(i => i.Message).HasMaxLength(2048);
+            e.Property(i => i.Error).HasMaxLength(4096);
+            e.HasIndex(i => i.ActiveSlot).IsUnique();
+            e.HasIndex(i => new { i.Status, i.CreatedAt });
+            e.HasIndex(i => new { i.Kind, i.CreatedAt });
+        });
+
         // ArrDownloadCorrelation
         b.Entity<ArrDownloadCorrelation>(e =>
         {
@@ -1266,6 +1374,10 @@ public sealed class DavDatabaseContext : DbContext
             e.Property(i => i.Path)
                 .IsRequired();
 
+            e.Property(i => i.Revision)
+                .IsConcurrencyToken()
+                .IsRequired();
+
             e.Property(i => i.CreatedAt)
                 .ValueGeneratedNever()
                 .IsRequired()
@@ -1300,6 +1412,12 @@ public sealed class DavDatabaseContext : DbContext
             e.HasIndex(i => new { i.NextAttemptAt, i.CreatedAt });
             e.HasIndex(i => i.Path);
         });
+
+        ConfigureProviderModel(b);
+    }
+
+    protected virtual void ConfigureProviderModel(ModelBuilder modelBuilder)
+    {
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = new CancellationToken())
@@ -1311,6 +1429,7 @@ public sealed class DavDatabaseContext : DbContext
     {
         try
         {
+            ValidateNoTrackedReservedConfigMutation();
             ValidateWorkerJobJsonSizes();
 
             foreach (var blobNzbFile in BlobNzbFiles)
@@ -1323,7 +1442,11 @@ public sealed class DavDatabaseContext : DbContext
             var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();
             if (!SuppressRcloneInvalidations)
                 EnqueueRcloneVfsForget(addedOrRemovedDavItems);
-            var result = base.SaveChanges(acceptAllChangesOnSuccess);
+            var hasCommittedRcloneInvalidations = ChangeTracker.Entries<RcloneInvalidationItem>()
+                .Any(x => x.State is EntityState.Added or EntityState.Modified);
+            var result = SaveChangesWithInvalidationConcurrencyRecovery(acceptAllChangesOnSuccess);
+            if (hasCommittedRcloneInvalidations)
+                PublishOrDeferRcloneInvalidationWake();
 
             BlobNzbFiles.Clear();
             BlobRarFiles.Clear();
@@ -1333,7 +1456,10 @@ public sealed class DavDatabaseContext : DbContext
         }
         catch
         {
-            DeletePendingBlobWrites();
+            // A database commit exception can be ambiguous: the transaction may
+            // already be durable even though the acknowledgement was lost. Keep
+            // the already-durable blobs so a committed row can never reference a
+            // file we deleted. Orphan cleanup can safely reclaim unreferenced blobs.
             throw;
         }
     }
@@ -1346,6 +1472,7 @@ public sealed class DavDatabaseContext : DbContext
     {
         try
         {
+            ValidateNoTrackedReservedConfigMutation();
             ValidateWorkerJobJsonSizes();
 
             // save blobs to blob-store
@@ -1360,7 +1487,14 @@ public sealed class DavDatabaseContext : DbContext
             var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();
             if (!SuppressRcloneInvalidations)
                 EnqueueRcloneVfsForget(addedOrRemovedDavItems);
-            var result = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+            var hasCommittedRcloneInvalidations = ChangeTracker.Entries<RcloneInvalidationItem>()
+                .Any(x => x.State is EntityState.Added or EntityState.Modified);
+            var result = await SaveChangesWithInvalidationConcurrencyRecoveryAsync(
+                    acceptAllChangesOnSuccess,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (hasCommittedRcloneInvalidations)
+                PublishOrDeferRcloneInvalidationWake();
 
             // clear pending blob writes
             BlobNzbFiles.Clear();
@@ -1372,9 +1506,8 @@ public sealed class DavDatabaseContext : DbContext
         }
         catch
         {
-            DeletePendingBlobWrites();
-
-            // rethrow the exception
+            // Preserve durable blobs across ambiguous commit failures. Retrying
+            // is idempotent, while deleting here can corrupt a successful commit.
             throw;
         }
     }
@@ -1390,23 +1523,209 @@ public sealed class DavDatabaseContext : DbContext
         }
     }
 
+    private void ValidateNoTrackedReservedConfigMutation()
+    {
+        var autoDetectChangesEnabled = ChangeTracker.AutoDetectChangesEnabled;
+        try
+        {
+            ChangeTracker.AutoDetectChangesEnabled = false;
+            foreach (var entry in ChangeTracker.Entries<ConfigItem>())
+            {
+                var currentName = entry.Entity.ConfigName;
+                var currentValue = entry.Entity.ConfigValue;
+                var originalName = entry.Property(item => item.ConfigName).OriginalValue;
+                var originalValue = entry.Property(item => item.ConfigValue).OriginalValue;
+                var hasMutation = entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted
+                                  || !string.Equals(currentName, originalName, StringComparison.Ordinal)
+                                  || !string.Equals(currentValue, originalValue, StringComparison.Ordinal);
+                if (hasMutation
+                    && (TransferV3ReservedConfigPolicy.IsReserved(currentName)
+                        || TransferV3ReservedConfigPolicy.IsReserved(originalName)))
+                    throw new InvalidOperationException(TransferV3ReservedConfigPolicy.ReservedConfigMessage);
+            }
+        }
+        finally
+        {
+            ChangeTracker.AutoDetectChangesEnabled = autoDetectChangesEnabled;
+        }
+    }
+
+    private int SaveChangesWithInvalidationConcurrencyRecovery(bool acceptAllChangesOnSuccess)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return base.SaveChanges(acceptAllChangesOnSuccess);
+            }
+            catch (DbUpdateConcurrencyException exception) when (
+                attempt < MaxInvalidationConcurrencyRetries
+                && IsInvalidationPublishConflict(exception))
+            {
+                ResolveInvalidationPublishConflict(exception);
+            }
+            catch (DbUpdateException exception) when (
+                attempt < MaxInvalidationConcurrencyRetries
+                && IsWholeCacheSentinelInsertConflict(exception))
+            {
+                ResolveWholeCacheSentinelInsertConflict(exception);
+            }
+        }
+    }
+
+    private async Task<int> SaveChangesWithInvalidationConcurrencyRecoveryAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (DbUpdateConcurrencyException exception) when (
+                attempt < MaxInvalidationConcurrencyRetries
+                && IsInvalidationPublishConflict(exception))
+            {
+                await ResolveInvalidationPublishConflictAsync(exception, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (DbUpdateException exception) when (
+                attempt < MaxInvalidationConcurrencyRetries
+                && IsWholeCacheSentinelInsertConflict(exception))
+            {
+                await ResolveWholeCacheSentinelInsertConflictAsync(exception, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static bool IsInvalidationPublishConflict(DbUpdateConcurrencyException exception)
+    {
+        return exception.Entries.Count > 0
+               && exception.Entries.All(entry =>
+                   entry.Entity is RcloneInvalidationItem
+                   && entry.State == EntityState.Modified);
+    }
+
+    private static bool IsWholeCacheSentinelInsertConflict(DbUpdateException exception)
+    {
+        var uniqueViolation = exception.InnerException switch
+        {
+            SqliteException { SqliteErrorCode: 19 } => true,
+            PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } => true,
+            _ => false
+        };
+        return uniqueViolation
+               && exception.Entries.Count > 0
+               && exception.Entries.All(entry =>
+                   entry is { Entity: RcloneInvalidationItem item, State: EntityState.Added }
+                   && item.Id == RcloneInvalidationItem.WholeCacheVisibilityFenceId
+                   && item.Path == RcloneInvalidationItem.WholeCacheVisibilityFencePath);
+    }
+
+    private static void ResolveWholeCacheSentinelInsertConflict(DbUpdateException exception)
+    {
+        foreach (var entry in exception.Entries)
+        {
+            var item = (RcloneInvalidationItem)entry.Entity;
+            var databaseValues = entry.GetDatabaseValues();
+            RebaseInvalidationEntry(entry, databaseValues, item.Revision, item.NextAttemptAt);
+        }
+    }
+
+    private static async Task ResolveWholeCacheSentinelInsertConflictAsync(
+        DbUpdateException exception,
+        CancellationToken cancellationToken)
+    {
+        foreach (var entry in exception.Entries)
+        {
+            var item = (RcloneInvalidationItem)entry.Entity;
+            var databaseValues = await entry.GetDatabaseValuesAsync(cancellationToken).ConfigureAwait(false);
+            RebaseInvalidationEntry(entry, databaseValues, item.Revision, item.NextAttemptAt);
+        }
+    }
+
+    private static void ResolveInvalidationPublishConflict(DbUpdateConcurrencyException exception)
+    {
+        foreach (var entry in exception.Entries)
+        {
+            var item = (RcloneInvalidationItem)entry.Entity;
+            var databaseValues = entry.GetDatabaseValues();
+            RebaseInvalidationEntry(entry, databaseValues, item.Revision, item.NextAttemptAt);
+        }
+    }
+
+    private static async Task ResolveInvalidationPublishConflictAsync(
+        DbUpdateConcurrencyException exception,
+        CancellationToken cancellationToken)
+    {
+        foreach (var entry in exception.Entries)
+        {
+            var item = (RcloneInvalidationItem)entry.Entity;
+            var databaseValues = await entry.GetDatabaseValuesAsync(cancellationToken).ConfigureAwait(false);
+            RebaseInvalidationEntry(entry, databaseValues, item.Revision, item.NextAttemptAt);
+        }
+    }
+
+    private static void RebaseInvalidationEntry(
+        Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry entry,
+        Microsoft.EntityFrameworkCore.ChangeTracking.PropertyValues? databaseValues,
+        long desiredRevision,
+        DateTimeOffset desiredNextAttemptAt)
+    {
+        var item = (RcloneInvalidationItem)entry.Entity;
+        if (databaseValues is null)
+        {
+            item.Revision = Math.Max(1, desiredRevision);
+            entry.State = EntityState.Added;
+            return;
+        }
+
+        var databaseRevision = databaseValues.GetValue<long>(nameof(RcloneInvalidationItem.Revision));
+        var databaseNextAttemptAt = databaseValues.GetValue<DateTimeOffset>(
+            nameof(RcloneInvalidationItem.NextAttemptAt));
+        entry.OriginalValues.SetValues(databaseValues);
+        entry.CurrentValues.SetValues(databaseValues);
+        entry.State = EntityState.Unchanged;
+        item.Revision = checked(Math.Max(desiredRevision, databaseRevision) + 1);
+        item.NextAttemptAt = desiredNextAttemptAt <= databaseNextAttemptAt
+            ? desiredNextAttemptAt
+            : databaseNextAttemptAt;
+        entry.Property(nameof(RcloneInvalidationItem.Revision)).IsModified = true;
+        if (item.NextAttemptAt != databaseNextAttemptAt)
+            entry.Property(nameof(RcloneInvalidationItem.NextAttemptAt)).IsModified = true;
+    }
+
+    private void PublishOrDeferRcloneInvalidationWake()
+    {
+        if (Database.CurrentTransaction is null)
+        {
+            RcloneInvalidationWakeSignal.Pulse();
+            return;
+        }
+
+        Volatile.Write(ref _pendingRcloneInvalidationWake, 1);
+    }
+
+    internal void PublishCommittedDatabaseWakeSignals()
+    {
+        if (Interlocked.Exchange(ref _pendingRcloneInvalidationWake, 0) != 0)
+            RcloneInvalidationWakeSignal.Pulse();
+    }
+
+    internal void DiscardUncommittedDatabaseWakeSignals()
+    {
+        Volatile.Write(ref _pendingRcloneInvalidationWake, 0);
+    }
+
     private static void ValidateWorkerJobJsonSize(string? value, string propertyName)
     {
         if (value is null || Encoding.UTF8.GetByteCount(value) <= WorkerJobJsonMaxUtf8Bytes) return;
 
         throw new InvalidOperationException(
             $"WorkerJob {propertyName} exceeds the {WorkerJobJsonMaxUtf8Bytes} UTF-8 byte limit.");
-    }
-
-    private void DeletePendingBlobWrites()
-    {
-        // on errors, remove any already-written blob files
-        foreach (var blobNzbFile in BlobNzbFiles)
-            BlobStore.Delete(blobNzbFile.Id);
-        foreach (var blobRarFile in BlobRarFiles)
-            BlobStore.Delete(blobRarFile.Id);
-        foreach (var blobMultipartFile in BlobMultipartFiles)
-            BlobStore.Delete(blobMultipartFile.Id);
     }
 
     private List<DavItem> GetAddedOrRemovedDavItems()
@@ -1417,7 +1736,7 @@ public sealed class DavDatabaseContext : DbContext
             .ToList();
     }
 
-    private static List<string> GetRcloneVfsForgetDirectories(List<DavItem> addedOrRemoved)
+    public static IReadOnlyList<string> GetRcloneVfsForgetDirectories(IReadOnlyCollection<DavItem> addedOrRemoved)
     {
         var contentDirs = addedOrRemoved
             .Select(x => x.Path)
@@ -1449,7 +1768,6 @@ public sealed class DavDatabaseContext : DbContext
     public void EnqueueRcloneVfsForget(List<DavItem> addedOrRemovedDavItems)
     {
         if (SuppressRcloneInvalidations) return;
-        if (!ShouldQueueRcloneInvalidations()) return;
         if (addedOrRemovedDavItems.Count == 0) return;
 
         var vfsForgetPaths = GetRcloneVfsForgetDirectories(addedOrRemovedDavItems);
@@ -1459,8 +1777,35 @@ public sealed class DavDatabaseContext : DbContext
     public void EnqueueRcloneVfsForgetPaths(IEnumerable<string> paths)
     {
         if (SuppressRcloneInvalidations) return;
-        if (!ShouldQueueRcloneInvalidations()) return;
 
+        var normalizedPaths = paths
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (normalizedPaths.Count == 0) return;
+
+        if (!RcloneClient.RequiresVfsVisibilityFence)
+        {
+            EnqueueWholeCacheVisibilityFence();
+            return;
+        }
+
+        EnqueueRcloneInvalidationRows(normalizedPaths, useDeterministicWholeCacheIdentity: false);
+    }
+
+    internal void EnqueueWholeCacheVisibilityFence()
+    {
+        if (SuppressRcloneInvalidations) return;
+        EnqueueRcloneInvalidationRows(
+            [RcloneInvalidationItem.WholeCacheVisibilityFencePath],
+            useDeterministicWholeCacheIdentity: true);
+    }
+
+    private void EnqueueRcloneInvalidationRows(
+        IEnumerable<string> paths,
+        bool useDeterministicWholeCacheIdentity)
+    {
         var now = DateTimeOffset.UtcNow;
         var pathList = paths
             .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -1485,8 +1830,10 @@ public sealed class DavDatabaseContext : DbContext
 
         foreach (var existingItem in existingItems)
         {
-            if (existingItem.NextAttemptAt > now)
-                existingItem.NextAttemptAt = now;
+            existingItem.Revision = checked(existingItem.Revision + 1);
+            // Always mark the due time as part of the fenced publication. A
+            // worker may reschedule the old revision after this row was read.
+            existingItem.NextAttemptAt = now;
         }
 
         var newItems = new List<RcloneInvalidationItem>();
@@ -1497,8 +1844,11 @@ public sealed class DavDatabaseContext : DbContext
 
             newItems.Add(new RcloneInvalidationItem
             {
-                Id = Guid.NewGuid(),
+                Id = useDeterministicWholeCacheIdentity
+                    ? RcloneInvalidationItem.WholeCacheVisibilityFenceId
+                    : Guid.NewGuid(),
                 Path = path,
+                Revision = 1,
                 CreatedAt = now,
                 NextAttemptAt = now
             });
@@ -1513,10 +1863,9 @@ public sealed class DavDatabaseContext : DbContext
         CancellationToken cancellationToken = default
     )
     {
-        if (!ShouldQueueRcloneInvalidations()) return;
         if (addedOrRemovedDavItems.Count == 0) return;
 
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
         dbContext.EnqueueRcloneVfsForget(addedOrRemovedDavItems);
         await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -1527,16 +1876,9 @@ public sealed class DavDatabaseContext : DbContext
         CancellationToken cancellationToken = default
     )
     {
-        if (!ShouldQueueRcloneInvalidations()) return;
-
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
         dbContext.EnqueueRcloneVfsForgetPaths(paths);
         await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    private static bool ShouldQueueRcloneInvalidations()
-    {
-        return RcloneClient.IsRemoteControlEnabled && RcloneClient.Host != null;
     }
 
     public void ClearChangeTracker()

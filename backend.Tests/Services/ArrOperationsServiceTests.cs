@@ -43,6 +43,41 @@ public sealed class ArrOperationsServiceTests
     }
 
     [Fact]
+    public async Task HasRejectableDuplicateAsync_UsesDeploymentLocalWallTimeForHistoryCutoff()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var localZone = TimeZoneInfo.CreateCustomTimeZone(
+            "legacy-local-plus-four",
+            TimeSpan.FromHours(4),
+            "legacy-local-plus-four",
+            "legacy-local-plus-four");
+        var timeProvider = new FixedTimeProvider(
+            new DateTimeOffset(2026, 7, 12, 0, 0, 0, TimeSpan.Zero),
+            localZone);
+        dbContext.HistoryItems.Add(new HistoryItem
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = new DateTime(2026, 7, 11, 2, 0, 0, DateTimeKind.Unspecified),
+            FileName = "Example.Movie.nzb",
+            JobName = "Example Movie",
+            Category = "movies",
+            DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+            TotalSegmentBytes = 100,
+            DownloadTimeSeconds = 1
+        });
+        await dbContext.SaveChangesAsync();
+
+        var duplicate = await new ArrOperationsService(_fixture.CreateConfigManager(), timeProvider)
+            .HasRejectableDuplicateAsync(
+                dbContext,
+                "Example.Movie.nzb",
+                "Example Movie",
+                "movies");
+
+        Assert.False(duplicate);
+    }
+
+    [Fact]
     public async Task AddFileAsync_RejectsDuplicateBeforeWritingBlobOrQueueRow()
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
@@ -65,7 +100,8 @@ public sealed class ArrOperationsServiceTests
             configManager,
             websocketManager: null!,
             arrDownloadReportService: null!,
-            new ArrOperationsService(configManager));
+            new ArrOperationsService(configManager),
+            new NzbBlobIngestCoordinator());
 
         var ex = await Assert.ThrowsAsync<BadHttpRequestException>(() => controller.AddFileAsync(new AddFileRequest
         {
@@ -80,6 +116,32 @@ public sealed class ArrOperationsServiceTests
         Assert.Equal(1, await dbContext.QueueItems.CountAsync());
         var blobsPath = Path.Join(DavDatabaseContext.ConfigPath, "blobs");
         Assert.False(Directory.Exists(blobsPath) && Directory.EnumerateFiles(blobsPath, "*", SearchOption.AllDirectories).Any());
+    }
+
+    [Fact]
+    public async Task QueueLifecycleCanBeStagedIntoTheCallersAtomicAcceptanceCommit()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var configManager = _fixture.CreateConfigManager();
+        var service = new ArrDownloadReportService(configManager, () => []);
+        var queueItem = CreateQueueItem("Example.Show.S01E02.nzb", "tv");
+        dbContext.QueueItems.Add(queueItem);
+
+        await service.RecordQueueLifecycleAsync(
+            new DavDatabaseClient(dbContext),
+            queueItem,
+            "Queued",
+            "NZB accepted.",
+            saveChanges: false);
+
+        Assert.Equal(0, await dbContext.ArrDownloadLifecycleEvents.CountAsync());
+        Assert.Equal(EntityState.Added, dbContext.Entry(queueItem).State);
+        Assert.Single(dbContext.ChangeTracker.Entries<ArrDownloadLifecycleEvent>());
+
+        await dbContext.SaveChangesAsync();
+
+        Assert.Equal(1, await dbContext.QueueItems.CountAsync());
+        Assert.Equal(1, await dbContext.ArrDownloadLifecycleEvents.CountAsync());
     }
 
     [Fact]
@@ -109,6 +171,35 @@ public sealed class ArrOperationsServiceTests
         Assert.Equal("sonarr:episode:123", response.Correlation!.MediaKey);
         Assert.Equal(queueItem.Id.ToString(), response.Correlation.QueueItemId);
         Assert.Equal("Grabbed", (await dbContext.ArrDownloadLifecycleEvents.SingleAsync()).State);
+    }
+
+    [Theory]
+    [InlineData("sonarr", "sonarr_applicationurl", "http://sonarr:8989")]
+    [InlineData("radarr", "radarr_applicationurl", "http://radarr:7878")]
+    public async Task IngestCustomScriptEvent_UsesOfficialApplicationUrlForExactInstanceRouting(
+        string app,
+        string applicationUrlKey,
+        string applicationUrl)
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var queueItem = CreateQueueItem("Official.Application.Url.nzb", app == "sonarr" ? "tv" : "movies");
+        dbContext.QueueItems.Add(queueItem);
+        await dbContext.SaveChangesAsync();
+
+        var response = await new ArrOperationsService(_fixture.CreateConfigManager())
+            .IngestCustomScriptEventAsync(
+                dbContext,
+                app,
+                new Dictionary<string, string>
+                {
+                    [$"{app}_eventtype"] = "Grab",
+                    [$"{app}_download_id"] = queueItem.Id.ToString(),
+                    [applicationUrlKey] = applicationUrl,
+                });
+
+        Assert.NotNull(response.Correlation);
+        Assert.Equal(applicationUrl, response.Correlation.InstanceHost);
+        Assert.Equal(GetInstanceKey(app, applicationUrl), response.Correlation.InstanceKey);
     }
 
     [Theory]
@@ -155,6 +246,62 @@ public sealed class ArrOperationsServiceTests
         Assert.Equal(ImportReceiptState.Imported, receipt.State);
         Assert.NotNull(receipt.ImportedAt);
         Assert.Equal("Imported", (await dbContext.ArrDownloadLifecycleEvents.SingleAsync(x => x.HistoryItemId == historyId)).State);
+    }
+
+    [Fact]
+    public async Task IngestImportedEventCannotOverwriteVerificationQuarantine()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var historyId = Guid.NewGuid();
+        var davItemId = Guid.NewGuid();
+        var quarantineAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+        const string quarantineReason = "confirmed missing articles; operator review required";
+        dbContext.HistoryItems.Add(new HistoryItem
+        {
+            Id = historyId,
+            CreatedAt = DateTime.UtcNow,
+            FileName = "Quarantined.nzb",
+            JobName = "Quarantined",
+            Category = "movies",
+            DownloadStatus = HistoryItem.DownloadStatusOption.Failed,
+            TotalSegmentBytes = 1024,
+            DownloadTimeSeconds = 1
+        });
+        dbContext.ImportReceipts.Add(new ImportReceipt
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = davItemId,
+            HistoryItemId = historyId,
+            State = ImportReceiptState.Imported,
+            CreatedAt = quarantineAt.AddMinutes(-1),
+            UpdatedAt = quarantineAt.AddMinutes(-1),
+            ImportedAt = quarantineAt.AddMinutes(-1)
+        });
+        await dbContext.SaveChangesAsync();
+        await new ImportReceiptService(dbContext).MarkVerificationQuarantineAsync(
+            historyId,
+            quarantineAt,
+            quarantineReason,
+            CancellationToken.None);
+
+        await new ArrOperationsService(_fixture.CreateConfigManager()).IngestCustomScriptEventAsync(
+            dbContext,
+            "radarr",
+            new Dictionary<string, string>
+            {
+                ["event_type"] = "Import",
+                ["history_item_id"] = historyId.ToString(),
+                ["instance_host"] = "http://radarr:7878"
+            });
+
+        dbContext.ChangeTracker.Clear();
+        var receipt = await dbContext.ImportReceipts.SingleAsync(x => x.DavItemId == davItemId);
+        Assert.Equal(ImportReceiptState.VerificationQuarantined, receipt.State);
+        Assert.Equal(quarantineReason, receipt.Detail);
+        Assert.Equal(quarantineAt, receipt.UpdatedAt);
+        Assert.Equal(
+            "Imported",
+            (await dbContext.ArrDownloadLifecycleEvents.SingleAsync(x => x.HistoryItemId == historyId)).State);
     }
 
     [Theory]
@@ -420,6 +567,27 @@ public sealed class ArrOperationsServiceTests
 
         Assert.Equal(0, validation.CorrelationCoveragePercent);
         Assert.Contains(validation.Issues, x => x.Code == "queue_uncorrelated");
+    }
+
+    [Fact]
+    public async Task BuildValidationAsync_ReportsDerivedNonSecretPolicy()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var config = CreateArrConfigManager("http://sonarr:8989", mode: "apply");
+        config.UpdateValues([
+            new ConfigItem
+            {
+                ConfigName = "api.duplicate-nzb-behavior",
+                ConfigValue = "reject"
+            }
+        ]);
+        var service = new ArrOperationsService(config);
+
+        var validation = await service.BuildValidationAsync(new DavDatabaseClient(dbContext));
+
+        Assert.Equal(["sonarr"], validation.ConfiguredApps);
+        Assert.Equal("apply", validation.SearchNudgeMode);
+        Assert.Equal("reject", validation.DuplicateNzbBehavior);
     }
 
     [Fact]
@@ -718,6 +886,13 @@ public sealed class ArrOperationsServiceTests
             CancellationToken cancellationToken = default) =>
             ValueTask.FromException<InterceptionResult<int>>(
                 new DbUpdateException("forced ARR transaction failure"));
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow, TimeZoneInfo localTimeZone) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
+
+        public override TimeZoneInfo LocalTimeZone => localTimeZone;
     }
 
     private static string MissingEpisodeResponse(int episodeId, int seriesId)

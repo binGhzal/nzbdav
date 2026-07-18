@@ -1,0 +1,949 @@
+column|Accounts|1|Type|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|Accounts|2|Username|false|character varying(255)|259|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|Accounts|3|PasswordHash|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|Accounts|4|RandomSalt|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|10|MovieId|false|integer|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|11|SeriesId|false|integer|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|12|EpisodeId|false|integer|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|13|SeasonNumber|false|integer|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|14|ArtistId|false|integer|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|15|AlbumId|false|integer|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|16|EpisodeIdsJson|false|text|-1|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|17|ReleaseTitle|false|character varying(1024)|1028|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|18|Category|false|character varying(255)|259|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|19|Indexer|false|character varying(255)|259|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|20|DownloadClient|false|character varying(255)|259|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|21|Quality|false|character varying(255)|259|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|22|CustomFormatsJson|false|text|-1|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|23|Status|false|character varying(64)|68|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|24|TrackedDownloadStatus|false|character varying(64)|68|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|25|TrackedDownloadState|false|character varying(64)|68|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|26|Source|false|character varying(32)|36|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|27|ManualLock|false|boolean|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|28|IsUpgrade|false|boolean|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|29|IsDuplicate|false|boolean|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|2|QueueItemId|false|uuid|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|30|CreatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|31|UpdatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|32|LastSeenAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|3|HistoryItemId|false|uuid|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|4|ArrApp|false|character varying(32)|36|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|5|InstanceKey|false|character varying(512)|516|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|6|InstanceHost|false|character varying(1024)|1028|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|7|DownloadId|false|character varying(255)|259|0|false|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|8|QueueRecordId|false|integer|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadCorrelations|9|MediaKey|false|character varying(255)|259|0|false|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|ArrDownloadLifecycleEvents|10|CreatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadLifecycleEvents|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadLifecycleEvents|2|QueueItemId|false|uuid|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadLifecycleEvents|3|HistoryItemId|false|uuid|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrDownloadLifecycleEvents|4|ArrApp|false|character varying(32)|36|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|ArrDownloadLifecycleEvents|5|InstanceKey|false|character varying(512)|516|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|ArrDownloadLifecycleEvents|6|DownloadId|false|character varying(255)|259|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadLifecycleEvents|7|MediaKey|false|character varying(255)|259|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrDownloadLifecycleEvents|8|State|false|character varying(64)|68|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|ArrDownloadLifecycleEvents|9|StateReason|false|character varying(1024)|1028|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrImportCommands|10|LastAttemptAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrImportCommands|11|LeaseExpiresAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrImportCommands|12|LeaseToken|false|uuid|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrImportCommands|13|VisibleAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrImportCommands|14|CompletedAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrImportCommands|15|ResultsJson|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrImportCommands|16|LastError|false|character varying(2048)|2052|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrImportCommands|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrImportCommands|2|HistoryItemId|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrImportCommands|3|Category|false|character varying(255)|259|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrImportCommands|4|RequiredInvalidationPathsJson|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrImportCommands|5|Status|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrImportCommands|6|Attempts|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrImportCommands|7|CreatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrImportCommands|8|UpdatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrImportCommands|9|NextAttemptAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|10|CooldownKey|false|character varying(512)|516|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|11|Score|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|12|ReasonsJson|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|13|Error|false|character varying(1024)|1028|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|14|CreatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|15|CompletedAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|16|NextAllowedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|2|ArrApp|false|character varying(32)|36|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|3|InstanceKey|false|character varying(512)|516|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|4|InstanceHost|false|character varying(1024)|1028|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|5|CommandName|false|character varying(128)|132|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|6|CommandId|false|integer|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|7|TargetsJson|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|8|Mode|false|character varying(32)|36|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ArrSearchNudgeCommands|9|Status|false|character varying(32)|36|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|BlobCleanupItems|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ConfigItems|1|ConfigName|false|text|-1|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|ConfigItems|2|ConfigValue|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|DavCleanupItems|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|DavItems|10|ReleaseDate|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|DavItems|11|LastHealthCheck|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|DavItems|12|NextHealthCheck|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|DavItems|13|HistoryItemId|false|uuid|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|DavItems|14|FileBlobId|false|uuid|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|DavItems|15|NzbBlobId|false|uuid|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|DavItems|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|DavItems|2|IdPrefix|false|text|-1|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|DavItems|3|CreatedAt|false|timestamp without time zone|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|DavItems|4|ParentId|false|uuid|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|DavItems|5|Name|false|character varying(255)|259|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|DavItems|6|FileSize|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|DavItems|7|Type|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|DavItems|8|SubType|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|DavItems|9|Path|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|DavMultipartFiles|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|DavMultipartFiles|2|Metadata|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|DavNzbFiles|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|DavNzbFiles|2|SegmentIds|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|DavRarFiles|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|DavRarFiles|2|RarParts|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|HealthCheckResults|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HealthCheckResults|2|CreatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HealthCheckResults|3|DavItemId|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HealthCheckResults|4|Path|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|HealthCheckResults|5|Result|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HealthCheckResults|6|RepairStatus|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HealthCheckResults|7|Message|false|text|-1|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|HealthCheckStats|1|DateStartInclusive|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HealthCheckStats|2|DateEndExclusive|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HealthCheckStats|3|Result|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HealthCheckStats|4|RepairStatus|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HealthCheckStats|5|Count|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HistoryCleanupItems|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HistoryCleanupItems|2|DeleteMountedFiles|false|boolean|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HistoryItems|10|DownloadDirId|false|uuid|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|HistoryItems|11|NzbBlobId|false|uuid|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|HistoryItems|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HistoryItems|2|CreatedAt|false|timestamp without time zone|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HistoryItems|3|FileName|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|HistoryItems|4|JobName|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|HistoryItems|5|Category|false|text|-1|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|HistoryItems|6|DownloadStatus|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HistoryItems|7|TotalSegmentBytes|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HistoryItems|8|DownloadTimeSeconds|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|HistoryItems|9|FailMessage|false|text|-1|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|ImportReceipts|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ImportReceipts|2|DavItemId|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ImportReceipts|3|HistoryItemId|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ImportReceipts|4|State|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ImportReceipts|5|CreatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ImportReceipts|6|UpdatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|ImportReceipts|7|ImportedAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ImportReceipts|8|RemovedAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|ImportReceipts|9|Detail|false|character varying(1024)|1028|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|MaintenanceRuns|10|CancellationRequestedAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|MaintenanceRuns|11|ProgressCurrent|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|MaintenanceRuns|12|ProgressTotal|false|integer|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|MaintenanceRuns|13|Message|false|character varying(2048)|2052|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|MaintenanceRuns|14|Error|false|character varying(4096)|4100|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|MaintenanceRuns|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|MaintenanceRuns|2|Kind|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|MaintenanceRuns|3|Status|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|MaintenanceRuns|4|ActiveSlot|false|integer|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|MaintenanceRuns|5|RequestedBy|false|character varying(32)|36|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|MaintenanceRuns|6|CreatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|MaintenanceRuns|7|StartedAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|MaintenanceRuns|8|UpdatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|MaintenanceRuns|9|CompletedAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|NzbBlobCleanupItems|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|NzbNames|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|NzbNames|2|FileName|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|QueueItems|10|PostProcessing|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|QueueItems|11|PauseUntil|false|timestamp without time zone|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|QueueItems|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|QueueItems|2|CreatedAt|false|timestamp without time zone|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|QueueItems|3|FileName|false|text|-1|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|QueueItems|4|JobName|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|QueueItems|5|NzbFileSize|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|QueueItems|6|TotalSegmentBytes|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|QueueItems|7|Category|false|text|-1|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|QueueItems|8|ArchivePassword|false|text|-1|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|QueueItems|9|Priority|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|QueueNzbContents|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|QueueNzbContents|2|NzbContents|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|QueuePriorityHints|1|QueueItemId|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|QueuePriorityHints|2|Score|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|QueuePriorityHints|3|EffectivePriority|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|QueuePriorityHints|4|ApplyToScheduling|false|boolean|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|QueuePriorityHints|5|ReasonsJson|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|QueuePriorityHints|6|Source|false|character varying(64)|68|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|QueuePriorityHints|7|ComputedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|QueuePriorityHints|8|ExpiresAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|QueuePriorityHints|9|StaleReason|false|character varying(1024)|1028|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|RcloneInvalidationItems|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RcloneInvalidationItems|2|Path|false|text|-1|0|true|false|false||||pg_catalog.C|x||-1|0|true|||default-acl
+column|RcloneInvalidationItems|3|Revision|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RcloneInvalidationItems|4|CreatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RcloneInvalidationItems|5|NextAttemptAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RcloneInvalidationItems|6|LastAttemptAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|RcloneInvalidationItems|7|Attempts|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RcloneInvalidationItems|8|LastError|false|character varying(1024)|1028|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|RepairBrokenFiles|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairBrokenFiles|2|RepairRunId|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairBrokenFiles|3|DavItemId|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairBrokenFiles|4|Path|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|RepairBrokenFiles|5|Reason|false|character varying(1024)|1028|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|RepairBrokenFiles|6|CreatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairBrokenFiles|7|Cleared|false|boolean|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairEntryHealth|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairEntryHealth|2|RepairRunId|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairEntryHealth|3|DavItemId|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairEntryHealth|4|Path|false|text|-1|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|RepairEntryHealth|5|State|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairEntryHealth|6|Message|false|character varying(1024)|1028|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|RepairEntryHealth|7|CreatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairEntryHealth|8|UpdatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|10|Checked|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|11|Missing|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|12|ProviderErrors|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|13|Unknown|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|14|Repaired|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|15|Deleted|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|16|ActionNeeded|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|17|BrokenFiles|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|18|Message|false|character varying(1024)|1028|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|RepairRuns|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|2|Status|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|3|Stage|false|character varying(64)|68|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|RepairRuns|4|StartedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|5|UpdatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|6|CompletedAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|7|CancelledAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|8|NextDueAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|RepairRuns|9|Total|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|10|LeaseExpiresAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|11|CompletedAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|12|LeaseOwner|false|character varying(255)|259|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|WorkerJobs|13|LeaseToken|false|uuid|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|14|LeaseGeneration|false|bigint|-1|0|true|true|false|||||p||-1|0|true||0|default-acl
+column|WorkerJobs|15|LastHeartbeatAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|16|StartedAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|17|CancelRequestedAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|18|FailureKind|false|integer|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|19|ProgressJson|false|character varying(16384)|16388|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|WorkerJobs|1|Id|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|20|ProgressUpdatedAt|false|bigint|-1|0|false|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|21|ResultJson|false|character varying(16384)|16388|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|WorkerJobs|22|LastError|false|character varying(1024)|1028|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|WorkerJobs|23|PayloadJson|false|text|-1|0|false|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|WorkerJobs|2|Kind|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|3|Status|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|4|TargetId|false|uuid|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|5|Priority|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|6|Attempts|false|integer|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|7|CreatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|8|UpdatedAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|WorkerJobs|9|AvailableAt|false|bigint|-1|0|true|false|false|||||p||-1|0|true|||default-acl
+column|__EFMigrationsHistory_PostgreSql|1|MigrationId|false|character varying(150)|154|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|__EFMigrationsHistory_PostgreSql|2|ProductVersion|false|character varying(32)|36|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+constraint|Accounts|PK_Accounts|p|false|false|true|true|0|true|||{1,2}||||||PRIMARY KEY ("Type", "Username")
+constraint|ArrDownloadCorrelations|PK_ArrDownloadCorrelations|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|ArrDownloadLifecycleEvents|PK_ArrDownloadLifecycleEvents|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|ArrImportCommands|FK_ArrImportCommands_HistoryItems_HistoryItemId|f|false|false|true|true|0|true||HistoryItems|{2}|{1}|{2972}|{2972}|{2972}||FOREIGN KEY ("HistoryItemId") REFERENCES "HistoryItems"("Id") ON DELETE CASCADE
+constraint|ArrImportCommands|PK_ArrImportCommands|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|ArrSearchNudgeCommands|PK_ArrSearchNudgeCommands|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|BlobCleanupItems|PK_BlobCleanupItems|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|ConfigItems|PK_ConfigItems|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("ConfigName")
+constraint|DavCleanupItems|PK_DavCleanupItems|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|DavItems|PK_DavItems|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|DavMultipartFiles|FK_DavMultipartFiles_DavItems_Id|f|false|false|true|true|0|true||DavItems|{1}|{1}|{2972}|{2972}|{2972}||FOREIGN KEY ("Id") REFERENCES "DavItems"("Id") ON DELETE CASCADE
+constraint|DavMultipartFiles|PK_DavMultipartFiles|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|DavNzbFiles|FK_DavNzbFiles_DavItems_Id|f|false|false|true|true|0|true||DavItems|{1}|{1}|{2972}|{2972}|{2972}||FOREIGN KEY ("Id") REFERENCES "DavItems"("Id") ON DELETE CASCADE
+constraint|DavNzbFiles|PK_DavNzbFiles|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|DavRarFiles|FK_DavRarFiles_DavItems_Id|f|false|false|true|true|0|true||DavItems|{1}|{1}|{2972}|{2972}|{2972}||FOREIGN KEY ("Id") REFERENCES "DavItems"("Id") ON DELETE CASCADE
+constraint|DavRarFiles|PK_DavRarFiles|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|HealthCheckResults|PK_HealthCheckResults|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|HealthCheckStats|PK_HealthCheckStats|p|false|false|true|true|0|true|||{1,2,3,4}||||||PRIMARY KEY ("DateStartInclusive", "DateEndExclusive", "Result", "RepairStatus")
+constraint|HistoryCleanupItems|PK_HistoryCleanupItems|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|HistoryItems|PK_HistoryItems|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|ImportReceipts|PK_ImportReceipts|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|MaintenanceRuns|PK_MaintenanceRuns|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|NzbBlobCleanupItems|PK_NzbBlobCleanupItems|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|NzbNames|PK_NzbNames|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|QueueItems|PK_QueueItems|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|QueueNzbContents|FK_QueueNzbContents_QueueItems_Id|f|false|false|true|true|0|true||QueueItems|{1}|{1}|{2972}|{2972}|{2972}||FOREIGN KEY ("Id") REFERENCES "QueueItems"("Id") ON DELETE CASCADE
+constraint|QueueNzbContents|PK_QueueNzbContents|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|QueuePriorityHints|FK_QueuePriorityHints_QueueItems_QueueItemId|f|false|false|true|true|0|true||QueueItems|{1}|{1}|{2972}|{2972}|{2972}||FOREIGN KEY ("QueueItemId") REFERENCES "QueueItems"("Id") ON DELETE CASCADE
+constraint|QueuePriorityHints|PK_QueuePriorityHints|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("QueueItemId")
+constraint|RcloneInvalidationItems|PK_RcloneInvalidationItems|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|RepairBrokenFiles|FK_RepairBrokenFiles_RepairRuns_RepairRunId|f|false|false|true|true|0|true||RepairRuns|{2}|{1}|{2972}|{2972}|{2972}||FOREIGN KEY ("RepairRunId") REFERENCES "RepairRuns"("Id") ON DELETE CASCADE
+constraint|RepairBrokenFiles|PK_RepairBrokenFiles|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|RepairEntryHealth|FK_RepairEntryHealth_RepairRuns_RepairRunId|f|false|false|true|true|0|true||RepairRuns|{2}|{1}|{2972}|{2972}|{2972}||FOREIGN KEY ("RepairRunId") REFERENCES "RepairRuns"("Id") ON DELETE CASCADE
+constraint|RepairEntryHealth|PK_RepairEntryHealth|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|RepairRuns|PK_RepairRuns|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|WorkerJobs|PK_WorkerJobs|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("Id")
+constraint|__EFMigrationsHistory_PostgreSql|PK___EFMigrationsHistory_PostgreSql|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("MigrationId")
+contract|postgresql-catalog-v3
+database-acl|<owner>|CONNECT|false|<owner>
+database-acl|<owner>|CREATE|false|<owner>
+database-acl|<owner>|TEMPORARY|false|<owner>
+database-acl|PUBLIC|CONNECT|false|<owner>
+database-acl|PUBLIC|TEMPORARY|false|<owner>
+environment-count|default-acl|0
+environment-count|event-trigger|0
+environment-count|publication-namespace|0
+environment-count|publication|0
+environment-count|subscription|0
+history-row|20260712000000_PostgreSqlNativeBaseline|10.0.9
+index|Accounts|PK_Accounts|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|2|2|1 2|"Type","Username"|||0 950|1978 3126|0 0|
+index|ArrDownloadCorrelations|IX_ArrDownloadCorrelations_ArrApp_InstanceKey_DownloadId|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|4 5 7|"ArrApp","InstanceKey","DownloadId"|||950 950 950|3126 3126 3126|0 0 0|
+index|ArrDownloadCorrelations|IX_ArrDownloadCorrelations_ArrApp_InstanceKey_MediaKey|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|4 5 9|"ArrApp","InstanceKey","MediaKey"|||950 950 950|3126 3126 3126|0 0 0|
+index|ArrDownloadCorrelations|IX_ArrDownloadCorrelations_ArrApp_InstanceKey_QueueRecordId|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|4 5 8|"ArrApp","InstanceKey","QueueRecordId"|||950 950 0|3126 3126 1978|0 0 0|
+index|ArrDownloadCorrelations|IX_ArrDownloadCorrelations_HistoryItemId|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|3|"HistoryItemId"|||0|10065|0|
+index|ArrDownloadCorrelations|IX_ArrDownloadCorrelations_IsDuplicate_LastSeenAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|29 32|"IsDuplicate","LastSeenAt"|||0 0|10003 3124|0 0|
+index|ArrDownloadCorrelations|IX_ArrDownloadCorrelations_QueueItemId|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|2|"QueueItemId"|||0|10065|0|
+index|ArrDownloadCorrelations|IX_ArrDownloadCorrelations_Source_ManualLock|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|26 27|"Source","ManualLock"|||950 0|3126 10003|0 0|
+index|ArrDownloadCorrelations|PK_ArrDownloadCorrelations|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|ArrDownloadLifecycleEvents|IX_ArrDownloadLifecycleEvents_HistoryItemId_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|3 10|"HistoryItemId","CreatedAt"|||0 0|10065 3124|0 0|
+index|ArrDownloadLifecycleEvents|IX_ArrDownloadLifecycleEvents_QueueItemId_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|2 10|"QueueItemId","CreatedAt"|||0 0|10065 3124|0 0|
+index|ArrDownloadLifecycleEvents|IX_ArrLifecycle_Instance_State_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|4|4|4 5 8 10|"ArrApp","InstanceKey","State","CreatedAt"|||950 950 950 0|3126 3126 3126 3124|0 0 0 0|
+index|ArrDownloadLifecycleEvents|PK_ArrDownloadLifecycleEvents|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|ArrImportCommands|IX_ArrImportCommands_HistoryItemId|<owner>|btree||true|false|false|false|true|false|true|false|true|true|false|1|1|2|"HistoryItemId"|||0|10065|0|
+index|ArrImportCommands|IX_ArrImportCommands_Status_LeaseExpiresAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|5 11|"Status","LeaseExpiresAt"|||0 0|1978 3124|0 0|
+index|ArrImportCommands|IX_ArrImportCommands_Status_NextAttemptAt_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|5 9 7|"Status","NextAttemptAt","CreatedAt"|||0 0 0|1978 3124 3124|0 0 0|
+index|ArrImportCommands|PK_ArrImportCommands|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|ArrSearchNudgeCommands|IX_ArrSearchNudgeCommands_ArrApp_InstanceKey_Status_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|4|4|2 3 9 14|"ArrApp","InstanceKey","Status","CreatedAt"|||950 950 950 0|3126 3126 3126 3124|0 0 0 0|
+index|ArrSearchNudgeCommands|IX_ArrSearchNudgeCommands_CooldownKey_NextAllowedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|10 16|"CooldownKey","NextAllowedAt"|||950 0|3126 3124|0 0|
+index|ArrSearchNudgeCommands|PK_ArrSearchNudgeCommands|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|BlobCleanupItems|PK_BlobCleanupItems|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|ConfigItems|PK_ConfigItems|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"ConfigName"|||950|3126|0|
+index|DavCleanupItems|PK_DavCleanupItems|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|DavItems|IX_DavItems_HistoryItemId_SubType_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|13 8 3|"HistoryItemId","SubType","CreatedAt"|||0 0 0|10065 1978 3128|0 0 0|
+index|DavItems|IX_DavItems_HistoryItemId_Type_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|13 7 3|"HistoryItemId","Type","CreatedAt"|||0 0 0|10065 1978 3128|0 0 0|
+index|DavItems|IX_DavItems_IdPrefix_Type|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|2 7|"IdPrefix","Type"|||950 0|3126 1978|0 0|
+index|DavItems|IX_DavItems_NzbBlobId|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|15|"NzbBlobId"|||0|10065|0|
+index|DavItems|IX_DavItems_ParentId_Name|<owner>|btree||true|false|false|false|true|false|true|false|true|true|false|2|2|4 5|"ParentId","Name"|||0 950|10065 3126|0 0|
+index|DavItems|IX_DavItems_Type_HistoryItemId_NextHealthCheck_ReleaseDate_Id|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|5|5|7 13 12 10 1|"Type","HistoryItemId","NextHealthCheck","ReleaseDate","Id"|||0 0 0 0 0|1978 10065 3124 3124 10065|0 0 0 0 0|
+index|DavItems|PK_DavItems|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|DavMultipartFiles|PK_DavMultipartFiles|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|DavNzbFiles|PK_DavNzbFiles|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|DavRarFiles|PK_DavRarFiles|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|HealthCheckResults|IX_HealthCheckResults_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|2|"CreatedAt"|||0|3124|0|
+index|HealthCheckResults|IX_HealthCheckResults_DavItemId_CreatedAt_Id|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|3 2 1|"DavItemId","CreatedAt","Id"|||0 0 0|10065 3124 10065|0 3 3|
+index|HealthCheckResults|IX_HealthCheckResults_DavItemId|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|3|"DavItemId"||"RepairStatus" = 3|0|10065|0|
+index|HealthCheckResults|IX_HealthCheckResults_Result_RepairStatus_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|5 6 2|"Result","RepairStatus","CreatedAt"|||0 0 0|1978 1978 3124|0 0 0|
+index|HealthCheckResults|PK_HealthCheckResults|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|HealthCheckStats|PK_HealthCheckStats|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|4|4|1 2 3 4|"DateStartInclusive","DateEndExclusive","Result","RepairStatus"|||0 0 0 0|3124 3124 1978 1978|0 0 0 0|
+index|HistoryCleanupItems|PK_HistoryCleanupItems|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|HistoryItems|IX_HistoryItems_Category_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|5 2|"Category","CreatedAt"|||950 0|3126 3128|0 0|
+index|HistoryItems|IX_HistoryItems_Category_DownloadDirId|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|5 10|"Category","DownloadDirId"|||950 0|3126 10065|0 0|
+index|HistoryItems|IX_HistoryItems_Category|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|5|"Category"|||950|3126|0|
+index|HistoryItems|IX_HistoryItems_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|2|"CreatedAt"|||0|3128|0|
+index|HistoryItems|IX_HistoryItems_NzbBlobId|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|11|"NzbBlobId"|||0|10065|0|
+index|HistoryItems|PK_HistoryItems|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|ImportReceipts|IX_ImportReceipts_DavItemId_HistoryItemId|<owner>|btree||true|false|false|false|true|false|true|false|true|true|false|2|2|2 3|"DavItemId","HistoryItemId"|||0 0|10065 10065|0 0|
+index|ImportReceipts|IX_ImportReceipts_State|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|4|"State"|||0|1978|0|
+index|ImportReceipts|IX_ImportReceipts_UpdatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|6|"UpdatedAt"|||0|3124|0|
+index|ImportReceipts|PK_ImportReceipts|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|MaintenanceRuns|IX_MaintenanceRuns_ActiveSlot|<owner>|btree||true|false|false|false|true|false|true|false|true|true|false|1|1|4|"ActiveSlot"|||0|1978|0|
+index|MaintenanceRuns|IX_MaintenanceRuns_Kind_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|2 6|"Kind","CreatedAt"|||0 0|1978 3124|0 0|
+index|MaintenanceRuns|IX_MaintenanceRuns_Status_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|3 6|"Status","CreatedAt"|||0 0|1978 3124|0 0|
+index|MaintenanceRuns|PK_MaintenanceRuns|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|NzbBlobCleanupItems|PK_NzbBlobCleanupItems|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|NzbNames|PK_NzbNames|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|QueueItems|IX_QueueItems_Category_FileName|<owner>|btree||true|false|false|false|true|false|true|false|true|true|false|2|2|7 3|"Category","FileName"|||950 950|3126 3126|0 0|
+index|QueueItems|IX_QueueItems_Category_Priority_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|7 9 2|"Category","Priority","CreatedAt"|||950 0 0|3126 1978 3128|0 0 0|
+index|QueueItems|IX_QueueItems_Category|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|7|"Category"|||950|3126|0|
+index|QueueItems|IX_QueueItems_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|2|"CreatedAt"|||0|3128|0|
+index|QueueItems|IX_QueueItems_Priority_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|9 2|"Priority","CreatedAt"|||0 0|1978 3128|0 0|
+index|QueueItems|IX_QueueItems_Priority_PauseUntil_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|9 11 2|"Priority","PauseUntil","CreatedAt"|||0 0 0|1978 3128 3128|0 0 0|
+index|QueueItems|IX_QueueItems_Priority|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|9|"Priority"|||0|1978|0|
+index|QueueItems|PK_QueueItems|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|QueueNzbContents|PK_QueueNzbContents|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|QueuePriorityHints|IX_QueuePriorityHints_EffectivePriority_Score_ExpiresAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|3 2 8|"EffectivePriority","Score","ExpiresAt"|||0 0 0|1978 1978 3124|0 0 0|
+index|QueuePriorityHints|PK_QueuePriorityHints|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"QueueItemId"|||0|10065|0|
+index|RcloneInvalidationItems|IX_RcloneInvalidationItems_NextAttemptAt_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|5 4|"NextAttemptAt","CreatedAt"|||0 0|3124 3124|0 0|
+index|RcloneInvalidationItems|IX_RcloneInvalidationItems_Path|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|1|1|2|"Path"|||950|3126|0|
+index|RcloneInvalidationItems|PK_RcloneInvalidationItems|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|RepairBrokenFiles|IX_RepairBrokenFiles_DavItemId_Cleared|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|3 7|"DavItemId","Cleared"|||0 0|10065 10003|0 0|
+index|RepairBrokenFiles|IX_RepairBrokenFiles_RepairRunId_Cleared_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|2 7 6|"RepairRunId","Cleared","CreatedAt"|||0 0 0|10065 10003 3124|0 0 0|
+index|RepairBrokenFiles|PK_RepairBrokenFiles|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|RepairEntryHealth|IX_RepairEntryHealth_RepairRunId_DavItemId|<owner>|btree||true|false|false|false|true|false|true|false|true|true|false|2|2|2 3|"RepairRunId","DavItemId"|||0 0|10065 10065|0 0|
+index|RepairEntryHealth|IX_RepairEntryHealth_RepairRunId_State_UpdatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|2 5 8|"RepairRunId","State","UpdatedAt"|||0 0 0|10065 1978 3124|0 0 0|
+index|RepairEntryHealth|PK_RepairEntryHealth|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|RepairRuns|IX_RepairRuns_Status_StartedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|2|2|2 4|"Status","StartedAt"|||0 0|1978 3124|0 0|
+index|RepairRuns|PK_RepairRuns|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|WorkerJobs|IX_WorkerJobs_ClaimOrder|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|6|6|2 3 9 10 5 7|"Kind","Status","AvailableAt","LeaseExpiresAt","Priority","CreatedAt"|||0 0 0 0 0 0|1978 1978 3124 3124 1978 3124|0 0 0 0 0 0|
+index|WorkerJobs|IX_WorkerJobs_Kind_Status_LeaseExpiresAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|2 3 10|"Kind","Status","LeaseExpiresAt"|||0 0 0|1978 1978 3124|0 0 0|
+index|WorkerJobs|IX_WorkerJobs_Kind_Status_Priority_AvailableAt_CreatedAt|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|5|5|2 3 5 9 7|"Kind","Status","Priority","AvailableAt","CreatedAt"|||0 0 0 0 0|1978 1978 1978 3124 3124|0 0 3 0 0|
+index|WorkerJobs|IX_WorkerJobs_Kind_TargetId|<owner>|btree||true|false|false|false|true|false|true|false|true|true|false|2|2|2 4|"Kind","TargetId"|||0 0|1978 10065|0 0|
+index|WorkerJobs|IX_WorkerJobs_Status_LeaseExpiresAt_LeaseGeneration|<owner>|btree||false|false|false|false|true|false|true|false|true|true|false|3|3|3 10 14|"Status","LeaseExpiresAt","LeaseGeneration"|||0 0 0|1978 3124 3124|0 0 0|
+index|WorkerJobs|PK_WorkerJobs|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"Id"|||0|10065|0|
+index|__EFMigrationsHistory_PostgreSql|PK___EFMigrationsHistory_PostgreSql|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"MigrationId"|||100|3126|0|
+internal-trigger|ArrImportCommands|FK_ArrImportCommands_HistoryItems_HistoryItemId|RI_FKey_check_ins|5|O|false|false|0||||HistoryItems
+internal-trigger|ArrImportCommands|FK_ArrImportCommands_HistoryItems_HistoryItemId|RI_FKey_check_upd|17|O|false|false|0||||HistoryItems
+internal-trigger|DavItems|FK_DavMultipartFiles_DavItems_Id|RI_FKey_cascade_del|9|O|false|false|0||||DavItems
+internal-trigger|DavItems|FK_DavMultipartFiles_DavItems_Id|RI_FKey_noaction_upd|17|O|false|false|0||||DavItems
+internal-trigger|DavItems|FK_DavNzbFiles_DavItems_Id|RI_FKey_cascade_del|9|O|false|false|0||||DavItems
+internal-trigger|DavItems|FK_DavNzbFiles_DavItems_Id|RI_FKey_noaction_upd|17|O|false|false|0||||DavItems
+internal-trigger|DavItems|FK_DavRarFiles_DavItems_Id|RI_FKey_cascade_del|9|O|false|false|0||||DavItems
+internal-trigger|DavItems|FK_DavRarFiles_DavItems_Id|RI_FKey_noaction_upd|17|O|false|false|0||||DavItems
+internal-trigger|DavMultipartFiles|FK_DavMultipartFiles_DavItems_Id|RI_FKey_check_ins|5|O|false|false|0||||DavItems
+internal-trigger|DavMultipartFiles|FK_DavMultipartFiles_DavItems_Id|RI_FKey_check_upd|17|O|false|false|0||||DavItems
+internal-trigger|DavNzbFiles|FK_DavNzbFiles_DavItems_Id|RI_FKey_check_ins|5|O|false|false|0||||DavItems
+internal-trigger|DavNzbFiles|FK_DavNzbFiles_DavItems_Id|RI_FKey_check_upd|17|O|false|false|0||||DavItems
+internal-trigger|DavRarFiles|FK_DavRarFiles_DavItems_Id|RI_FKey_check_ins|5|O|false|false|0||||DavItems
+internal-trigger|DavRarFiles|FK_DavRarFiles_DavItems_Id|RI_FKey_check_upd|17|O|false|false|0||||DavItems
+internal-trigger|HistoryItems|FK_ArrImportCommands_HistoryItems_HistoryItemId|RI_FKey_cascade_del|9|O|false|false|0||||HistoryItems
+internal-trigger|HistoryItems|FK_ArrImportCommands_HistoryItems_HistoryItemId|RI_FKey_noaction_upd|17|O|false|false|0||||HistoryItems
+internal-trigger|QueueItems|FK_QueueNzbContents_QueueItems_Id|RI_FKey_cascade_del|9|O|false|false|0||||QueueItems
+internal-trigger|QueueItems|FK_QueueNzbContents_QueueItems_Id|RI_FKey_noaction_upd|17|O|false|false|0||||QueueItems
+internal-trigger|QueueItems|FK_QueuePriorityHints_QueueItems_QueueItemId|RI_FKey_cascade_del|9|O|false|false|0||||QueueItems
+internal-trigger|QueueItems|FK_QueuePriorityHints_QueueItems_QueueItemId|RI_FKey_noaction_upd|17|O|false|false|0||||QueueItems
+internal-trigger|QueueNzbContents|FK_QueueNzbContents_QueueItems_Id|RI_FKey_check_ins|5|O|false|false|0||||QueueItems
+internal-trigger|QueueNzbContents|FK_QueueNzbContents_QueueItems_Id|RI_FKey_check_upd|17|O|false|false|0||||QueueItems
+internal-trigger|QueuePriorityHints|FK_QueuePriorityHints_QueueItems_QueueItemId|RI_FKey_check_ins|5|O|false|false|0||||QueueItems
+internal-trigger|QueuePriorityHints|FK_QueuePriorityHints_QueueItems_QueueItemId|RI_FKey_check_upd|17|O|false|false|0||||QueueItems
+internal-trigger|RepairBrokenFiles|FK_RepairBrokenFiles_RepairRuns_RepairRunId|RI_FKey_check_ins|5|O|false|false|0||||RepairRuns
+internal-trigger|RepairBrokenFiles|FK_RepairBrokenFiles_RepairRuns_RepairRunId|RI_FKey_check_upd|17|O|false|false|0||||RepairRuns
+internal-trigger|RepairEntryHealth|FK_RepairEntryHealth_RepairRuns_RepairRunId|RI_FKey_check_ins|5|O|false|false|0||||RepairRuns
+internal-trigger|RepairEntryHealth|FK_RepairEntryHealth_RepairRuns_RepairRunId|RI_FKey_check_upd|17|O|false|false|0||||RepairRuns
+internal-trigger|RepairRuns|FK_RepairBrokenFiles_RepairRuns_RepairRunId|RI_FKey_cascade_del|9|O|false|false|0||||RepairRuns
+internal-trigger|RepairRuns|FK_RepairBrokenFiles_RepairRuns_RepairRunId|RI_FKey_noaction_upd|17|O|false|false|0||||RepairRuns
+internal-trigger|RepairRuns|FK_RepairEntryHealth_RepairRuns_RepairRunId|RI_FKey_cascade_del|9|O|false|false|0||||RepairRuns
+internal-trigger|RepairRuns|FK_RepairEntryHealth_RepairRuns_RepairRunId|RI_FKey_noaction_upd|17|O|false|false|0||||RepairRuns
+relation-acl|Accounts|<owner>|DELETE|false|<owner>
+relation-acl|Accounts|<owner>|INSERT|false|<owner>
+relation-acl|Accounts|<owner>|REFERENCES|false|<owner>
+relation-acl|Accounts|<owner>|SELECT|false|<owner>
+relation-acl|Accounts|<owner>|TRIGGER|false|<owner>
+relation-acl|Accounts|<owner>|TRUNCATE|false|<owner>
+relation-acl|Accounts|<owner>|UPDATE|false|<owner>
+relation-acl|ArrDownloadCorrelations|<owner>|DELETE|false|<owner>
+relation-acl|ArrDownloadCorrelations|<owner>|INSERT|false|<owner>
+relation-acl|ArrDownloadCorrelations|<owner>|REFERENCES|false|<owner>
+relation-acl|ArrDownloadCorrelations|<owner>|SELECT|false|<owner>
+relation-acl|ArrDownloadCorrelations|<owner>|TRIGGER|false|<owner>
+relation-acl|ArrDownloadCorrelations|<owner>|TRUNCATE|false|<owner>
+relation-acl|ArrDownloadCorrelations|<owner>|UPDATE|false|<owner>
+relation-acl|ArrDownloadLifecycleEvents|<owner>|DELETE|false|<owner>
+relation-acl|ArrDownloadLifecycleEvents|<owner>|INSERT|false|<owner>
+relation-acl|ArrDownloadLifecycleEvents|<owner>|REFERENCES|false|<owner>
+relation-acl|ArrDownloadLifecycleEvents|<owner>|SELECT|false|<owner>
+relation-acl|ArrDownloadLifecycleEvents|<owner>|TRIGGER|false|<owner>
+relation-acl|ArrDownloadLifecycleEvents|<owner>|TRUNCATE|false|<owner>
+relation-acl|ArrDownloadLifecycleEvents|<owner>|UPDATE|false|<owner>
+relation-acl|ArrImportCommands|<owner>|DELETE|false|<owner>
+relation-acl|ArrImportCommands|<owner>|INSERT|false|<owner>
+relation-acl|ArrImportCommands|<owner>|REFERENCES|false|<owner>
+relation-acl|ArrImportCommands|<owner>|SELECT|false|<owner>
+relation-acl|ArrImportCommands|<owner>|TRIGGER|false|<owner>
+relation-acl|ArrImportCommands|<owner>|TRUNCATE|false|<owner>
+relation-acl|ArrImportCommands|<owner>|UPDATE|false|<owner>
+relation-acl|ArrSearchNudgeCommands|<owner>|DELETE|false|<owner>
+relation-acl|ArrSearchNudgeCommands|<owner>|INSERT|false|<owner>
+relation-acl|ArrSearchNudgeCommands|<owner>|REFERENCES|false|<owner>
+relation-acl|ArrSearchNudgeCommands|<owner>|SELECT|false|<owner>
+relation-acl|ArrSearchNudgeCommands|<owner>|TRIGGER|false|<owner>
+relation-acl|ArrSearchNudgeCommands|<owner>|TRUNCATE|false|<owner>
+relation-acl|ArrSearchNudgeCommands|<owner>|UPDATE|false|<owner>
+relation-acl|BlobCleanupItems|<owner>|DELETE|false|<owner>
+relation-acl|BlobCleanupItems|<owner>|INSERT|false|<owner>
+relation-acl|BlobCleanupItems|<owner>|REFERENCES|false|<owner>
+relation-acl|BlobCleanupItems|<owner>|SELECT|false|<owner>
+relation-acl|BlobCleanupItems|<owner>|TRIGGER|false|<owner>
+relation-acl|BlobCleanupItems|<owner>|TRUNCATE|false|<owner>
+relation-acl|BlobCleanupItems|<owner>|UPDATE|false|<owner>
+relation-acl|ConfigItems|<owner>|DELETE|false|<owner>
+relation-acl|ConfigItems|<owner>|INSERT|false|<owner>
+relation-acl|ConfigItems|<owner>|REFERENCES|false|<owner>
+relation-acl|ConfigItems|<owner>|SELECT|false|<owner>
+relation-acl|ConfigItems|<owner>|TRIGGER|false|<owner>
+relation-acl|ConfigItems|<owner>|TRUNCATE|false|<owner>
+relation-acl|ConfigItems|<owner>|UPDATE|false|<owner>
+relation-acl|DavCleanupItems|<owner>|DELETE|false|<owner>
+relation-acl|DavCleanupItems|<owner>|INSERT|false|<owner>
+relation-acl|DavCleanupItems|<owner>|REFERENCES|false|<owner>
+relation-acl|DavCleanupItems|<owner>|SELECT|false|<owner>
+relation-acl|DavCleanupItems|<owner>|TRIGGER|false|<owner>
+relation-acl|DavCleanupItems|<owner>|TRUNCATE|false|<owner>
+relation-acl|DavCleanupItems|<owner>|UPDATE|false|<owner>
+relation-acl|DavItems|<owner>|DELETE|false|<owner>
+relation-acl|DavItems|<owner>|INSERT|false|<owner>
+relation-acl|DavItems|<owner>|REFERENCES|false|<owner>
+relation-acl|DavItems|<owner>|SELECT|false|<owner>
+relation-acl|DavItems|<owner>|TRIGGER|false|<owner>
+relation-acl|DavItems|<owner>|TRUNCATE|false|<owner>
+relation-acl|DavItems|<owner>|UPDATE|false|<owner>
+relation-acl|DavMultipartFiles|<owner>|DELETE|false|<owner>
+relation-acl|DavMultipartFiles|<owner>|INSERT|false|<owner>
+relation-acl|DavMultipartFiles|<owner>|REFERENCES|false|<owner>
+relation-acl|DavMultipartFiles|<owner>|SELECT|false|<owner>
+relation-acl|DavMultipartFiles|<owner>|TRIGGER|false|<owner>
+relation-acl|DavMultipartFiles|<owner>|TRUNCATE|false|<owner>
+relation-acl|DavMultipartFiles|<owner>|UPDATE|false|<owner>
+relation-acl|DavNzbFiles|<owner>|DELETE|false|<owner>
+relation-acl|DavNzbFiles|<owner>|INSERT|false|<owner>
+relation-acl|DavNzbFiles|<owner>|REFERENCES|false|<owner>
+relation-acl|DavNzbFiles|<owner>|SELECT|false|<owner>
+relation-acl|DavNzbFiles|<owner>|TRIGGER|false|<owner>
+relation-acl|DavNzbFiles|<owner>|TRUNCATE|false|<owner>
+relation-acl|DavNzbFiles|<owner>|UPDATE|false|<owner>
+relation-acl|DavRarFiles|<owner>|DELETE|false|<owner>
+relation-acl|DavRarFiles|<owner>|INSERT|false|<owner>
+relation-acl|DavRarFiles|<owner>|REFERENCES|false|<owner>
+relation-acl|DavRarFiles|<owner>|SELECT|false|<owner>
+relation-acl|DavRarFiles|<owner>|TRIGGER|false|<owner>
+relation-acl|DavRarFiles|<owner>|TRUNCATE|false|<owner>
+relation-acl|DavRarFiles|<owner>|UPDATE|false|<owner>
+relation-acl|HealthCheckResults|<owner>|DELETE|false|<owner>
+relation-acl|HealthCheckResults|<owner>|INSERT|false|<owner>
+relation-acl|HealthCheckResults|<owner>|REFERENCES|false|<owner>
+relation-acl|HealthCheckResults|<owner>|SELECT|false|<owner>
+relation-acl|HealthCheckResults|<owner>|TRIGGER|false|<owner>
+relation-acl|HealthCheckResults|<owner>|TRUNCATE|false|<owner>
+relation-acl|HealthCheckResults|<owner>|UPDATE|false|<owner>
+relation-acl|HealthCheckStats|<owner>|DELETE|false|<owner>
+relation-acl|HealthCheckStats|<owner>|INSERT|false|<owner>
+relation-acl|HealthCheckStats|<owner>|REFERENCES|false|<owner>
+relation-acl|HealthCheckStats|<owner>|SELECT|false|<owner>
+relation-acl|HealthCheckStats|<owner>|TRIGGER|false|<owner>
+relation-acl|HealthCheckStats|<owner>|TRUNCATE|false|<owner>
+relation-acl|HealthCheckStats|<owner>|UPDATE|false|<owner>
+relation-acl|HistoryCleanupItems|<owner>|DELETE|false|<owner>
+relation-acl|HistoryCleanupItems|<owner>|INSERT|false|<owner>
+relation-acl|HistoryCleanupItems|<owner>|REFERENCES|false|<owner>
+relation-acl|HistoryCleanupItems|<owner>|SELECT|false|<owner>
+relation-acl|HistoryCleanupItems|<owner>|TRIGGER|false|<owner>
+relation-acl|HistoryCleanupItems|<owner>|TRUNCATE|false|<owner>
+relation-acl|HistoryCleanupItems|<owner>|UPDATE|false|<owner>
+relation-acl|HistoryItems|<owner>|DELETE|false|<owner>
+relation-acl|HistoryItems|<owner>|INSERT|false|<owner>
+relation-acl|HistoryItems|<owner>|REFERENCES|false|<owner>
+relation-acl|HistoryItems|<owner>|SELECT|false|<owner>
+relation-acl|HistoryItems|<owner>|TRIGGER|false|<owner>
+relation-acl|HistoryItems|<owner>|TRUNCATE|false|<owner>
+relation-acl|HistoryItems|<owner>|UPDATE|false|<owner>
+relation-acl|ImportReceipts|<owner>|DELETE|false|<owner>
+relation-acl|ImportReceipts|<owner>|INSERT|false|<owner>
+relation-acl|ImportReceipts|<owner>|REFERENCES|false|<owner>
+relation-acl|ImportReceipts|<owner>|SELECT|false|<owner>
+relation-acl|ImportReceipts|<owner>|TRIGGER|false|<owner>
+relation-acl|ImportReceipts|<owner>|TRUNCATE|false|<owner>
+relation-acl|ImportReceipts|<owner>|UPDATE|false|<owner>
+relation-acl|MaintenanceRuns|<owner>|DELETE|false|<owner>
+relation-acl|MaintenanceRuns|<owner>|INSERT|false|<owner>
+relation-acl|MaintenanceRuns|<owner>|REFERENCES|false|<owner>
+relation-acl|MaintenanceRuns|<owner>|SELECT|false|<owner>
+relation-acl|MaintenanceRuns|<owner>|TRIGGER|false|<owner>
+relation-acl|MaintenanceRuns|<owner>|TRUNCATE|false|<owner>
+relation-acl|MaintenanceRuns|<owner>|UPDATE|false|<owner>
+relation-acl|NzbBlobCleanupItems|<owner>|DELETE|false|<owner>
+relation-acl|NzbBlobCleanupItems|<owner>|INSERT|false|<owner>
+relation-acl|NzbBlobCleanupItems|<owner>|REFERENCES|false|<owner>
+relation-acl|NzbBlobCleanupItems|<owner>|SELECT|false|<owner>
+relation-acl|NzbBlobCleanupItems|<owner>|TRIGGER|false|<owner>
+relation-acl|NzbBlobCleanupItems|<owner>|TRUNCATE|false|<owner>
+relation-acl|NzbBlobCleanupItems|<owner>|UPDATE|false|<owner>
+relation-acl|NzbNames|<owner>|DELETE|false|<owner>
+relation-acl|NzbNames|<owner>|INSERT|false|<owner>
+relation-acl|NzbNames|<owner>|REFERENCES|false|<owner>
+relation-acl|NzbNames|<owner>|SELECT|false|<owner>
+relation-acl|NzbNames|<owner>|TRIGGER|false|<owner>
+relation-acl|NzbNames|<owner>|TRUNCATE|false|<owner>
+relation-acl|NzbNames|<owner>|UPDATE|false|<owner>
+relation-acl|QueueItems|<owner>|DELETE|false|<owner>
+relation-acl|QueueItems|<owner>|INSERT|false|<owner>
+relation-acl|QueueItems|<owner>|REFERENCES|false|<owner>
+relation-acl|QueueItems|<owner>|SELECT|false|<owner>
+relation-acl|QueueItems|<owner>|TRIGGER|false|<owner>
+relation-acl|QueueItems|<owner>|TRUNCATE|false|<owner>
+relation-acl|QueueItems|<owner>|UPDATE|false|<owner>
+relation-acl|QueueNzbContents|<owner>|DELETE|false|<owner>
+relation-acl|QueueNzbContents|<owner>|INSERT|false|<owner>
+relation-acl|QueueNzbContents|<owner>|REFERENCES|false|<owner>
+relation-acl|QueueNzbContents|<owner>|SELECT|false|<owner>
+relation-acl|QueueNzbContents|<owner>|TRIGGER|false|<owner>
+relation-acl|QueueNzbContents|<owner>|TRUNCATE|false|<owner>
+relation-acl|QueueNzbContents|<owner>|UPDATE|false|<owner>
+relation-acl|QueuePriorityHints|<owner>|DELETE|false|<owner>
+relation-acl|QueuePriorityHints|<owner>|INSERT|false|<owner>
+relation-acl|QueuePriorityHints|<owner>|REFERENCES|false|<owner>
+relation-acl|QueuePriorityHints|<owner>|SELECT|false|<owner>
+relation-acl|QueuePriorityHints|<owner>|TRIGGER|false|<owner>
+relation-acl|QueuePriorityHints|<owner>|TRUNCATE|false|<owner>
+relation-acl|QueuePriorityHints|<owner>|UPDATE|false|<owner>
+relation-acl|RcloneInvalidationItems|<owner>|DELETE|false|<owner>
+relation-acl|RcloneInvalidationItems|<owner>|INSERT|false|<owner>
+relation-acl|RcloneInvalidationItems|<owner>|REFERENCES|false|<owner>
+relation-acl|RcloneInvalidationItems|<owner>|SELECT|false|<owner>
+relation-acl|RcloneInvalidationItems|<owner>|TRIGGER|false|<owner>
+relation-acl|RcloneInvalidationItems|<owner>|TRUNCATE|false|<owner>
+relation-acl|RcloneInvalidationItems|<owner>|UPDATE|false|<owner>
+relation-acl|RepairBrokenFiles|<owner>|DELETE|false|<owner>
+relation-acl|RepairBrokenFiles|<owner>|INSERT|false|<owner>
+relation-acl|RepairBrokenFiles|<owner>|REFERENCES|false|<owner>
+relation-acl|RepairBrokenFiles|<owner>|SELECT|false|<owner>
+relation-acl|RepairBrokenFiles|<owner>|TRIGGER|false|<owner>
+relation-acl|RepairBrokenFiles|<owner>|TRUNCATE|false|<owner>
+relation-acl|RepairBrokenFiles|<owner>|UPDATE|false|<owner>
+relation-acl|RepairEntryHealth|<owner>|DELETE|false|<owner>
+relation-acl|RepairEntryHealth|<owner>|INSERT|false|<owner>
+relation-acl|RepairEntryHealth|<owner>|REFERENCES|false|<owner>
+relation-acl|RepairEntryHealth|<owner>|SELECT|false|<owner>
+relation-acl|RepairEntryHealth|<owner>|TRIGGER|false|<owner>
+relation-acl|RepairEntryHealth|<owner>|TRUNCATE|false|<owner>
+relation-acl|RepairEntryHealth|<owner>|UPDATE|false|<owner>
+relation-acl|RepairRuns|<owner>|DELETE|false|<owner>
+relation-acl|RepairRuns|<owner>|INSERT|false|<owner>
+relation-acl|RepairRuns|<owner>|REFERENCES|false|<owner>
+relation-acl|RepairRuns|<owner>|SELECT|false|<owner>
+relation-acl|RepairRuns|<owner>|TRIGGER|false|<owner>
+relation-acl|RepairRuns|<owner>|TRUNCATE|false|<owner>
+relation-acl|RepairRuns|<owner>|UPDATE|false|<owner>
+relation-acl|WorkerJobs|<owner>|DELETE|false|<owner>
+relation-acl|WorkerJobs|<owner>|INSERT|false|<owner>
+relation-acl|WorkerJobs|<owner>|REFERENCES|false|<owner>
+relation-acl|WorkerJobs|<owner>|SELECT|false|<owner>
+relation-acl|WorkerJobs|<owner>|TRIGGER|false|<owner>
+relation-acl|WorkerJobs|<owner>|TRUNCATE|false|<owner>
+relation-acl|WorkerJobs|<owner>|UPDATE|false|<owner>
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|DELETE|false|<owner>
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|INSERT|false|<owner>
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|REFERENCES|false|<owner>
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|SELECT|false|<owner>
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|TRIGGER|false|<owner>
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|TRUNCATE|false|<owner>
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|UPDATE|false|<owner>
+relation|Accounts|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|true||default-acl
+relation|ArrDownloadCorrelations|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|true||default-acl
+relation|ArrDownloadLifecycleEvents|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|true||default-acl
+relation|ArrImportCommands|r|p|<owner>|heap||0|true|false|true|false|false|d|false|false|true||default-acl
+relation|ArrSearchNudgeCommands|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|true||default-acl
+relation|BlobCleanupItems|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|false||default-acl
+relation|ConfigItems|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|true||default-acl
+relation|DavCleanupItems|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|false||default-acl
+relation|DavItems|r|p|<owner>|heap||0|true|false|true|false|false|d|false|false|true||default-acl
+relation|DavMultipartFiles|r|p|<owner>|heap||0|true|false|true|false|false|d|false|false|true||default-acl
+relation|DavNzbFiles|r|p|<owner>|heap||0|true|false|true|false|false|d|false|false|true||default-acl
+relation|DavRarFiles|r|p|<owner>|heap||0|true|false|true|false|false|d|false|false|true||default-acl
+relation|HealthCheckResults|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|true||default-acl
+relation|HealthCheckStats|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|false||default-acl
+relation|HistoryCleanupItems|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|false||default-acl
+relation|HistoryItems|r|p|<owner>|heap||0|true|false|true|false|false|d|false|false|true||default-acl
+relation|IX_ArrDownloadCorrelations_ArrApp_InstanceKey_DownloadId|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrDownloadCorrelations_ArrApp_InstanceKey_MediaKey|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrDownloadCorrelations_ArrApp_InstanceKey_QueueRecordId|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrDownloadCorrelations_HistoryItemId|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrDownloadCorrelations_IsDuplicate_LastSeenAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrDownloadCorrelations_QueueItemId|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrDownloadCorrelations_Source_ManualLock|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrDownloadLifecycleEvents_HistoryItemId_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrDownloadLifecycleEvents_QueueItemId_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrImportCommands_HistoryItemId|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrImportCommands_Status_LeaseExpiresAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrImportCommands_Status_NextAttemptAt_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrLifecycle_Instance_State_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrSearchNudgeCommands_ArrApp_InstanceKey_Status_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ArrSearchNudgeCommands_CooldownKey_NextAllowedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_DavItems_HistoryItemId_SubType_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_DavItems_HistoryItemId_Type_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_DavItems_IdPrefix_Type|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_DavItems_NzbBlobId|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_DavItems_ParentId_Name|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_DavItems_Type_HistoryItemId_NextHealthCheck_ReleaseDate_Id|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_HealthCheckResults_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_HealthCheckResults_DavItemId_CreatedAt_Id|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_HealthCheckResults_DavItemId|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_HealthCheckResults_Result_RepairStatus_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_HistoryItems_Category_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_HistoryItems_Category_DownloadDirId|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_HistoryItems_Category|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_HistoryItems_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_HistoryItems_NzbBlobId|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ImportReceipts_DavItemId_HistoryItemId|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ImportReceipts_State|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_ImportReceipts_UpdatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_MaintenanceRuns_ActiveSlot|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_MaintenanceRuns_Kind_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_MaintenanceRuns_Status_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_QueueItems_Category_FileName|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_QueueItems_Category_Priority_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_QueueItems_Category|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_QueueItems_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_QueueItems_Priority_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_QueueItems_Priority_PauseUntil_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_QueueItems_Priority|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_QueuePriorityHints_EffectivePriority_Score_ExpiresAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_RcloneInvalidationItems_NextAttemptAt_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_RcloneInvalidationItems_Path|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_RepairBrokenFiles_DavItemId_Cleared|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_RepairBrokenFiles_RepairRunId_Cleared_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_RepairEntryHealth_RepairRunId_DavItemId|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_RepairEntryHealth_RepairRunId_State_UpdatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_RepairRuns_Status_StartedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_WorkerJobs_ClaimOrder|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_WorkerJobs_Kind_Status_LeaseExpiresAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_WorkerJobs_Kind_Status_Priority_AvailableAt_CreatedAt|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_WorkerJobs_Kind_TargetId|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|IX_WorkerJobs_Status_LeaseExpiresAt_LeaseGeneration|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|ImportReceipts|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|true||default-acl
+relation|MaintenanceRuns|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|true||default-acl
+relation|NzbBlobCleanupItems|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|false||default-acl
+relation|NzbNames|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|true||default-acl
+relation|PK_Accounts|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_ArrDownloadCorrelations|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_ArrDownloadLifecycleEvents|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_ArrImportCommands|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_ArrSearchNudgeCommands|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_BlobCleanupItems|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_ConfigItems|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_DavCleanupItems|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_DavItems|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_DavMultipartFiles|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_DavNzbFiles|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_DavRarFiles|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_HealthCheckResults|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_HealthCheckStats|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_HistoryCleanupItems|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_HistoryItems|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_ImportReceipts|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_MaintenanceRuns|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_NzbBlobCleanupItems|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_NzbNames|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_QueueItems|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_QueueNzbContents|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_QueuePriorityHints|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_RcloneInvalidationItems|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_RepairBrokenFiles|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_RepairEntryHealth|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_RepairRuns|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK_WorkerJobs|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|PK___EFMigrationsHistory_PostgreSql|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|QueueItems|r|p|<owner>|heap||0|true|false|true|false|false|d|false|false|true||default-acl
+relation|QueueNzbContents|r|p|<owner>|heap||0|true|false|true|false|false|d|false|false|true||default-acl
+relation|QueuePriorityHints|r|p|<owner>|heap||0|true|false|true|false|false|d|false|false|true||default-acl
+relation|RcloneInvalidationItems|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|true||default-acl
+relation|RepairBrokenFiles|r|p|<owner>|heap||0|true|false|true|false|false|d|false|false|true||default-acl
+relation|RepairEntryHealth|r|p|<owner>|heap||0|true|false|true|false|false|d|false|false|true||default-acl
+relation|RepairRuns|r|p|<owner>|heap||0|true|false|true|false|false|d|false|false|true||default-acl
+relation|WorkerJobs|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|true||default-acl
+relation|__EFMigrationsHistory_PostgreSql|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|false||default-acl
+schema-acl|<owner>|CREATE|false|<owner>
+schema-acl|<owner>|USAGE|false|<owner>
+scope|<owner>|<owner>|default-database-acl|default-schema-acl
+server|16.14|160014
+toast-index|Accounts|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|ArrDownloadCorrelations|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|ArrDownloadLifecycleEvents|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|ArrImportCommands|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|ArrSearchNudgeCommands|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|ConfigItems|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|DavItems|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|DavMultipartFiles|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|DavNzbFiles|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|DavRarFiles|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|HealthCheckResults|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|HistoryItems|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|ImportReceipts|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|MaintenanceRuns|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|NzbNames|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|QueueItems|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|QueueNzbContents|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|QueuePriorityHints|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|RcloneInvalidationItems|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|RepairBrokenFiles|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|RepairEntryHealth|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|RepairRuns|true|true|true|true|true|true|2|2|1 2|btree|
+toast-index|WorkerJobs|true|true|true|true|true|true|2|2|1 2|btree|
+toast|Accounts|p|<owner>|heap||true||default-acl
+toast|ArrDownloadCorrelations|p|<owner>|heap||true||default-acl
+toast|ArrDownloadLifecycleEvents|p|<owner>|heap||true||default-acl
+toast|ArrImportCommands|p|<owner>|heap||true||default-acl
+toast|ArrSearchNudgeCommands|p|<owner>|heap||true||default-acl
+toast|ConfigItems|p|<owner>|heap||true||default-acl
+toast|DavItems|p|<owner>|heap||true||default-acl
+toast|DavMultipartFiles|p|<owner>|heap||true||default-acl
+toast|DavNzbFiles|p|<owner>|heap||true||default-acl
+toast|DavRarFiles|p|<owner>|heap||true||default-acl
+toast|HealthCheckResults|p|<owner>|heap||true||default-acl
+toast|HistoryItems|p|<owner>|heap||true||default-acl
+toast|ImportReceipts|p|<owner>|heap||true||default-acl
+toast|MaintenanceRuns|p|<owner>|heap||true||default-acl
+toast|NzbNames|p|<owner>|heap||true||default-acl
+toast|QueueItems|p|<owner>|heap||true||default-acl
+toast|QueueNzbContents|p|<owner>|heap||true||default-acl
+toast|QueuePriorityHints|p|<owner>|heap||true||default-acl
+toast|RcloneInvalidationItems|p|<owner>|heap||true||default-acl
+toast|RepairBrokenFiles|p|<owner>|heap||true||default-acl
+toast|RepairEntryHealth|p|<owner>|heap||true||default-acl
+toast|RepairRuns|p|<owner>|heap||true||default-acl
+toast|WorkerJobs|p|<owner>|heap||true||default-acl
+type-acl|Accounts|<owner>|USAGE|false|<owner>
+type-acl|Accounts|PUBLIC|USAGE|false|<owner>
+type-acl|ArrDownloadCorrelations|<owner>|USAGE|false|<owner>
+type-acl|ArrDownloadCorrelations|PUBLIC|USAGE|false|<owner>
+type-acl|ArrDownloadLifecycleEvents|<owner>|USAGE|false|<owner>
+type-acl|ArrDownloadLifecycleEvents|PUBLIC|USAGE|false|<owner>
+type-acl|ArrImportCommands|<owner>|USAGE|false|<owner>
+type-acl|ArrImportCommands|PUBLIC|USAGE|false|<owner>
+type-acl|ArrSearchNudgeCommands|<owner>|USAGE|false|<owner>
+type-acl|ArrSearchNudgeCommands|PUBLIC|USAGE|false|<owner>
+type-acl|BlobCleanupItems|<owner>|USAGE|false|<owner>
+type-acl|BlobCleanupItems|PUBLIC|USAGE|false|<owner>
+type-acl|ConfigItems|<owner>|USAGE|false|<owner>
+type-acl|ConfigItems|PUBLIC|USAGE|false|<owner>
+type-acl|DavCleanupItems|<owner>|USAGE|false|<owner>
+type-acl|DavCleanupItems|PUBLIC|USAGE|false|<owner>
+type-acl|DavItems|<owner>|USAGE|false|<owner>
+type-acl|DavItems|PUBLIC|USAGE|false|<owner>
+type-acl|DavMultipartFiles|<owner>|USAGE|false|<owner>
+type-acl|DavMultipartFiles|PUBLIC|USAGE|false|<owner>
+type-acl|DavNzbFiles|<owner>|USAGE|false|<owner>
+type-acl|DavNzbFiles|PUBLIC|USAGE|false|<owner>
+type-acl|DavRarFiles|<owner>|USAGE|false|<owner>
+type-acl|DavRarFiles|PUBLIC|USAGE|false|<owner>
+type-acl|HealthCheckResults|<owner>|USAGE|false|<owner>
+type-acl|HealthCheckResults|PUBLIC|USAGE|false|<owner>
+type-acl|HealthCheckStats|<owner>|USAGE|false|<owner>
+type-acl|HealthCheckStats|PUBLIC|USAGE|false|<owner>
+type-acl|HistoryCleanupItems|<owner>|USAGE|false|<owner>
+type-acl|HistoryCleanupItems|PUBLIC|USAGE|false|<owner>
+type-acl|HistoryItems|<owner>|USAGE|false|<owner>
+type-acl|HistoryItems|PUBLIC|USAGE|false|<owner>
+type-acl|ImportReceipts|<owner>|USAGE|false|<owner>
+type-acl|ImportReceipts|PUBLIC|USAGE|false|<owner>
+type-acl|MaintenanceRuns|<owner>|USAGE|false|<owner>
+type-acl|MaintenanceRuns|PUBLIC|USAGE|false|<owner>
+type-acl|NzbBlobCleanupItems|<owner>|USAGE|false|<owner>
+type-acl|NzbBlobCleanupItems|PUBLIC|USAGE|false|<owner>
+type-acl|NzbNames|<owner>|USAGE|false|<owner>
+type-acl|NzbNames|PUBLIC|USAGE|false|<owner>
+type-acl|QueueItems|<owner>|USAGE|false|<owner>
+type-acl|QueueItems|PUBLIC|USAGE|false|<owner>
+type-acl|QueueNzbContents|<owner>|USAGE|false|<owner>
+type-acl|QueueNzbContents|PUBLIC|USAGE|false|<owner>
+type-acl|QueuePriorityHints|<owner>|USAGE|false|<owner>
+type-acl|QueuePriorityHints|PUBLIC|USAGE|false|<owner>
+type-acl|RcloneInvalidationItems|<owner>|USAGE|false|<owner>
+type-acl|RcloneInvalidationItems|PUBLIC|USAGE|false|<owner>
+type-acl|RepairBrokenFiles|<owner>|USAGE|false|<owner>
+type-acl|RepairBrokenFiles|PUBLIC|USAGE|false|<owner>
+type-acl|RepairEntryHealth|<owner>|USAGE|false|<owner>
+type-acl|RepairEntryHealth|PUBLIC|USAGE|false|<owner>
+type-acl|RepairRuns|<owner>|USAGE|false|<owner>
+type-acl|RepairRuns|PUBLIC|USAGE|false|<owner>
+type-acl|WorkerJobs|<owner>|USAGE|false|<owner>
+type-acl|WorkerJobs|PUBLIC|USAGE|false|<owner>
+type-acl|_Accounts|<owner>|USAGE|false|<owner>
+type-acl|_Accounts|PUBLIC|USAGE|false|<owner>
+type-acl|_ArrDownloadCorrelations|<owner>|USAGE|false|<owner>
+type-acl|_ArrDownloadCorrelations|PUBLIC|USAGE|false|<owner>
+type-acl|_ArrDownloadLifecycleEvents|<owner>|USAGE|false|<owner>
+type-acl|_ArrDownloadLifecycleEvents|PUBLIC|USAGE|false|<owner>
+type-acl|_ArrImportCommands|<owner>|USAGE|false|<owner>
+type-acl|_ArrImportCommands|PUBLIC|USAGE|false|<owner>
+type-acl|_ArrSearchNudgeCommands|<owner>|USAGE|false|<owner>
+type-acl|_ArrSearchNudgeCommands|PUBLIC|USAGE|false|<owner>
+type-acl|_BlobCleanupItems|<owner>|USAGE|false|<owner>
+type-acl|_BlobCleanupItems|PUBLIC|USAGE|false|<owner>
+type-acl|_ConfigItems|<owner>|USAGE|false|<owner>
+type-acl|_ConfigItems|PUBLIC|USAGE|false|<owner>
+type-acl|_DavCleanupItems|<owner>|USAGE|false|<owner>
+type-acl|_DavCleanupItems|PUBLIC|USAGE|false|<owner>
+type-acl|_DavItems|<owner>|USAGE|false|<owner>
+type-acl|_DavItems|PUBLIC|USAGE|false|<owner>
+type-acl|_DavMultipartFiles|<owner>|USAGE|false|<owner>
+type-acl|_DavMultipartFiles|PUBLIC|USAGE|false|<owner>
+type-acl|_DavNzbFiles|<owner>|USAGE|false|<owner>
+type-acl|_DavNzbFiles|PUBLIC|USAGE|false|<owner>
+type-acl|_DavRarFiles|<owner>|USAGE|false|<owner>
+type-acl|_DavRarFiles|PUBLIC|USAGE|false|<owner>
+type-acl|_HealthCheckResults|<owner>|USAGE|false|<owner>
+type-acl|_HealthCheckResults|PUBLIC|USAGE|false|<owner>
+type-acl|_HealthCheckStats|<owner>|USAGE|false|<owner>
+type-acl|_HealthCheckStats|PUBLIC|USAGE|false|<owner>
+type-acl|_HistoryCleanupItems|<owner>|USAGE|false|<owner>
+type-acl|_HistoryCleanupItems|PUBLIC|USAGE|false|<owner>
+type-acl|_HistoryItems|<owner>|USAGE|false|<owner>
+type-acl|_HistoryItems|PUBLIC|USAGE|false|<owner>
+type-acl|_ImportReceipts|<owner>|USAGE|false|<owner>
+type-acl|_ImportReceipts|PUBLIC|USAGE|false|<owner>
+type-acl|_MaintenanceRuns|<owner>|USAGE|false|<owner>
+type-acl|_MaintenanceRuns|PUBLIC|USAGE|false|<owner>
+type-acl|_NzbBlobCleanupItems|<owner>|USAGE|false|<owner>
+type-acl|_NzbBlobCleanupItems|PUBLIC|USAGE|false|<owner>
+type-acl|_NzbNames|<owner>|USAGE|false|<owner>
+type-acl|_NzbNames|PUBLIC|USAGE|false|<owner>
+type-acl|_QueueItems|<owner>|USAGE|false|<owner>
+type-acl|_QueueItems|PUBLIC|USAGE|false|<owner>
+type-acl|_QueueNzbContents|<owner>|USAGE|false|<owner>
+type-acl|_QueueNzbContents|PUBLIC|USAGE|false|<owner>
+type-acl|_QueuePriorityHints|<owner>|USAGE|false|<owner>
+type-acl|_QueuePriorityHints|PUBLIC|USAGE|false|<owner>
+type-acl|_RcloneInvalidationItems|<owner>|USAGE|false|<owner>
+type-acl|_RcloneInvalidationItems|PUBLIC|USAGE|false|<owner>
+type-acl|_RepairBrokenFiles|<owner>|USAGE|false|<owner>
+type-acl|_RepairBrokenFiles|PUBLIC|USAGE|false|<owner>
+type-acl|_RepairEntryHealth|<owner>|USAGE|false|<owner>
+type-acl|_RepairEntryHealth|PUBLIC|USAGE|false|<owner>
+type-acl|_RepairRuns|<owner>|USAGE|false|<owner>
+type-acl|_RepairRuns|PUBLIC|USAGE|false|<owner>
+type-acl|_WorkerJobs|<owner>|USAGE|false|<owner>
+type-acl|_WorkerJobs|PUBLIC|USAGE|false|<owner>
+type-acl|__EFMigrationsHistory_PostgreSql|<owner>|USAGE|false|<owner>
+type-acl|__EFMigrationsHistory_PostgreSql|PUBLIC|USAGE|false|<owner>
+type-acl|___EFMigrationsHistory_PostgreSql|<owner>|USAGE|false|<owner>
+type-acl|___EFMigrationsHistory_PostgreSql|PUBLIC|USAGE|false|<owner>
+type|Accounts|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||Accounts|_Accounts|||default-acl
+type|ArrDownloadCorrelations|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||ArrDownloadCorrelations|_ArrDownloadCorrelations|||default-acl
+type|ArrDownloadLifecycleEvents|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||ArrDownloadLifecycleEvents|_ArrDownloadLifecycleEvents|||default-acl
+type|ArrImportCommands|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||ArrImportCommands|_ArrImportCommands|||default-acl
+type|ArrSearchNudgeCommands|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||ArrSearchNudgeCommands|_ArrSearchNudgeCommands|||default-acl
+type|BlobCleanupItems|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||BlobCleanupItems|_BlobCleanupItems|||default-acl
+type|ConfigItems|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||ConfigItems|_ConfigItems|||default-acl
+type|DavCleanupItems|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||DavCleanupItems|_DavCleanupItems|||default-acl
+type|DavItems|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||DavItems|_DavItems|||default-acl
+type|DavMultipartFiles|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||DavMultipartFiles|_DavMultipartFiles|||default-acl
+type|DavNzbFiles|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||DavNzbFiles|_DavNzbFiles|||default-acl
+type|DavRarFiles|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||DavRarFiles|_DavRarFiles|||default-acl
+type|HealthCheckResults|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||HealthCheckResults|_HealthCheckResults|||default-acl
+type|HealthCheckStats|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||HealthCheckStats|_HealthCheckStats|||default-acl
+type|HistoryCleanupItems|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||HistoryCleanupItems|_HistoryCleanupItems|||default-acl
+type|HistoryItems|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||HistoryItems|_HistoryItems|||default-acl
+type|ImportReceipts|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||ImportReceipts|_ImportReceipts|||default-acl
+type|MaintenanceRuns|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||MaintenanceRuns|_MaintenanceRuns|||default-acl
+type|NzbBlobCleanupItems|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||NzbBlobCleanupItems|_NzbBlobCleanupItems|||default-acl
+type|NzbNames|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||NzbNames|_NzbNames|||default-acl
+type|QueueItems|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||QueueItems|_QueueItems|||default-acl
+type|QueueNzbContents|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||QueueNzbContents|_QueueNzbContents|||default-acl
+type|QueuePriorityHints|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||QueuePriorityHints|_QueuePriorityHints|||default-acl
+type|RcloneInvalidationItems|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||RcloneInvalidationItems|_RcloneInvalidationItems|||default-acl
+type|RepairBrokenFiles|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||RepairBrokenFiles|_RepairBrokenFiles|||default-acl
+type|RepairEntryHealth|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||RepairEntryHealth|_RepairEntryHealth|||default-acl
+type|RepairRuns|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||RepairRuns|_RepairRuns|||default-acl
+type|WorkerJobs|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||WorkerJobs|_WorkerJobs|||default-acl
+type|_Accounts|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||Accounts||default-acl
+type|_ArrDownloadCorrelations|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||ArrDownloadCorrelations||default-acl
+type|_ArrDownloadLifecycleEvents|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||ArrDownloadLifecycleEvents||default-acl
+type|_ArrImportCommands|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||ArrImportCommands||default-acl
+type|_ArrSearchNudgeCommands|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||ArrSearchNudgeCommands||default-acl
+type|_BlobCleanupItems|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||BlobCleanupItems||default-acl
+type|_ConfigItems|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||ConfigItems||default-acl
+type|_DavCleanupItems|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||DavCleanupItems||default-acl
+type|_DavItems|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||DavItems||default-acl
+type|_DavMultipartFiles|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||DavMultipartFiles||default-acl
+type|_DavNzbFiles|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||DavNzbFiles||default-acl
+type|_DavRarFiles|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||DavRarFiles||default-acl
+type|_HealthCheckResults|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||HealthCheckResults||default-acl
+type|_HealthCheckStats|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||HealthCheckStats||default-acl
+type|_HistoryCleanupItems|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||HistoryCleanupItems||default-acl
+type|_HistoryItems|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||HistoryItems||default-acl
+type|_ImportReceipts|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||ImportReceipts||default-acl
+type|_MaintenanceRuns|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||MaintenanceRuns||default-acl
+type|_NzbBlobCleanupItems|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||NzbBlobCleanupItems||default-acl
+type|_NzbNames|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||NzbNames||default-acl
+type|_QueueItems|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||QueueItems||default-acl
+type|_QueueNzbContents|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||QueueNzbContents||default-acl
+type|_QueuePriorityHints|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||QueuePriorityHints||default-acl
+type|_RcloneInvalidationItems|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||RcloneInvalidationItems||default-acl
+type|_RepairBrokenFiles|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||RepairBrokenFiles||default-acl
+type|_RepairEntryHealth|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||RepairEntryHealth||default-acl
+type|_RepairRuns|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||RepairRuns||default-acl
+type|_WorkerJobs|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||WorkerJobs||default-acl
+type|__EFMigrationsHistory_PostgreSql|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||__EFMigrationsHistory_PostgreSql|___EFMigrationsHistory_PostgreSql|||default-acl
+type|___EFMigrationsHistory_PostgreSql|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||__EFMigrationsHistory_PostgreSql||default-acl

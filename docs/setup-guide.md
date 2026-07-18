@@ -111,50 +111,17 @@ Set your username and password.
 
 **D. Database Settings**
 
-SQLite is the default and remains the simplest deployment mode. It stores the database at `/config/db.sqlite`.
+SQLite is the supported runtime and stores its database at `/config/db.sqlite`.
+NZBDav deliberately refuses `NZBDAV_DATABASE_PROVIDER=postgres` at startup.
+The inherited migration history was authored for SQLite and does not create a
+type-safe PostgreSQL schema; the legacy whole-snapshot JSON transfer is also not
+an approved production migration path. This fail-closed gate prevents a
+partially compatible PostgreSQL deployment from starting or mutating a target.
 
-PostgreSQL is supported for new installs by setting:
-
-```yaml
-environment:
-  - NZBDAV_DATABASE_PROVIDER=postgres
-  - NZBDAV_DATABASE_CONNECTION_STRING=Host=postgres;Port=5432;Database=nzbdav;Username=nzbdav;Password=replace-with-db-password
-```
-
-Existing SQLite installs can be moved to PostgreSQL with the repo-local JSON transfer path. Stop NZBDav first so the export is consistent, then export from the SQLite config volume:
-
-```bash
-docker run --rm \
-  -v ./config:/config \
-  -v "$PWD":/transfer \
-  ghcr.io/binghzal/nzbdav:latest \
-  --db-export-json /transfer/nzbdav-transfer.json
-```
-
-Start a PostgreSQL-backed NZBDav container with an empty database and import the snapshot:
-
-```bash
-docker run --rm \
-  -e NZBDAV_DATABASE_PROVIDER=postgres \
-  -e NZBDAV_DATABASE_CONNECTION_STRING='Host=postgres;Port=5432;Database=nzbdav;Username=nzbdav;Password=replace-with-db-password' \
-  -v "$PWD":/transfer \
-  ghcr.io/binghzal/nzbdav:latest \
-  --db-import-json /transfer/nzbdav-transfer.json --replace
-```
-
-The transfer covers database rows only. Copy `/config/blobs` from the SQLite deployment into the new config volume before starting production traffic, because NZB blob payloads live outside the database.
-
-For an operator-safe migration with a manifest and row-count verification, use the repo helper instead of running the export/import commands by hand:
-
-```bash
-NZBDAV_DATABASE_CONNECTION_STRING='Host=postgres;Port=5432;Database=nzbdav;Username=nzbdav;Password=replace-with-db-password' \
-python3 scripts/nzbdav_migrate_sqlite_to_postgres.py \
-  --sqlite-config /path/to/old-sqlite-config \
-  --postgres-config /path/to/new-postgres-config \
-  --image ghcr.io/binghzal/nzbdav:latest
-```
-
-The helper exports SQLite, imports PostgreSQL, exports PostgreSQL again, compares snapshot row counts, copies only `/config/blobs`, writes `artifacts/postgres-migration/<run>/manifest.json`, and never copies `/config/cache`. If the target PostgreSQL database or target blob directory already contains data, re-run with `--replace` only after taking a backup.
+PostgreSQL may be enabled only after its provider-native schema, operational
+triggers, bounded transfer, and complete PostgreSQL 16 test gate pass. The
+implementation and rehearsal requirements are tracked in
+`docs/superpowers/plans/2026-07-11-nzbdav-provider-specific-migrations.md`.
 
 **E. ARR Operations**
 
@@ -180,6 +147,7 @@ ARR custom-script ingestion is optional, but it can improve lifecycle correlatio
 curl -fsS \
   -H "X-Api-Key: $NZBDAV_API_KEY" \
   -d "sonarr_eventtype=$sonarr_eventtype" \
+  -d "sonarr_applicationurl=$sonarr_applicationurl" \
   -d "sonarr_download_id=$sonarr_download_id" \
   -d "sonarr_series_id=$sonarr_series_id" \
   -d "sonarr_episode_id=$sonarr_episode_id" \
@@ -187,7 +155,7 @@ curl -fsS \
   "$NZBDAV_BASE_URL/api/arr/events/sonarr"
 ```
 
-Use `/api/arr/events/radarr` and `/api/arr/events/lidarr` for Radarr and Lidarr variables. ARR `Test` events return success without creating correlation rows. Lidarr remains correlation/report-only; NZBDav does not execute Lidarr search commands in this pass.
+Use `/api/arr/events/radarr` and `/api/arr/events/lidarr` for Radarr and Lidarr variables. Include the official `<app>_applicationurl` variable so NZBDav can route completion refreshes back to the exact ARR instance instead of broadcasting. ARR `Test` events return success without creating correlation rows. Lidarr remains correlation/report-only; NZBDav does not execute Lidarr search commands in this pass.
 
 ### 3. Speed Tuning (Optional)
 
@@ -219,6 +187,23 @@ You can find the optimal **Max Download Connections** for your network (`Setting
 ### 4. Repair And Operations
 
 Open `Health` in the WebUI for live repair, cache, provider, worker, mount, and rclone invalidation status. The page can start a repair verification run, cancel an active run, and clear broken-file repair records after review.
+
+For an external rclone sidecar, NZBDav reports mount state
+`external-unverified` and `ready=false`: process-local status cannot prove that
+the host mount and link traversal work. Use the sidecar healthcheck below as the
+readiness authority. The Health page separately shows pending versus **Due
+Invalidations**, oldest pending age, whether RC and its host are configured,
+and the last successful configured RC call. A new invalidation is not treated
+as degraded immediately; an aged backlog, failed invalidation, failed RC call,
+or required fence with RC disabled/missing a host is degraded.
+
+`Mount:Type` changes update the running visibility-fence topology. The config
+callback is serialized behind any in-flight visibility publication, so a
+rclone-to-DFS (or DFS-to-rclone) change cannot complete until that publication's
+database transaction commits. The fence generation, worker wakes, and active
+state change together under the same topology gate. This is a database safety
+boundary, not proof that an external sidecar or host mount is ready; coordinate
+the actual mount transition and its healthcheck before changing the setting.
 
 Repair checking uses a separate connection budget so continuous background verification does not steal active streaming slots. The defaults are conservative: `repair.connection-budget-percent=20` with at least one connection. Fresh post-download verify jobs are prioritized separately and can use the full automatic NNTP check budget, bounded by CPU/runtime pressure, so ARR-triggered downloads do not sit in slow verification behind the repair budget. Provider errors and unknown results are retried and reported as degraded state; NZBDav only queues repair for definitive missing-on-all-provider cases.
 
@@ -327,14 +312,65 @@ After the sidecar starts, enable rclone remote control in NZBDav:
 * **Settings** > **Rclone**
 * **Remote Control:** enabled
 * **Host:** `http://nzbdav_rclone:5572`
+* **VFS Selector:** leave empty when this RC server owns only the NZBDav mount; otherwise set `nzbdav:` (or the exact name returned by `rclone rc vfs/list`)
 * **Username:** `nzbdav`
 * **Password:** the same value you used in `--rc-pass`
+
+When RC is enabled, NZBDav keeps the invalidation fence pending while RC is
+unreachable or the target VFS is ambiguous. That is intentional: ARR must not
+import against a stale mount. When RC is disabled, NZBDav runs in compatibility
+mode: ARR history and import dispatch are not held behind rclone invalidations.
+Use compatibility mode only when mount visibility is refreshed externally,
+because NZBDav cannot prove that rclone has observed a completed download.
+The optional VFS selector is required when one RC server has multiple active
+VFS instances; rclone rejects an unqualified `vfs/forget` request in that case.
+Each configured RC request captures host, credentials, enabled state, VFS
+selector, and configuration generation together. If those settings change
+while a request is in flight, its result is treated as stale and the durable
+invalidation is retried instead of deleted. Durable invalidation errors use
+bounded categories such as `rclone_rc_http_500`, `rclone_rc_timeout`, or
+`rclone_rc_malformed_response`; response bodies, exception messages, and
+server-echoed credentials are never copied into the database or status API.
+
+The invalidation absence check and `VisibleAt` publication are one transaction
+on one fresh context. SQLite starts it with non-deferred `BEGIN IMMEDIATE` and
+recreates the context, connection, and transaction for every BUSY/LOCKED retry.
+PostgreSQL uses `READ COMMITTED`, a transaction-local 500 ms `lock_timeout`, and
+a schema-qualified `SHARE` lock on `RcloneInvalidationItems` before its first
+application-data read. A lock timeout or deadlock retries the entire unit; it
+never publishes visibility from an incomplete attempt.
+
+The visibility fence is staged even when no ARR instance is currently
+configured. History remains hidden until required invalidations drain. After
+visibility is safe, a missing ARR configuration is recorded as terminal
+`NoRoute` rather than retried forever; it does not mean an NZBDav import receipt
+was marked `Imported`. If ARR configuration later transitions from unavailable
+to available, the worker requeues those `NoRoute` commands once for normal
+routing instead of polling them continuously. Each worker pass captures one
+immutable ARR-client snapshot and uses it for both transition reconciliation
+and target selection, so a clients-empty-clients flap cannot strand a command
+between two different configuration observations.
+
+For an exact persisted Sonarr or Radarr correlation, NZBDav reauthorizes the
+current outbox lease, reads that same instance's queue, and may submit a guarded
+`DownloadedEpisodesScan` or `DownloadedMoviesScan` using ARR's unchanged queue
+output path and download ID. Any missing, ambiguous, unsupported, malformed, or
+unhealthy case uses `RefreshMonitoredDownloads`; a fast targeted-scan failure
+also uses that refresh fallback when its bounded deadline still has time. This
+is a wake-up optimization only. An accepted ARR command ID does not prove that
+ARR imported or renamed the item, obtained metadata, notified Plex, or made the
+item visible. Use ARR's `downloadFolderImported` history plus exact Plex path and
+metadata observations for end-to-end evidence.
 
 Start and update `nzbdav_rclone` with the safe updater from this repository.
 Use this instead of raw `docker compose up -d nzbdav_rclone` for routine
 deploys. The helper fingerprints the rendered compose service plus
-`rclone.conf`, records the fingerprint in `.nzbdav-rclone-state.json`, and
-skips `docker compose up` entirely when nothing effective changed:
+`rclone.conf`, records only the SHA-256 fingerprint and update time in
+`.nzbdav-rclone-state.json`, and skips `docker compose up` entirely when
+nothing effective changed. The state is atomically replaced as a mode-`0600`
+regular file; rendered Compose content and watched-file paths or values are
+never persisted. An unchanged legacy state containing the old `payload` object
+is rewritten privately without restarting rclone:
 ```bash
 $ python3 scripts/nzbdav_safe_rclone_up.py \
     --project-dir /path/to/apps/nzbdav \
@@ -515,6 +551,28 @@ Go to NzbDav `Settings` > `Radarr/Sonarr`.
      *(Point this to the root folder where your actual Movie/TV libraries live on the host)*.
    * **Enable Background Repairs:** Checked.
      *(This allows NzbDav to monitor for dead links in your library and trigger redownloads automatically).*
+
+### 4. Configure the production Plex scan trigger
+
+NZBDav finishes the virtual download and wakes ARR, but ARR owns the final
+renamed library path. Configure each Sonarr/Radarr instance under
+`Settings` > `Connect` with its Plex Media Server connection (or configure an
+import-complete AutoPulse equivalent) and test it from ARR. Do not depend on
+Plex filesystem change detection for the rclone/FUSE mount: Plex documents that
+automatic updates generally do not work for network-style shares.
+
+Keep normal library scans targeted and disable broad periodic scans while the
+NZBDav/rclone health gate is degraded. Validate the real notification path with
+the default observe-only command in `docs/grab-to-plex-benchmark.md`. Use its
+`--force-plex-scan` option only to diagnose whether delay is in the production
+notification hook or inside Plex scanning/metadata; forced runs are excluded
+from production percentiles.
+
+References:
+
+* [Plex scanning versus refreshing](https://support.plex.tv/articles/200289306-scanning-vs-refreshing-a-library/)
+* [Sonarr settings and connections](https://wiki.servarr.com/en/sonarr/settings)
+* [Radarr settings and connections](https://wiki.servarr.com/radarr/settings)
 
 ---
 

@@ -73,7 +73,6 @@ def fetch_documents(base_url: str, api_key: str) -> dict[str, Any]:
         "search_nudges": request_json(base_url, "/api/arr/search-nudges?limit=500", api_key),
         "correlations": request_json(base_url, "/api/arr/correlations?limit=500", api_key),
         "fullstatus": request_json(base_url, "/api?mode=fullstatus", api_key),
-        "config": request_config(base_url, api_key, ["api.duplicate-nzb-behavior", "arr.instances"]),
     }
 
 
@@ -87,25 +86,6 @@ def request_json(base_url: str, path: str, api_key: str) -> Any:
         raise RuntimeError(f"{path} returned HTTP {error.code}: {body}") from error
 
 
-def request_config(base_url: str, api_key: str, keys: list[str]) -> dict[str, Any]:
-    form = urllib.parse.urlencode([("config-keys", key) for key in keys]).encode("utf-8")
-    request = urllib.request.Request(
-        join_url(base_url, "/api/get-config"),
-        data=form,
-        headers={
-            "X-Api-Key": api_key,
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        body = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"/api/get-config returned HTTP {error.code}: {body}") from error
-
-
 def validate_documents(
     documents: dict[str, Any],
     *,
@@ -113,11 +93,12 @@ def validate_documents(
     low_correlation_reason: str | None,
 ) -> list[dict[str, Any]]:
     validation = documents.get("validation", {})
-    fullstatus = unwrap_fullstatus(documents.get("fullstatus", {}))
-    config = config_items(documents.get("config", {}))
-    arr_config = parse_json(config.get("arr.instances")) or {}
-    search_mode = nested(fullstatus, "arr_search_nudge", "mode") or nested(arr_config, "SearchNudge", "Mode") or "report"
-    duplicate_behavior = (config.get("api.duplicate-nzb-behavior") or "increment").strip().lower()
+    configured_apps = {
+        str(app).strip().lower()
+        for app in validation.get("configured_apps", [])
+    }
+    search_mode = str(validation.get("search_nudge_mode") or "report").strip().lower()
+    duplicate_behavior = str(validation.get("duplicate_nzb_behavior") or "increment").strip().lower()
     queue_items = int(validation.get("queue_items") or 0)
     correlation = int(validation.get("correlation_coverage_percent") or 0)
     validation_errors = [
@@ -129,8 +110,8 @@ def validate_documents(
         command for command in documents.get("search_nudges", {}).get("commands", [])
         if command.get("status") == "failed"
     ]
-    has_sonarr = len(nested(arr_config, "SonarrInstances") or nested(arr_config, "sonarrInstances") or []) > 0
-    has_radarr = len(nested(arr_config, "RadarrInstances") or nested(arr_config, "radarrInstances") or []) > 0
+    has_sonarr = "sonarr" in configured_apps
+    has_radarr = "radarr" in configured_apps
 
     checks = [
         check("sonarr configured", has_sonarr, "At least one Sonarr instance must be configured."),
@@ -165,30 +146,6 @@ def validate_documents(
 
 def check(name: str, passed: bool, message: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
     return {"name": name, "passed": passed, "message": message, "details": details or {}}
-
-
-def unwrap_fullstatus(document: dict[str, Any]) -> dict[str, Any]:
-    status = document.get("status")
-    return status if isinstance(status, dict) else document
-
-
-def config_items(document: dict[str, Any]) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for item in document.get("configItems") or document.get("config_items") or []:
-        name = item.get("configName") or item.get("config_name")
-        value = item.get("configValue") or item.get("config_value")
-        if name and value is not None:
-            result[str(name)] = str(value)
-    return result
-
-
-def parse_json(value: str | None) -> Any:
-    if not value:
-        return None
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return None
 
 
 def nested(document: Any, *keys: str) -> Any:

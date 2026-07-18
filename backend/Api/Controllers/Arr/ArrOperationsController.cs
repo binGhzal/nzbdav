@@ -110,7 +110,7 @@ public sealed class ArrOperationsController(
 
     private void EnsureAuthorized()
     {
-        var apiKey = HttpContext.GetRequestApiKey();
+        var apiKey = HttpContext.GetProtocolRequestApiKey();
         if (apiKey == null)
             throw new UnauthorizedAccessException("API Key Required");
         if (!apiKey.IsAny(configManager.GetApiKey(), EnvironmentUtil.GetRequiredVariable("FRONTEND_BACKEND_API_KEY")))

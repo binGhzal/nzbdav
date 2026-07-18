@@ -1,4 +1,5 @@
-﻿using System.Xml;
+﻿using System.Diagnostics;
+using System.Xml;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Api.SabControllers.GetQueue;
@@ -8,6 +9,7 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
+using NzbWebDAV.Telemetry;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 
@@ -20,9 +22,13 @@ public class AddFileController(
     ConfigManager configManager,
     WebsocketManager websocketManager,
     ArrDownloadReportService arrDownloadReportService,
-    ArrOperationsService arrOperationsService
+    ArrOperationsService arrOperationsService,
+    NzbBlobIngestCoordinator nzbBlobIngestCoordinator,
+    TimeProvider? timeProvider = null
 ) : SabApiController.BaseController(httpContext, configManager)
 {
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
     private static readonly XmlReaderSettings XmlSettings = new()
     {
         Async = true,
@@ -48,9 +54,29 @@ public class AddFileController(
             throw new BadHttpRequestException("Duplicate NZB rejected because an equivalent item is already active or recently completed.");
         }
 
+        using var blobLease = await nzbBlobIngestCoordinator
+            .AcquireAsync(id, request.CancellationToken)
+            .ConfigureAwait(false);
+        var cleanupIntent = new NzbBlobCleanupItem { Id = id };
+        dbClient.Ctx.NzbBlobCleanupItems.Add(cleanupIntent);
+        await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
+
         // write the file to the blob-store
         await using var stream = request.NzbFileStream;
-        await BlobStore.WriteBlob(id, stream);
+        var blobWriteStart = Stopwatch.GetTimestamp();
+        var blobWriteFailed = true;
+        try
+        {
+            await BlobStore.WriteBlob(id, stream);
+            blobWriteFailed = false;
+        }
+        finally
+        {
+            CriticalPathTelemetry.Shared.RecordElapsed(
+                CriticalPathStage.AddFileBlobWrite,
+                blobWriteStart,
+                blobWriteFailed);
+        }
 
         // save the queue item to the database
         QueueItem? queueItem;
@@ -69,23 +95,30 @@ public class AddFileController(
             // compute the total segment bytes
             await using var nzbFileStream = BlobStore.ReadBlob(id)
                 ?? throw new FileNotFoundException($"NZB blob `{id}` was not found.");
-            var totalSegmentBytes = ComputeTotalSegmentBytes(nzbFileStream);
+            var nzbScanStart = Stopwatch.GetTimestamp();
+            var nzbScanFailed = true;
+            long totalSegmentBytes;
+            try
+            {
+                totalSegmentBytes = ComputeTotalSegmentBytes(nzbFileStream);
+                nzbScanFailed = false;
+            }
+            finally
+            {
+                CriticalPathTelemetry.Shared.RecordElapsed(
+                    CriticalPathStage.AddFileNzbScan,
+                    nzbScanStart,
+                    nzbScanFailed);
+            }
 
             // create the queue item record
-            queueItem = new QueueItem
-            {
-                Id = id,
-                CreatedAt = DateTime.Now,
-                FileName = request.FileName,
-                JobName = jobName,
-                NzbFileSize = nzbFileStream.Length,
-                TotalSegmentBytes = totalSegmentBytes,
-                Category = request.Category,
-                ArchivePassword = request.ArchivePassword,
-                Priority = request.Priority,
-                PostProcessing = request.PostProcessing,
-                PauseUntil = request.PauseUntil
-            };
+            queueItem = CreateQueueItem(
+                id,
+                jobName,
+                nzbFileStream.Length,
+                totalSegmentBytes,
+                request,
+                _timeProvider);
 
             // record the original NZB filename so it can be served at download time
             var nzbName = new NzbName
@@ -95,25 +128,46 @@ public class AddFileController(
             };
 
             // save
-            dbClient.Ctx.QueueItems.Add(queueItem);
-            dbClient.Ctx.NzbNames.Add(nzbName);
-            dbClient.Ctx.EnqueueRcloneVfsForgetPaths(["/nzbs"]);
-            await dbClient.EnqueueWorkerJobAsync(
-                    WorkerJob.JobKind.Download,
-                    queueItem.Id,
-                    (int)queueItem.Priority,
-                    now: DateTimeOffset.UtcNow,
-                    ct: request.CancellationToken)
-                .ConfigureAwait(false);
-            await arrDownloadReportService
-                .RecordQueueLifecycleAsync(dbClient, queueItem, "Queued", "NZB accepted.", request.CancellationToken)
-                .ConfigureAwait(false);
+            var commitStart = Stopwatch.GetTimestamp();
+            var commitFailed = true;
+            try
+            {
+                dbClient.Ctx.QueueItems.Add(queueItem);
+                dbClient.Ctx.NzbNames.Add(nzbName);
+                dbClient.Ctx.EnqueueRcloneVfsForgetPaths(["/nzbs"]);
+                await dbClient.EnqueueWorkerJobsAsync(
+                        WorkerJob.JobKind.Download,
+                        [queueItem.Id],
+                        (int)queueItem.Priority,
+                        now: DateTimeOffset.UtcNow,
+                        ct: request.CancellationToken,
+                        saveChanges: false)
+                    .ConfigureAwait(false);
+                await arrDownloadReportService
+                    .RecordQueueLifecycleAsync(
+                        dbClient,
+                        queueItem,
+                        "Queued",
+                        "NZB accepted.",
+                        request.CancellationToken,
+                        saveChanges: false)
+                    .ConfigureAwait(false);
+                dbClient.Ctx.NzbBlobCleanupItems.Remove(cleanupIntent);
+                await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
+                commitFailed = false;
+            }
+            finally
+            {
+                CriticalPathTelemetry.Shared.RecordElapsed(
+                    CriticalPathStage.AddFileAtomicCommit,
+                    commitStart,
+                    commitFailed);
+            }
         }
         catch
         {
-            // in case of any errors writing to the database
-            // delete the nzb file blob
-            BlobStore.Delete(id);
+            // The precommitted cleanup intent remains unless acceptance committed
+            // the queue reference and removed the intent in the same transaction.
             throw;
         }
 
@@ -123,7 +177,6 @@ public class AddFileController(
 
         // awaken the queue if it is sleeping
         queueManager.AwakenQueue(request.PauseUntil);
-        _ = arrDownloadReportService.RefreshMonitoredDownloadsDebouncedAsync(queueItem.Category);
 
         // return response
         return new AddFileResponse()
@@ -188,5 +241,29 @@ public class AddFileController(
         }
 
         return totalBytes;
+    }
+
+    internal static QueueItem CreateQueueItem(
+        Guid id,
+        string jobName,
+        long nzbFileSize,
+        long totalSegmentBytes,
+        AddFileRequest request,
+        TimeProvider timeProvider)
+    {
+        return new QueueItem
+        {
+            Id = id,
+            CreatedAt = timeProvider.GetLocalNow().DateTime,
+            FileName = request.FileName,
+            JobName = jobName,
+            NzbFileSize = nzbFileSize,
+            TotalSegmentBytes = totalSegmentBytes,
+            Category = request.Category,
+            ArchivePassword = request.ArchivePassword,
+            Priority = request.Priority,
+            PostProcessing = request.PostProcessing,
+            PauseUntil = request.PauseUntil
+        };
     }
 }

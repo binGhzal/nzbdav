@@ -4,7 +4,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using System.Data.Common;
 using System.Reflection;
-using Npgsql;
 using NzbWebDAV.Api.SabControllers.RemoveFromHistory;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -26,8 +25,8 @@ public sealed class ImportReceiptPostgreSqlConcurrencyTests
             await SeedAsync(options, receipt);
             var barrier = new ReceiptCasCommandBarrier(2);
             var concurrentOptions = AddInterceptor(options, barrier);
-            await using var firstContext = new DavDatabaseContext(concurrentOptions);
-            await using var secondContext = new DavDatabaseContext(concurrentOptions);
+            await using var firstContext = new PostgreSqlDavDatabaseContext(concurrentOptions);
+            await using var secondContext = new PostgreSqlDavDatabaseContext(concurrentOptions);
 
             var results = await Task.WhenAll(
                 new ImportReceiptService(firstContext).ClaimAsync(
@@ -53,8 +52,8 @@ public sealed class ImportReceiptPostgreSqlConcurrencyTests
             var historyItemId = Guid.NewGuid();
             var barrier = new ReceiptInsertSaveBarrier(2);
             var concurrentOptions = AddInterceptor(options, barrier);
-            await using var firstContext = new DavDatabaseContext(concurrentOptions);
-            await using var secondContext = new DavDatabaseContext(concurrentOptions);
+            await using var firstContext = new PostgreSqlDavDatabaseContext(concurrentOptions);
+            await using var secondContext = new PostgreSqlDavDatabaseContext(concurrentOptions);
 
             var results = await Task.WhenAll(
                 new ImportReceiptService(firstContext).ClaimAsync(
@@ -64,7 +63,7 @@ public sealed class ImportReceiptPostgreSqlConcurrencyTests
 
             Assert.Single(results, x => x.Changed);
             Assert.All(results, x => Assert.Equal(ImportReceiptState.UnlinkClaimed, x.State));
-            await using var assertionContext = new DavDatabaseContext(options);
+            await using var assertionContext = new PostgreSqlDavDatabaseContext(options);
             Assert.Equal(1, await assertionContext.ImportReceipts.CountAsync(x =>
                 x.DavItemId == davItemId && x.HistoryItemId == historyItemId));
         });
@@ -79,8 +78,8 @@ public sealed class ImportReceiptPostgreSqlConcurrencyTests
             var receipt = CreateReceipt(now);
             receipt.State = ImportReceiptState.UnlinkClaimed;
             await SeedAsync(options, receipt);
-            await using var staleContext = new DavDatabaseContext(options);
-            await using var removingContext = new DavDatabaseContext(options);
+            await using var staleContext = new PostgreSqlDavDatabaseContext(options);
+            await using var removingContext = new PostgreSqlDavDatabaseContext(options);
             _ = await staleContext.ImportReceipts.SingleAsync(x => x.Id == receipt.Id);
 
             await new ImportReceiptService(removingContext)
@@ -104,12 +103,14 @@ public sealed class ImportReceiptPostgreSqlConcurrencyTests
             var receipt = CreateReceipt(now);
             receipt.HistoryItemId = historyId;
             receipt.State = ImportReceiptState.Imported;
-            await using (var setup = new DavDatabaseContext(options))
+            await using (var setup = new PostgreSqlDavDatabaseContext(options))
             {
                 setup.HistoryItems.Add(new HistoryItem
                 {
                     Id = historyId,
-                    CreatedAt = DateTime.UtcNow,
+                    CreatedAt = DateTime.SpecifyKind(
+                        new DateTime(2026, 7, 12, 12, 0, 0),
+                        DateTimeKind.Unspecified),
                     FileName = "postgres-savepoint.nzb",
                     JobName = "postgres-savepoint",
                     Category = "movies",
@@ -123,7 +124,7 @@ public sealed class ImportReceiptPostgreSqlConcurrencyTests
             }
             var failingOptions = AddInterceptor(options, new FailingConcurrencySaveInterceptor());
             var websocketManager = new WebsocketManager();
-            await using (var callerContext = new DavDatabaseContext(failingOptions))
+            await using (var callerContext = new PostgreSqlDavDatabaseContext(failingOptions))
             await using (var outerTransaction = await callerContext.Database.BeginTransactionAsync())
             {
                 var callerConfig = await callerContext.ConfigItems.SingleAsync(x => x.ConfigName == "test.outer");
@@ -147,7 +148,7 @@ public sealed class ImportReceiptPostgreSqlConcurrencyTests
                 await outerTransaction.CommitAsync(CancellationToken.None);
             }
 
-            await using var assertionContext = new DavDatabaseContext(options);
+            await using var assertionContext = new PostgreSqlDavDatabaseContext(options);
             Assert.NotNull(await assertionContext.HistoryItems.SingleOrDefaultAsync(x => x.Id == historyId));
             Assert.Equal(
                 ImportReceiptState.Imported,
@@ -156,62 +157,37 @@ public sealed class ImportReceiptPostgreSqlConcurrencyTests
             Assert.Equal(
                 "after",
                 (await assertionContext.ConfigItems.SingleAsync(x => x.ConfigName == "test.outer")).ConfigValue);
-        }, useMigrations: false);
+        });
     }
 
     private static async Task WithSchemaAsync(
-        Func<DbContextOptions<DavDatabaseContext>, Task> test,
-        bool useMigrations = true)
+        Func<DbContextOptions<PostgreSqlDavDatabaseContext>, Task> test)
     {
-        var connectionString = Environment.GetEnvironmentVariable(
-            PostgreSqlFactAttribute.TestConnectionStringVariable);
-        Assert.False(string.IsNullOrWhiteSpace(connectionString));
-        var schemaName = $"import_receipt_{Guid.NewGuid():N}";
-        await using var adminConnection = new NpgsqlConnection(connectionString);
-        await adminConnection.OpenAsync();
-        await ExecuteAsync(adminConnection, $"CREATE SCHEMA \"{schemaName}\"");
-        try
-        {
-            var schemaConnectionString = new NpgsqlConnectionStringBuilder(connectionString)
-            {
-                SearchPath = schemaName
-            }.ConnectionString;
-            var options = new DbContextOptionsBuilder<DavDatabaseContext>()
-                .UseNpgsql(schemaConnectionString)
-                .Options;
-            await using (var setup = new DavDatabaseContext(options))
-            {
-                if (useMigrations)
-                    await setup.Database.MigrateAsync();
-                else
-                    await setup.Database.EnsureCreatedAsync();
-            }
-            await test(options);
-        }
-        finally
-        {
-            await ExecuteAsync(adminConnection, $"DROP SCHEMA IF EXISTS \"{schemaName}\" CASCADE");
-        }
+        await using var schema = await PostgreSqlTestSchema.CreateAsync("import_receipt");
+        await PostgreSqlNativeMigrator.MigrateAsync(schema.ConnectionString);
+        await test(schema.CreateOptions());
     }
 
-    private static DbContextOptions<DavDatabaseContext> AddInterceptor(
-        DbContextOptions<DavDatabaseContext> options,
+    private static DbContextOptions<PostgreSqlDavDatabaseContext> AddInterceptor(
+        DbContextOptions<PostgreSqlDavDatabaseContext> options,
         IInterceptor interceptor)
     {
         var connectionString = options.Extensions
             .OfType<Microsoft.EntityFrameworkCore.Infrastructure.RelationalOptionsExtension>()
             .Single().ConnectionString!;
-        return new DbContextOptionsBuilder<DavDatabaseContext>()
-            .UseNpgsql(connectionString)
+        return new DbContextOptionsBuilder<PostgreSqlDavDatabaseContext>()
+            .UseNpgsql(
+                connectionString,
+                postgres => postgres.MigrationsHistoryTable(DatabaseMigrationPolicy.PostgreSqlHistoryTableName))
             .AddInterceptors(interceptor)
             .Options;
     }
 
     private static async Task SeedAsync(
-        DbContextOptions<DavDatabaseContext> options,
+        DbContextOptions<PostgreSqlDavDatabaseContext> options,
         ImportReceipt receipt)
     {
-        await using var context = new DavDatabaseContext(options);
+        await using var context = new PostgreSqlDavDatabaseContext(options);
         context.ImportReceipts.Add(receipt);
         await context.SaveChangesAsync();
     }
@@ -225,13 +201,6 @@ public sealed class ImportReceiptPostgreSqlConcurrencyTests
         CreatedAt = now,
         UpdatedAt = now
     };
-
-    private static async Task ExecuteAsync(NpgsqlConnection connection, string sql)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        await command.ExecuteNonQueryAsync();
-    }
 
     private static bool WasHistoryRemovalBroadcast(WebsocketManager websocketManager)
     {

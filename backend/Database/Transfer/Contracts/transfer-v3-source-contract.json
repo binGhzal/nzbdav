@@ -1,0 +1,4876 @@
+{
+  "formatVersion": 3,
+  "provider": "Microsoft.EntityFrameworkCore.Sqlite",
+  "context": "NzbWebDAV.Database.DavDatabaseContext",
+  "historyTable": "__EFMigrationsHistory",
+  "sourceModeledTableCount": 28,
+  "sourceModeledColumnCount": 240,
+  "derivedExcludedTables": [
+    "HealthCheckStats"
+  ],
+  "excludedConfigKeys": [
+    "database.import-state"
+  ],
+  "sourceSchemaSha256": "ba41222be27b10a496a1097dae9f7ca737709712bb13d14c821fb700121c05dc",
+  "migrationSourceContractSha256": "b6bcce19aa6704b5adc2165421968cf0d0be3046640a68f6daad1c5e12278a3e",
+  "migrations": [
+    {
+      "id": "20250529081501_InitializeDatabase",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20250529102749_Add-CreatedAt-To-DavItem",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20250605030729_Add-Accounts-Table",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20250710072717_AddConfigItemsTable",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20250722004955_Ensure-Api-Key-Exists",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20250818232259_Add-DownloadDirId-To-HistoryItem",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20250819091746_Add-Ids-Root-Directory",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20250819221618_Add-Path-To-DavItem",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20250824100609_Add-IdPrefix-To-DavItems",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20251010192643_Add-Healthcheck-Columns-To-DavItems",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20251014060520_Add-HealthCheckResults-Table",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20251014062743_Add-HealthCheckQueue-Index",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20251024003729_Add-DavMultipartFiles-Table",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20251030163510_Add-QueueNzbContents-Table",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20251105050845_Add-HealthCheckStats-Table",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20251105200722_Add-CreatedAt-Index-To-HealthCheckResults-Table",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20251106165542_Ensure-Strm-Key-Exists",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20251113081523_Populate-Usenet-Providers-Config",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20251220004937_Fix-Empty-Categories",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260108054841_Add-BlobCleanupItems-Table",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260108061241_Add-Trigger-To-QueueItems-Table",
+      "introducedProductVersion": "9.0.4",
+      "allowedProductVersions": [
+        "9.0.4",
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260121033824_Populate-Blocklisted-Files-Setting",
+      "introducedProductVersion": "10.0.1",
+      "allowedProductVersions": [
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260122220920_Populate-Health-Check-Categories-Setting",
+      "introducedProductVersion": "10.0.1",
+      "allowedProductVersions": [
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260129182923_Update-DavItems-Type-And-SubType",
+      "introducedProductVersion": "10.0.1",
+      "allowedProductVersions": [
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260129190728_Add-FileBlobId-To-DavItems-Table",
+      "introducedProductVersion": "10.0.1",
+      "allowedProductVersions": [
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260130005230_Add-Trigger-To-DavItems-Table",
+      "introducedProductVersion": "10.0.1",
+      "allowedProductVersions": [
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260201023253_Add-HistoryItemId-To-DavItems-Table",
+      "introducedProductVersion": "10.0.1",
+      "allowedProductVersions": [
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260202005856_Add-Type-CreatedAt-Index-To-DavItems-Table",
+      "introducedProductVersion": "10.0.1",
+      "allowedProductVersions": [
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260202094106_Add-SubType-CreatedAt-Index-To-DavItems-Table",
+      "introducedProductVersion": "10.0.1",
+      "allowedProductVersions": [
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260203071130_Add-DavCleanupItems-Table",
+      "introducedProductVersion": "10.0.1",
+      "allowedProductVersions": [
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260203205014_Add-DeleteMountedFiles-To-HistoryCleanupItems-Table",
+      "introducedProductVersion": "10.0.1",
+      "allowedProductVersions": [
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260226053712_Add-NzbBlobId-And-NzbNames",
+      "introducedProductVersion": "10.0.1",
+      "allowedProductVersions": [
+        "10.0.1",
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260407215451_Change-QueueItems-FileName-Index-To-Category-FileName",
+      "introducedProductVersion": "10.0.4",
+      "allowedProductVersions": [
+        "10.0.4",
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260702110859_Add-ArchivePassword-To-QueueItems",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260702142000_Add-QueueSelection-Index",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260702153000_Add-RcloneInvalidationItems-Table",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260702170000_Add-WorkerJobs-Table",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260702183000_Add-RepairRuns-Tables",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260704120000_Add-ArrDrivenPriority-Tables",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260704143000_Add-ArrCorrelation-Source-And-ManualLock",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260705013000_Add-WorkerJob-Operational-Indexes",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260705023000_Make-DavCleanup-Trigger-Idempotent",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260705033000_Add-HealthCheckResult-Latest-Index",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260706093000_Make-BlobCleanup-Triggers-Idempotent",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260711120000_Add-Worker-Lease-Coordination",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260711133000_Add-Import-Receipts",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260712113000_Add-Maintenance-Runs",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260712120000_Add-Rclone-Invalidation-Revision",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    },
+    {
+      "id": "20260712123000_Add-Arr-Import-Commands",
+      "introducedProductVersion": "10.0.9",
+      "allowedProductVersions": [
+        "10.0.9"
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "name": "Accounts",
+      "columns": [
+        {
+          "name": "Type",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            1,
+            2
+          ]
+        },
+        {
+          "name": "Username",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 255,
+          "allowedIntegers": []
+        },
+        {
+          "name": "PasswordHash",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "RandomSalt",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Type",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "signed-numeric"
+        },
+        {
+          "column": "Username",
+          "sqliteCollation": "BINARY",
+          "postgreSqlCollation": "C",
+          "ordering": "ordinal-utf8-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_Accounts",
+          "columns": [
+            "Type",
+            "Username"
+          ],
+          "components": [
+            {
+              "column": "Type",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "signed-numeric"
+            },
+            {
+              "column": "Username",
+              "sqliteCollation": "BINARY",
+              "postgreSqlCollation": "C",
+              "ordering": "ordinal-utf8-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [],
+      "metadataRule": null
+    },
+    {
+      "name": "ConfigItems",
+      "columns": [
+        {
+          "name": "ConfigName",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ConfigValue",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "ConfigName",
+          "sqliteCollation": "BINARY",
+          "postgreSqlCollation": "C",
+          "ordering": "ordinal-utf8-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_ConfigItems",
+          "columns": [
+            "ConfigName"
+          ],
+          "components": [
+            {
+              "column": "ConfigName",
+              "sqliteCollation": "BINARY",
+              "postgreSqlCollation": "C",
+              "ordering": "ordinal-utf8-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [],
+      "metadataRule": null
+    },
+    {
+      "name": "HistoryItems",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "localWallTimestamp",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "FileName",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "JobName",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Category",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "DownloadStatus",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            1,
+            2
+          ]
+        },
+        {
+          "name": "TotalSegmentBytes",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int64",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "DownloadTimeSeconds",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "FailMessage",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "DownloadDirId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "NzbBlobId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_HistoryItems",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "HistoryItems_DownloadDirId",
+          "columns": [
+            "DownloadDirId"
+          ],
+          "principalTables": [
+            "DavItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "informationalDigest",
+          "rationale": "History can legitimately outlive a removed download directory."
+        },
+        {
+          "name": "HistoryItems_NzbBlobId_Blob",
+          "columns": [
+            "NzbBlobId"
+          ],
+          "principalTables": [
+            "@blob"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "blobAndNameHard",
+          "rationale": "A live history NZB reference requires both bytes and its NzbNames row."
+        },
+        {
+          "name": "HistoryItems_NzbBlobId_NzbNames",
+          "columns": [
+            "NzbBlobId"
+          ],
+          "principalTables": [
+            "NzbNames"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "applicationHard",
+          "rationale": "A live history NZB reference requires its durable display name."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "QueueItems",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Category",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "localWallTimestamp",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "FileName",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "JobName",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "NzbFileSize",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int64",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "PauseUntil",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "localWallTimestamp",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "PostProcessing",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            -1,
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        {
+          "name": "Priority",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            -100,
+            -3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        {
+          "name": "TotalSegmentBytes",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int64",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ArchivePassword",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_QueueItems",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        },
+        {
+          "name": "IX_QueueItems_Category_FileName",
+          "columns": [
+            "Category",
+            "FileName"
+          ],
+          "components": [
+            {
+              "column": "Category",
+              "sqliteCollation": "BINARY",
+              "postgreSqlCollation": "C",
+              "ordering": "ordinal-utf8-bytes"
+            },
+            {
+              "column": "FileName",
+              "sqliteCollation": "BINARY",
+              "postgreSqlCollation": "C",
+              "ordering": "ordinal-utf8-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "QueueItems_Id_Blob",
+          "columns": [
+            "Id"
+          ],
+          "principalTables": [
+            "@blob"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "blobAndNameHard",
+          "rationale": "Every live queue NZB owns a blob and a matching NzbNames row."
+        },
+        {
+          "name": "QueueItems_Id_NzbNames",
+          "columns": [
+            "Id"
+          ],
+          "principalTables": [
+            "NzbNames"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "applicationHard",
+          "rationale": "Every live queue NZB has a durable display-name row."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "RepairRuns",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Status",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        {
+          "name": "Stage",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 64,
+          "allowedIntegers": []
+        },
+        {
+          "name": "StartedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "UpdatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CompletedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CancelledAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "NextDueAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Total",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Checked",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Missing",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ProviderErrors",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Unknown",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Repaired",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Deleted",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ActionNeeded",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "BrokenFiles",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Message",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 1024,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_RepairRuns",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [],
+      "metadataRule": null
+    },
+    {
+      "name": "DavItems",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "localWallTimestamp",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "FileBlobId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "FileSize",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "int64",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "HistoryItemId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "IdPrefix",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "LastHealthCheck",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "unixSeconds",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Name",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 255,
+          "allowedIntegers": []
+        },
+        {
+          "name": "NextHealthCheck",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "unixSeconds",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ParentId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Path",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ReleaseDate",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "unixSeconds",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "SubType",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            101,
+            102,
+            103,
+            104,
+            105,
+            106,
+            201,
+            202,
+            203
+          ]
+        },
+        {
+          "name": "Type",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            1,
+            2
+          ]
+        },
+        {
+          "name": "NzbBlobId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_DavItems",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        },
+        {
+          "name": "IX_DavItems_ParentId_Name",
+          "columns": [
+            "ParentId",
+            "Name"
+          ],
+          "components": [
+            {
+              "column": "ParentId",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            },
+            {
+              "column": "Name",
+              "sqliteCollation": "BINARY",
+              "postgreSqlCollation": "C",
+              "ordering": "ordinal-utf8-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "DavItems_ParentId",
+          "columns": [
+            "ParentId"
+          ],
+          "principalTables": [
+            "DavItems",
+            "DavCleanupItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "stateAwareHard",
+          "rationale": "A parent is live or durably queued for asynchronous subtree cleanup; only the canonical root is null."
+        },
+        {
+          "name": "DavItems_HistoryItemId",
+          "columns": [
+            "HistoryItemId"
+          ],
+          "principalTables": [
+            "HistoryItems",
+            "HistoryCleanupItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "stateAwareHard",
+          "rationale": "History linkage is live or represented by the durable unlink/delete tombstone."
+        },
+        {
+          "name": "DavItems_FileBlobId",
+          "columns": [
+            "FileBlobId"
+          ],
+          "principalTables": [
+            "@blob"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "blobHard",
+          "rationale": "A migrated metadata blob is required whenever FileBlobId is set."
+        },
+        {
+          "name": "DavItems_NzbBlobId_Blob",
+          "columns": [
+            "NzbBlobId"
+          ],
+          "principalTables": [
+            "@blob"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "blobAndNameHard",
+          "rationale": "A live NZB blob reference requires both bytes and its NzbNames row."
+        },
+        {
+          "name": "DavItems_NzbBlobId_NzbNames",
+          "columns": [
+            "NzbBlobId"
+          ],
+          "principalTables": [
+            "NzbNames"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "applicationHard",
+          "rationale": "A live NZB blob reference requires its durable display name."
+        }
+      ],
+      "metadataRule": {
+        "typeColumn": "Type",
+        "subTypeColumn": "SubType",
+        "fileBlobColumn": "FileBlobId",
+        "subtypes": [
+          {
+            "subType": 201,
+            "legacyTable": "DavNzbFiles"
+          },
+          {
+            "subType": 202,
+            "legacyTable": "DavRarFiles"
+          },
+          {
+            "subType": 203,
+            "legacyTable": "DavMultipartFiles"
+          }
+        ],
+        "typeDomains": [
+          {
+            "type": 1,
+            "subTypes": [
+              101,
+              102,
+              103,
+              104,
+              105,
+              106
+            ]
+          },
+          {
+            "type": 2,
+            "subTypes": [
+              201,
+              202,
+              203
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "ArrImportCommands",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "HistoryItemId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Category",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 255,
+          "allowedIntegers": []
+        },
+        {
+          "name": "RequiredInvalidationPathsJson",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Status",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ]
+        },
+        {
+          "name": "Attempts",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "UpdatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "NextAttemptAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "LastAttemptAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "LeaseExpiresAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "LeaseToken",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "opaqueToken",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "VisibleAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CompletedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ResultsJson",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "LastError",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 2048,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_ArrImportCommands",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        },
+        {
+          "name": "IX_ArrImportCommands_HistoryItemId",
+          "columns": [
+            "HistoryItemId"
+          ],
+          "components": [
+            {
+              "column": "HistoryItemId",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "FK_ArrImportCommands_HistoryItems_HistoryItemId",
+          "columns": [
+            "HistoryItemId"
+          ],
+          "principalTables": [
+            "HistoryItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "declaredForeignKeyHard",
+          "rationale": "Database-enforced relationship; PRAGMA foreign_key_check must be empty."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "QueueNzbContents",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "NzbContents",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_QueueNzbContents",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "FK_QueueNzbContents_QueueItems_Id",
+          "columns": [
+            "Id"
+          ],
+          "principalTables": [
+            "QueueItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "declaredForeignKeyHard",
+          "rationale": "Database-enforced relationship; PRAGMA foreign_key_check must be empty."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "QueuePriorityHints",
+      "columns": [
+        {
+          "name": "QueueItemId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Score",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "EffectivePriority",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            -100,
+            -3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        {
+          "name": "ApplyToScheduling",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "boolean",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ReasonsJson",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Source",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 64,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ComputedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ExpiresAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "StaleReason",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 1024,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "QueueItemId",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_QueuePriorityHints",
+          "columns": [
+            "QueueItemId"
+          ],
+          "components": [
+            {
+              "column": "QueueItemId",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "FK_QueuePriorityHints_QueueItems_QueueItemId",
+          "columns": [
+            "QueueItemId"
+          ],
+          "principalTables": [
+            "QueueItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "declaredForeignKeyHard",
+          "rationale": "Database-enforced relationship; PRAGMA foreign_key_check must be empty."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "RepairEntryHealth",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "RepairRunId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "DavItemId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Path",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "State",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ]
+        },
+        {
+          "name": "Message",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 1024,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "UpdatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_RepairEntryHealth",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        },
+        {
+          "name": "IX_RepairEntryHealth_RepairRunId_DavItemId",
+          "columns": [
+            "RepairRunId",
+            "DavItemId"
+          ],
+          "components": [
+            {
+              "column": "RepairRunId",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            },
+            {
+              "column": "DavItemId",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "FK_RepairEntryHealth_RepairRuns_RepairRunId",
+          "columns": [
+            "RepairRunId"
+          ],
+          "principalTables": [
+            "RepairRuns"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "declaredForeignKeyHard",
+          "rationale": "Database-enforced relationship; PRAGMA foreign_key_check must be empty."
+        },
+        {
+          "name": "RepairEntryHealth_DavItemId",
+          "columns": [
+            "DavItemId"
+          ],
+          "principalTables": [
+            "DavItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "informationalDigest",
+          "rationale": "Repair observations retain historical deleted-item identities."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "RepairBrokenFiles",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "RepairRunId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "DavItemId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Path",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Reason",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 1024,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Cleared",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "boolean",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_RepairBrokenFiles",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "FK_RepairBrokenFiles_RepairRuns_RepairRunId",
+          "columns": [
+            "RepairRunId"
+          ],
+          "principalTables": [
+            "RepairRuns"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "declaredForeignKeyHard",
+          "rationale": "Database-enforced relationship; PRAGMA foreign_key_check must be empty."
+        },
+        {
+          "name": "RepairBrokenFiles_DavItemId",
+          "columns": [
+            "DavItemId"
+          ],
+          "principalTables": [
+            "DavItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "informationalDigest",
+          "rationale": "Repair findings retain historical deleted-item identities."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "DavNzbFiles",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "SegmentIds",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_DavNzbFiles",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "FK_DavNzbFiles_DavItems_Id",
+          "columns": [
+            "Id"
+          ],
+          "principalTables": [
+            "DavItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "declaredForeignKeyHard",
+          "rationale": "Database-enforced relationship; PRAGMA foreign_key_check must be empty."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "DavRarFiles",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "RarParts",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_DavRarFiles",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "FK_DavRarFiles_DavItems_Id",
+          "columns": [
+            "Id"
+          ],
+          "principalTables": [
+            "DavItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "declaredForeignKeyHard",
+          "rationale": "Database-enforced relationship; PRAGMA foreign_key_check must be empty."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "DavMultipartFiles",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Metadata",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_DavMultipartFiles",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "FK_DavMultipartFiles_DavItems_Id",
+          "columns": [
+            "Id"
+          ],
+          "principalTables": [
+            "DavItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "declaredForeignKeyHard",
+          "rationale": "Database-enforced relationship; PRAGMA foreign_key_check must be empty."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "HealthCheckResults",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "unixSeconds",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "DavItemId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Path",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Result",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            0,
+            1
+          ]
+        },
+        {
+          "name": "RepairStatus",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        {
+          "name": "Message",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_HealthCheckResults",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "HealthCheckResults_DavItemId",
+          "columns": [
+            "DavItemId"
+          ],
+          "principalTables": [
+            "DavItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "informationalDigest",
+          "rationale": "Health history can outlive a deleted DAV item."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "ArrDownloadCorrelations",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "QueueItemId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "HistoryItemId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ArrApp",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 32,
+          "allowedIntegers": []
+        },
+        {
+          "name": "InstanceKey",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 512,
+          "allowedIntegers": []
+        },
+        {
+          "name": "InstanceHost",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 1024,
+          "allowedIntegers": []
+        },
+        {
+          "name": "DownloadId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 255,
+          "allowedIntegers": []
+        },
+        {
+          "name": "QueueRecordId",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "MediaKey",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 255,
+          "allowedIntegers": []
+        },
+        {
+          "name": "MovieId",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "SeriesId",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "EpisodeId",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "SeasonNumber",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ArtistId",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "AlbumId",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "EpisodeIdsJson",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ReleaseTitle",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 1024,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Category",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 255,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Indexer",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 255,
+          "allowedIntegers": []
+        },
+        {
+          "name": "DownloadClient",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 255,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Quality",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 255,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CustomFormatsJson",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Status",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 64,
+          "allowedIntegers": []
+        },
+        {
+          "name": "TrackedDownloadStatus",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 64,
+          "allowedIntegers": []
+        },
+        {
+          "name": "TrackedDownloadState",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 64,
+          "allowedIntegers": []
+        },
+        {
+          "name": "IsUpgrade",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "boolean",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "IsDuplicate",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "boolean",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "UpdatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "LastSeenAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Source",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 32,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ManualLock",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "boolean",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_ArrDownloadCorrelations",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "ArrDownloadCorrelations_QueueItemId",
+          "columns": [
+            "QueueItemId"
+          ],
+          "principalTables": [
+            "QueueItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "informationalDigest",
+          "rationale": "Correlation rows span queue-to-history transitions."
+        },
+        {
+          "name": "ArrDownloadCorrelations_HistoryItemId",
+          "columns": [
+            "HistoryItemId"
+          ],
+          "principalTables": [
+            "HistoryItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "informationalDigest",
+          "rationale": "Correlation rows retain lifecycle history."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "ArrDownloadLifecycleEvents",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "QueueItemId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "HistoryItemId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ArrApp",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 32,
+          "allowedIntegers": []
+        },
+        {
+          "name": "InstanceKey",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 512,
+          "allowedIntegers": []
+        },
+        {
+          "name": "DownloadId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 255,
+          "allowedIntegers": []
+        },
+        {
+          "name": "MediaKey",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 255,
+          "allowedIntegers": []
+        },
+        {
+          "name": "State",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 64,
+          "allowedIntegers": []
+        },
+        {
+          "name": "StateReason",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 1024,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_ArrDownloadLifecycleEvents",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "ArrDownloadLifecycleEvents_QueueItemId",
+          "columns": [
+            "QueueItemId"
+          ],
+          "principalTables": [
+            "QueueItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "informationalDigest",
+          "rationale": "Lifecycle events are historical across queue deletion."
+        },
+        {
+          "name": "ArrDownloadLifecycleEvents_HistoryItemId",
+          "columns": [
+            "HistoryItemId"
+          ],
+          "principalTables": [
+            "HistoryItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "informationalDigest",
+          "rationale": "Lifecycle events are historical across history cleanup."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "ArrSearchNudgeCommands",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ArrApp",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 32,
+          "allowedIntegers": []
+        },
+        {
+          "name": "InstanceKey",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 512,
+          "allowedIntegers": []
+        },
+        {
+          "name": "InstanceHost",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 1024,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CommandName",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 128,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CommandId",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "TargetsJson",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Mode",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 32,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Status",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 32,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CooldownKey",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 512,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Score",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ReasonsJson",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Error",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 1024,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CompletedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "NextAllowedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_ArrSearchNudgeCommands",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [],
+      "metadataRule": null
+    },
+    {
+      "name": "ImportReceipts",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "DavItemId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "HistoryItemId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "reference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "State",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "UpdatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ImportedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "RemovedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Detail",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 1024,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_ImportReceipts",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        },
+        {
+          "name": "IX_ImportReceipts_DavItemId_HistoryItemId",
+          "columns": [
+            "DavItemId",
+            "HistoryItemId"
+          ],
+          "components": [
+            {
+              "column": "DavItemId",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            },
+            {
+              "column": "HistoryItemId",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "ImportReceipts_DavItemId",
+          "columns": [
+            "DavItemId"
+          ],
+          "principalTables": [
+            "DavItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "informationalDigest",
+          "rationale": "Receipt states intentionally survive health deletion and removal."
+        },
+        {
+          "name": "ImportReceipts_HistoryItemId",
+          "columns": [
+            "HistoryItemId"
+          ],
+          "principalTables": [
+            "HistoryItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "informationalDigest",
+          "rationale": "Receipt states intentionally survive history cleanup."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "WorkerJobs",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Kind",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            1,
+            2,
+            3
+          ]
+        },
+        {
+          "name": "Status",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        },
+        {
+          "name": "TargetId",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "polymorphicReference",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Priority",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Attempts",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "UpdatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "AvailableAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "LeaseExpiresAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CompletedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "LeaseOwner",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 255,
+          "allowedIntegers": []
+        },
+        {
+          "name": "LastError",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 1024,
+          "allowedIntegers": []
+        },
+        {
+          "name": "PayloadJson",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CancelRequestedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "FailureKind",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        },
+        {
+          "name": "LastHeartbeatAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "LeaseGeneration",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int64",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "LeaseToken",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "opaqueToken",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ProgressJson",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 16384,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ProgressUpdatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ResultJson",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 16384,
+          "allowedIntegers": []
+        },
+        {
+          "name": "StartedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_WorkerJobs",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        },
+        {
+          "name": "IX_WorkerJobs_Kind_TargetId",
+          "columns": [
+            "Kind",
+            "TargetId"
+          ],
+          "components": [
+            {
+              "column": "Kind",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "signed-numeric"
+            },
+            {
+              "column": "TargetId",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "WorkerJobs_TargetId",
+          "columns": [
+            "TargetId"
+          ],
+          "principalTables": [
+            "QueueItems",
+            "DavItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "polymorphicInformationalDigest",
+          "rationale": "Target meaning depends on job kind and terminal missing-target completion is supported.",
+          "discriminatorColumn": "Kind",
+          "polymorphicCases": [
+            {
+              "discriminatorValue": 1,
+              "principalTable": "QueueItems"
+            },
+            {
+              "discriminatorValue": 2,
+              "principalTable": "DavItems"
+            },
+            {
+              "discriminatorValue": 3,
+              "principalTable": "DavItems"
+            }
+          ]
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "MaintenanceRuns",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Kind",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        {
+          "name": "Status",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ]
+        },
+        {
+          "name": "ActiveSlot",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "RequestedBy",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 32,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "StartedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "UpdatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CompletedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CancellationRequestedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "utcTicks",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ProgressCurrent",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "ProgressTotal",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Message",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 2048,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Error",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 4096,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_MaintenanceRuns",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        },
+        {
+          "name": "IX_MaintenanceRuns_ActiveSlot",
+          "columns": [
+            "ActiveSlot"
+          ],
+          "components": [
+            {
+              "column": "ActiveSlot",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "signed-numeric"
+            }
+          ]
+        }
+      ],
+      "references": [],
+      "metadataRule": null
+    },
+    {
+      "name": "BlobCleanupItems",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "tombstone",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_BlobCleanupItems",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "BlobCleanupItems_Id",
+          "columns": [
+            "Id"
+          ],
+          "principalTables": [
+            "@blob"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "cleanupTombstone",
+          "rationale": "Blob cleanup is idempotent, so bytes may already be absent."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "HistoryCleanupItems",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "tombstone",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "DeleteMountedFiles",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "boolean",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_HistoryCleanupItems",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "HistoryCleanupItems_Id",
+          "columns": [
+            "Id"
+          ],
+          "principalTables": [
+            "HistoryItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "cleanupTombstone",
+          "rationale": "History cleanup tombstones may refer to live or already removed history rows."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "DavCleanupItems",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "tombstone",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_DavCleanupItems",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "DavCleanupItems_Id",
+          "columns": [
+            "Id"
+          ],
+          "principalTables": [
+            "DavItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "cleanupTombstone",
+          "rationale": "DAV cleanup tombstones may refer to live or already removed subtrees."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "NzbNames",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "FileName",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_NzbNames",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "NzbNames_Id_Blob",
+          "columns": [
+            "Id"
+          ],
+          "principalTables": [
+            "@blob",
+            "NzbBlobCleanupItems"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "conditionalCleanupTombstone",
+          "rationale": "A name may lack bytes only when no live reference exists and cleanup retry is durable."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "NzbBlobCleanupItems",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "tombstone",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_NzbBlobCleanupItems",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "name": "NzbBlobCleanupItems_Id",
+          "columns": [
+            "Id"
+          ],
+          "principalTables": [
+            "@blob"
+          ],
+          "principalColumns": [
+            "Id"
+          ],
+          "policy": "cleanupTombstone",
+          "rationale": "NZB blob cleanup is idempotent, so bytes may already be absent."
+        }
+      ],
+      "metadataRule": null
+    },
+    {
+      "name": "RcloneInvalidationItems",
+      "columns": [
+        {
+          "name": "Id",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "uuid",
+          "instantEncoding": "none",
+          "uuidRole": "identity",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Path",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": false,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "CreatedAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "unixSeconds",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "NextAttemptAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "unixSeconds",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "LastAttemptAt",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": true,
+          "kind": "instant",
+          "instantEncoding": "unixSeconds",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Attempts",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "LastError",
+          "declaredType": "TEXT",
+          "rawStorageClass": "text",
+          "nullable": true,
+          "kind": "text",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": 1024,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Revision",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int64",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "Id",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "rfc4122-network-bytes"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_RcloneInvalidationItems",
+          "columns": [
+            "Id"
+          ],
+          "components": [
+            {
+              "column": "Id",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "rfc4122-network-bytes"
+            }
+          ]
+        }
+      ],
+      "references": [],
+      "metadataRule": null
+    }
+  ],
+  "bootstrap": {
+    "config": [
+      {
+        "name": "api.key",
+        "pattern": "^[0-9a-f]{32}$",
+        "distinctFromOtherSecrets": true
+      },
+      {
+        "name": "api.strm-key",
+        "pattern": "^[0-9a-f]{32}$",
+        "distinctFromOtherSecrets": true
+      }
+    ],
+    "roots": [
+      {
+        "id": "00000000-0000-0000-0000-000000000000",
+        "parentId": null,
+        "name": "/",
+        "idPrefix": "00000",
+        "createdAt": "0001-01-01 00:00:00",
+        "type": 1,
+        "subType": 102,
+        "path": "/"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "parentId": "00000000-0000-0000-0000-000000000000",
+        "name": "nzbs",
+        "idPrefix": "00000",
+        "createdAt": "0001-01-01 00:00:00",
+        "type": 1,
+        "subType": 103,
+        "path": "/nzbs"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "parentId": "00000000-0000-0000-0000-000000000000",
+        "name": "content",
+        "idPrefix": "00000",
+        "createdAt": "0001-01-01 00:00:00",
+        "type": 1,
+        "subType": 104,
+        "path": "/content"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000003",
+        "parentId": "00000000-0000-0000-0000-000000000000",
+        "name": "completed-symlinks",
+        "idPrefix": "00000",
+        "createdAt": "0001-01-01 00:00:00",
+        "type": 1,
+        "subType": 105,
+        "path": "/completed-symlinks"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000004",
+        "parentId": "00000000-0000-0000-0000-000000000000",
+        "name": ".ids",
+        "idPrefix": "00000",
+        "createdAt": "0001-01-01 00:00:00",
+        "type": 1,
+        "subType": 106,
+        "path": "/.ids"
+      }
+    ]
+  },
+  "blobs": {
+    "layout": "blobs/{uuid-n[0..2]}/{uuid-n[2..4]}/{uuid-d-lower}",
+    "fileNameFormat": "lowercase-hyphenated-D",
+    "includeOrphans": true,
+    "requireRegularFiles": true,
+    "rejectSymbolicLinks": true
+  },
+  "derivedTables": [
+    {
+      "name": "HealthCheckStats",
+      "columns": [
+        {
+          "name": "DateStartInclusive",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "unixSeconds",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "DateEndExclusive",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "instant",
+          "instantEncoding": "unixSeconds",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        },
+        {
+          "name": "Result",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            0,
+            1
+          ]
+        },
+        {
+          "name": "RepairStatus",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "enumInt32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        {
+          "name": "Count",
+          "declaredType": "INTEGER",
+          "rawStorageClass": "integer",
+          "nullable": false,
+          "kind": "int32",
+          "instantEncoding": "none",
+          "uuidRole": "none",
+          "maxRunes": null,
+          "allowedIntegers": []
+        }
+      ],
+      "keyset": [
+        {
+          "column": "DateStartInclusive",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "signed-numeric"
+        },
+        {
+          "column": "DateEndExclusive",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "signed-numeric"
+        },
+        {
+          "column": "Result",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "signed-numeric"
+        },
+        {
+          "column": "RepairStatus",
+          "sqliteCollation": "none",
+          "postgreSqlCollation": "none",
+          "ordering": "signed-numeric"
+        }
+      ],
+      "uniqueKeys": [
+        {
+          "name": "PK_HealthCheckStats",
+          "columns": [
+            "DateStartInclusive",
+            "DateEndExclusive",
+            "Result",
+            "RepairStatus"
+          ],
+          "components": [
+            {
+              "column": "DateStartInclusive",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "signed-numeric"
+            },
+            {
+              "column": "DateEndExclusive",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "signed-numeric"
+            },
+            {
+              "column": "Result",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "signed-numeric"
+            },
+            {
+              "column": "RepairStatus",
+              "sqliteCollation": "none",
+              "postgreSqlCollation": "none",
+              "ordering": "signed-numeric"
+            }
+          ]
+        }
+      ],
+      "references": [],
+      "metadataRule": null
+    }
+  ]
+}

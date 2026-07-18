@@ -11,6 +11,8 @@ public class WebsocketManager
 {
     private static readonly TimeSpan SendTimeout = TimeSpan.FromMilliseconds(250);
     private readonly HashSet<WebSocket> _authenticatedSockets = [];
+    private readonly Dictionary<WebSocket, SocketSendState> _socketSendStates =
+        new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<WebsocketTopic, string> _lastMessage = new();
 
     public async Task HandleRoute(HttpContext context)
@@ -26,20 +28,24 @@ public class WebsocketManager
             }
 
             // mark the socket as authenticated
+            SocketSendState socketSendState;
             lock (_authenticatedSockets)
+            {
                 _authenticatedSockets.Add(webSocket);
+                socketSendState = GetOrCreateSocketSendStateLocked(webSocket);
+            }
 
             // send current state for all topics
             List<KeyValuePair<WebsocketTopic, string>>? lastMessage;
             lock (_lastMessage) lastMessage = _lastMessage.ToList();
             foreach (var message in lastMessage)
                 if (message.Key.Type == WebsocketTopic.TopicType.State)
-                    await SendMessage(webSocket, message.Key, message.Value).ConfigureAwait(false);
+                    await SendMessage(webSocket, socketSendState, message.Key, message.Value)
+                        .ConfigureAwait(false);
 
             // wait for the socket to disconnect
             await WaitForDisconnected(webSocket).ConfigureAwait(false);
-            lock (_authenticatedSockets)
-                _authenticatedSockets.Remove(webSocket);
+            RemoveAuthenticatedSocket(webSocket, socketSendState);
         }
         else
         {
@@ -52,11 +58,16 @@ public class WebsocketManager
     /// </summary>
     /// <param name="topic">The topic of the message to send</param>
     /// <param name="message">The message to send</param>
-    public Task SendMessage(WebsocketTopic topic, string message)
+    public virtual Task SendMessage(WebsocketTopic topic, string message)
     {
         lock (_lastMessage) _lastMessage[topic] = message;
-        List<WebSocket>? authenticatedSockets;
-        lock (_authenticatedSockets) authenticatedSockets = _authenticatedSockets.ToList();
+        List<SocketSendTarget> authenticatedSockets;
+        lock (_authenticatedSockets)
+        {
+            authenticatedSockets = _authenticatedSockets
+                .Select(socket => new SocketSendTarget(socket, GetOrCreateSocketSendStateLocked(socket)))
+                .ToList();
+        }
         var topicMessage = new TopicMessage(topic, message);
         var bytes = new ArraySegment<byte>(Encoding.UTF8.GetBytes(topicMessage.ToJson()));
         return SendMessageToAuthenticatedSockets(authenticatedSockets, bytes);
@@ -64,7 +75,7 @@ public class WebsocketManager
 
     private async Task SendMessageToAuthenticatedSockets
     (
-        List<WebSocket> authenticatedSockets,
+        List<SocketSendTarget> authenticatedSockets,
         ArraySegment<byte> bytes
     )
     {
@@ -75,10 +86,29 @@ public class WebsocketManager
             .ToList();
         if (failedSockets.Count == 0) return;
 
+        foreach (var target in failedSockets)
+            RemoveAuthenticatedSocket(target.Socket, target.State);
+    }
+
+    private SocketSendState GetOrCreateSocketSendStateLocked(WebSocket socket)
+    {
+        if (_socketSendStates.TryGetValue(socket, out var state)) return state;
+        state = new SocketSendState();
+        _socketSendStates.Add(socket, state);
+        return state;
+    }
+
+    private void RemoveAuthenticatedSocket(WebSocket socket, SocketSendState state)
+    {
         lock (_authenticatedSockets)
         {
-            foreach (var socket in failedSockets)
-                _authenticatedSockets.Remove(socket);
+            _authenticatedSockets.Remove(socket);
+            if (!_socketSendStates.TryGetValue(socket, out var current)
+                || !ReferenceEquals(current, state))
+                return;
+
+            state.Disable();
+            _socketSendStates.Remove(socket);
         }
     }
 
@@ -126,11 +156,31 @@ public class WebsocketManager
     /// <param name="socket">The websocket to send the message to.</param>
     /// <param name="topic">The topic of the message to send</param>
     /// <param name="message">The message to send</param>
-    private static async Task SendMessage(WebSocket socket, WebsocketTopic topic, string message)
+    private static Task<bool> SendMessage(
+        WebSocket socket,
+        SocketSendState state,
+        WebsocketTopic topic,
+        string message)
     {
         var topicMessage = new TopicMessage(topic, message);
         var bytes = new ArraySegment<byte>(Encoding.UTF8.GetBytes(topicMessage.ToJson()));
-        await SendMessage(socket, bytes).ConfigureAwait(false);
+        return SendMessage(new SocketSendTarget(socket, state), bytes);
+    }
+
+    private static async Task<bool> SendMessage(SocketSendTarget target, ArraySegment<byte> message)
+    {
+        await target.State.Gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (target.State.IsDisabled) return false;
+            var sent = await SendMessage(target.Socket, message).ConfigureAwait(false);
+            if (!sent) target.State.Disable();
+            return sent;
+        }
+        finally
+        {
+            target.State.Gate.Release();
+        }
     }
 
     /// <summary>
@@ -199,5 +249,20 @@ public class WebsocketManager
     {
         public string Topic { get; } = topic.Name;
         public string Message { get; } = message;
+    }
+
+    private sealed record SocketSendTarget(WebSocket Socket, SocketSendState State);
+
+    private sealed class SocketSendState
+    {
+        private int _disabled;
+
+        public SemaphoreSlim Gate { get; } = new(1, 1);
+        public bool IsDisabled => Volatile.Read(ref _disabled) != 0;
+
+        public void Disable()
+        {
+            Interlocked.Exchange(ref _disabled, 1);
+        }
     }
 }

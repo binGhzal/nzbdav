@@ -1,8 +1,11 @@
+using System.Reflection;
 using System.Text.Json;
 using backend.Tests.Services;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Database.Transfer;
 
 namespace backend.Tests.Database;
 
@@ -22,6 +25,9 @@ public sealed class DatabaseTransferServiceTests
         var leaseToken = Guid.NewGuid();
         var leaseTimestamp = DateTimeOffset.UtcNow;
         var receiptId = Guid.NewGuid();
+        var historyId = Guid.NewGuid();
+        var importCommandId = Guid.NewGuid();
+        var maintenanceRunId = Guid.NewGuid();
         await using (var source = await _fixture.ResetAndCreateMigratedContextAsync())
         {
             var queueItem = new QueueItem
@@ -103,15 +109,51 @@ public sealed class DatabaseTransferServiceTests
                 ResultJson = "{\"result\":\"pending\"}",
                 PayloadJson = "{\"source\":\"test\"}"
             });
+            source.HistoryItems.Add(new HistoryItem
+            {
+                Id = historyId,
+                CreatedAt = DateTime.Now,
+                FileName = "Imported.nzb",
+                JobName = "Imported",
+                Category = "tv",
+                DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+                TotalSegmentBytes = 200,
+                DownloadTimeSeconds = 1
+            });
             source.ImportReceipts.Add(new ImportReceipt
             {
                 Id = receiptId,
                 DavItemId = Guid.NewGuid(),
-                HistoryItemId = Guid.NewGuid(),
+                HistoryItemId = historyId,
                 State = ImportReceiptState.NeedsReview,
                 CreatedAt = leaseTimestamp,
                 UpdatedAt = leaseTimestamp,
                 Detail = "transfer test"
+            });
+            source.ArrImportCommands.Add(new ArrImportCommand
+            {
+                Id = importCommandId,
+                HistoryItemId = historyId,
+                Category = "tv",
+                RequiredInvalidationPathsJson = "[\"/content/tv/Imported\"]",
+                Status = ArrImportCommandStatus.WaitingForInvalidation,
+                CreatedAt = leaseTimestamp,
+                UpdatedAt = leaseTimestamp,
+                NextAttemptAt = leaseTimestamp,
+                ResultsJson = "[]"
+            });
+            source.MaintenanceRuns.Add(new MaintenanceRun
+            {
+                Id = maintenanceRunId,
+                Kind = MaintenanceRunKind.RecreateStrmFiles,
+                Status = MaintenanceRunStatus.Completed,
+                RequestedBy = "test",
+                CreatedAt = leaseTimestamp,
+                UpdatedAt = leaseTimestamp,
+                CompletedAt = leaseTimestamp,
+                ProgressCurrent = 1,
+                ProgressTotal = 1,
+                Message = "Done."
             });
             await source.SaveChangesAsync();
         }
@@ -149,6 +191,11 @@ public sealed class DatabaseTransferServiceTests
         Assert.Equal("{\"result\":\"pending\"}", workerJob.ResultJson);
         var receipt = await imported.ImportReceipts.SingleAsync(x => x.Id == receiptId);
         Assert.Equal(ImportReceiptState.NeedsReview, receipt.State);
+        var importCommand = await imported.ArrImportCommands.SingleAsync(x => x.Id == importCommandId);
+        Assert.Equal(ArrImportCommandStatus.WaitingForInvalidation, importCommand.Status);
+        Assert.Equal("tv", importCommand.Category);
+        var maintenanceRun = await imported.MaintenanceRuns.SingleAsync(x => x.Id == maintenanceRunId);
+        Assert.Equal(MaintenanceRunStatus.Completed, maintenanceRun.Status);
     }
 
     [Fact]
@@ -202,4 +249,186 @@ public sealed class DatabaseTransferServiceTests
         Assert.Null(workerJob.ProgressUpdatedAt);
         Assert.Null(workerJob.ResultJson);
     }
+
+    [Fact]
+    public async Task ExportJsonAsync_OmitsReservedImportStateAndAdjustsTotalRows()
+    {
+        var exportPath = Path.Combine(Path.GetTempPath(), "nzbdav-tests", $"transfer-{Guid.NewGuid():N}.json");
+        await using var source = await _fixture.ResetAndCreateMigratedContextAsync();
+        await DeleteRawConfigAsync(source, TransferV3ReservedConfigPolicy.ImportStateKey, OrdinaryConfigKey);
+        await InsertRawConfigAsync(
+            source,
+            TransferV3ReservedConfigPolicy.ImportStateKey,
+            TransferV3ImportStateCodec.FreshCanonicalJson);
+        await InsertRawConfigAsync(source, OrdinaryConfigKey, "ordinary");
+        var expectedConfigCount = await source.ConfigItems.CountAsync() - 1;
+
+        try
+        {
+            await DatabaseTransferService.ExportJsonAsync(source, exportPath);
+
+            var snapshot = JsonSerializer.Deserialize<DatabaseTransferSnapshot>(
+                await File.ReadAllTextAsync(exportPath));
+            Assert.NotNull(snapshot);
+            Assert.Equal(expectedConfigCount, snapshot.ConfigItems.Count);
+            Assert.DoesNotContain(
+                snapshot.ConfigItems,
+                item => item.ConfigName == TransferV3ReservedConfigPolicy.ImportStateKey);
+            Assert.Equal(
+                snapshot.Accounts.Count + snapshot.Items.Count + snapshot.NzbFiles.Count
+                + snapshot.RarFiles.Count + snapshot.MultipartFiles.Count + snapshot.QueueItems.Count
+                + snapshot.HistoryItems.Count + snapshot.QueueNzbContents.Count
+                + snapshot.HealthCheckResults.Count + snapshot.HealthCheckStats.Count
+                + expectedConfigCount + snapshot.BlobCleanupItems.Count + snapshot.HistoryCleanupItems.Count
+                + snapshot.DavCleanupItems.Count + snapshot.NzbNames.Count
+                + snapshot.NzbBlobCleanupItems.Count + snapshot.RcloneInvalidationItems.Count
+                + snapshot.WorkerJobs.Count + snapshot.RepairRuns.Count + snapshot.RepairEntryHealth.Count
+                + snapshot.RepairBrokenFiles.Count + snapshot.ArrDownloadCorrelations.Count
+                + snapshot.QueuePriorityHints.Count + snapshot.ArrSearchNudgeCommands.Count
+                + snapshot.ArrDownloadLifecycleEvents.Count + snapshot.ImportReceipts.Count
+                + snapshot.ArrImportCommands.Count + snapshot.MaintenanceRuns.Count,
+                snapshot.TotalRows);
+        }
+        finally
+        {
+            await DeleteRawConfigAsync(source, TransferV3ReservedConfigPolicy.ImportStateKey, OrdinaryConfigKey);
+            File.Delete(exportPath);
+        }
+    }
+
+    [Fact]
+    public async Task ImportJsonAsync_RejectsReservedStateBeforeMigrationTargetOrMutation()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "nzbdav-tests", $"transfer-input-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var inputPath = Path.Combine(directory, "input.json");
+        var targetPath = Path.Combine(directory, "must-not-be-created.sqlite");
+        var snapshot = new DatabaseTransferSnapshot
+        {
+            ConfigItems =
+            [
+                new ConfigItem
+                {
+                    ConfigName = TransferV3ReservedConfigPolicy.ImportStateKey,
+                    ConfigValue = TransferV3ImportStateCodec.FreshCanonicalJson
+                }
+            ]
+        };
+        await File.WriteAllTextAsync(inputPath, JsonSerializer.Serialize(snapshot));
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite($"Data Source={targetPath}")
+            .Options;
+        await using var target = new DavDatabaseContext(options);
+
+        try
+        {
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                DatabaseTransferService.ImportJsonAsync(target, inputPath, replace: true));
+
+            Assert.Equal(TransferV3ReservedConfigPolicy.LegacySnapshotMessage, error.Message);
+            Assert.False(File.Exists(targetPath));
+            Assert.Empty(target.ChangeTracker.Entries());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ImportJsonAsync_ReplacePreservesTargetLocalImportState()
+    {
+        var inputPath = Path.Combine(Path.GetTempPath(), "nzbdav-tests", $"transfer-{Guid.NewGuid():N}.json");
+        var restorePath = Path.Combine(Path.GetTempPath(), "nzbdav-tests", $"transfer-{Guid.NewGuid():N}.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(inputPath)!);
+        var snapshot = new DatabaseTransferSnapshot
+        {
+            ConfigItems = [new ConfigItem { ConfigName = OrdinaryConfigKey, ConfigValue = "source" }]
+        };
+        await File.WriteAllTextAsync(inputPath, JsonSerializer.Serialize(snapshot));
+        await using var target = await _fixture.ResetAndCreateMigratedContextAsync();
+        await DeleteRawConfigAsync(target, TransferV3ReservedConfigPolicy.ImportStateKey, OrdinaryConfigKey);
+        await DatabaseTransferService.ExportJsonAsync(target, restorePath);
+        await InsertRawConfigAsync(
+            target,
+            TransferV3ReservedConfigPolicy.ImportStateKey,
+            TransferV3ImportStateCodec.FreshCanonicalJson);
+        await InsertRawConfigAsync(target, OrdinaryConfigKey, "target");
+
+        try
+        {
+            await DatabaseTransferService.ImportJsonAsync(target, inputPath, replace: true);
+
+            target.ChangeTracker.Clear();
+            Assert.Equal(
+                TransferV3ImportStateCodec.FreshCanonicalJson,
+                (await target.ConfigItems.SingleAsync(x =>
+                    x.ConfigName == TransferV3ReservedConfigPolicy.ImportStateKey)).ConfigValue);
+            Assert.Equal(
+                "source",
+                (await target.ConfigItems.SingleAsync(x => x.ConfigName == OrdinaryConfigKey)).ConfigValue);
+        }
+        finally
+        {
+            await DeleteRawConfigAsync(target, TransferV3ReservedConfigPolicy.ImportStateKey, OrdinaryConfigKey);
+            target.ChangeTracker.Clear();
+            await DatabaseTransferService.ImportJsonAsync(target, restorePath, replace: true);
+            File.Delete(inputPath);
+            File.Delete(restorePath);
+        }
+    }
+
+    [Fact]
+    public async Task TargetEmptiness_IgnoresOnlyTheExactReservedKey()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var context = new DavDatabaseContext(options);
+        await context.Database.EnsureCreatedAsync();
+        await context.Database.ExecuteSqlRawAsync(
+            """
+            PRAGMA foreign_keys=OFF;
+            DELETE FROM DavItems;
+            DELETE FROM QueueItems;
+            DELETE FROM HistoryItems;
+            DELETE FROM ImportReceipts;
+            DELETE FROM ArrImportCommands;
+            DELETE FROM MaintenanceRuns;
+            DELETE FROM ConfigItems;
+            DELETE FROM Accounts;
+            """);
+        await InsertRawConfigAsync(
+            context,
+            TransferV3ReservedConfigPolicy.ImportStateKey,
+            TransferV3ImportStateCodec.FreshCanonicalJson);
+
+        Assert.False(await InvokeHasApplicationRowsAsync(context));
+
+        await DeleteRawConfigAsync(context, TransferV3ReservedConfigPolicy.ImportStateKey);
+        await InsertRawConfigAsync(context, "Database.import-state", "ordinary");
+        Assert.True(await InvokeHasApplicationRowsAsync(context));
+    }
+
+    private static async Task<bool> InvokeHasApplicationRowsAsync(DavDatabaseContext context)
+    {
+        var method = typeof(DatabaseTransferService).GetMethod(
+            "HasApplicationRowsAsync",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+        var task = Assert.IsType<Task<bool>>(method.Invoke(null, [context, CancellationToken.None]));
+        return await task;
+    }
+
+    private static Task<int> InsertRawConfigAsync(DavDatabaseContext context, string name, string value) =>
+        context.Database.ExecuteSqlInterpolatedAsync(
+            $"INSERT INTO ConfigItems (ConfigName, ConfigValue) VALUES ({name}, {value})");
+
+    private static Task<int> DeleteRawConfigAsync(DavDatabaseContext context, params string[] names) =>
+        context.Database.ExecuteSqlInterpolatedAsync(
+            $"DELETE FROM ConfigItems WHERE ConfigName IN ({names[0]}, {names.ElementAtOrDefault(1)})");
+
+    private const string OrdinaryConfigKey = "transfer-v3-v2-probe";
 }

@@ -18,7 +18,7 @@ public abstract class BaseApiController : ControllerBase
         {
             if (RequiresAuthentication)
             {
-                var apiKey = HttpContext.GetRequestApiKey();
+                var apiKey = HttpContext.GetInternalRequestApiKey();
                 if (apiKey == null)
                     throw new UnauthorizedAccessException("API Key Required");
                 if (apiKey != EnvironmentUtil.GetRequiredVariable("FRONTEND_BACKEND_API_KEY"))

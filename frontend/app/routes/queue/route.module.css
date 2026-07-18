@@ -40,7 +40,8 @@
 }
 
 .queueFilter,
-.queueFilterActive {
+.queueFilterActive,
+.uploadButton {
     border: 1px solid hsl(192, 100%, 20%);
     background: transparent;
     color: #93a1a1;
@@ -50,7 +51,11 @@
     font-size: 14px;
 }
 
+.uploadButton:hover,
+.uploadButton:focus-visible,
 .queueFilter:hover,
+.queueFilter:focus-visible,
+.queueFilterActive:focus-visible,
 .queueFilterActive {
     background: hsl(192, 100%, 14%);
     color: white;

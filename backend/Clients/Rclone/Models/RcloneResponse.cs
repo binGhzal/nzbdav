@@ -19,4 +19,26 @@ public class RcloneResponse
     /// </summary>
     [JsonIgnore]
     public string? Error { get; set; }
+
+    [JsonIgnore]
+    internal RcloneFailureKind FailureKind { get; set; }
+
+    [JsonIgnore]
+    internal int? ResponseStatusCode { get; set; }
+}
+
+internal enum RcloneFailureKind
+{
+    None,
+    Authentication,
+    Http,
+    MalformedResponse,
+    Timeout,
+    Connection,
+    RemoteControlDisabled,
+    HostNotConfigured,
+    ConfigurationChanged,
+    InvalidResponse,
+    InvalidEndpoint,
+    RequestFailed
 }

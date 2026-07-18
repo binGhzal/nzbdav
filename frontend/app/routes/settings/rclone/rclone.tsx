@@ -3,6 +3,7 @@ import styles from "./rclone.module.css"
 import { type Dispatch, type SetStateAction, useState, useCallback, useEffect } from "react";
 import { withUrlBase } from "~/utils/url-base";
 import { getHttpErrorMessage, readJsonObjectOrEmpty } from "~/utils/http-response";
+import { areEndpointIdentitiesEquivalent } from "~/utils/endpoint-identity";
 
 type RcloneSettingsProps = {
     config: Record<string, string>
@@ -16,7 +17,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
     useEffect(() => {
         setConnectionState('idle');
         setConnectionError(null);
-    }, [config["rclone.host"], config["rclone.user"], config["rclone.pass"]]);
+    }, [config["rclone.host"], config["rclone.user"], config["rclone.pass"], config["rclone.fs"]]);
 
     const testConnection = useCallback(async () => {
         const host = config["rclone.host"];
@@ -32,6 +33,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
             formData.append('host', host);
             formData.append('user', config["rclone.user"] ?? '');
             formData.append('pass', config["rclone.pass"] ?? '');
+            formData.append('fs', config["rclone.fs"] ?? '');
 
             const response = await fetch(withUrlBase('/api/test-rclone-connection'), {
                 method: 'POST',
@@ -114,6 +116,21 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
             </Form.Group>
             <hr />
             <Form.Group>
+                <Form.Label htmlFor="rclone-fs-input">Rclone VFS Selector</Form.Label>
+                <Form.Control
+                    className={styles.input}
+                    type="text"
+                    id="rclone-fs-input"
+                    aria-describedby="rclone-fs-help"
+                    placeholder="nzbdav:"
+                    value={config["rclone.fs"] ?? ""}
+                    onChange={e => setNewConfig({ ...config, "rclone.fs": e.target.value })} />
+                <Form.Text id="rclone-fs-help" muted>
+                    Optional for a single VFS; required when the RC server has more than one active VFS. Use the name returned by rclone&apos;s vfs/list command.
+                </Form.Text>
+            </Form.Group>
+            <hr />
+            <Form.Group>
                 <Form.Label htmlFor="rclone-user-input">Rclone Server User</Form.Label>
                 <Form.Control
                     className={styles.input}
@@ -146,13 +163,10 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
 
 export function isRcloneSettingsUpdated(config: Record<string, string>, newConfig: Record<string, string>) {
     return normalizeBoolean(config["rclone.rc-enabled"]) !== normalizeBoolean(newConfig["rclone.rc-enabled"])
-        || normalizeEndpoint(config["rclone.host"]) !== normalizeEndpoint(newConfig["rclone.host"])
+        || !areEndpointIdentitiesEquivalent(config["rclone.host"], newConfig["rclone.host"])
         || normalizeOptionalCredential(config["rclone.user"]) !== normalizeOptionalCredential(newConfig["rclone.user"])
-        || normalizeOptionalCredential(config["rclone.pass"]) !== normalizeOptionalCredential(newConfig["rclone.pass"]);
-}
-
-function normalizeEndpoint(value: string | undefined): string {
-    return (value ?? "").trim().replace(/\/+$/, "");
+        || normalizeOptionalCredential(config["rclone.pass"]) !== normalizeOptionalCredential(newConfig["rclone.pass"])
+        || normalizeOptionalSelector(config["rclone.fs"]) !== normalizeOptionalSelector(newConfig["rclone.fs"]);
 }
 
 function normalizeBoolean(value: string | undefined): string {
@@ -161,4 +175,8 @@ function normalizeBoolean(value: string | undefined): string {
 
 function normalizeOptionalCredential(value: string | undefined): string {
     return (value ?? "").trim() === "" ? "" : value ?? "";
+}
+
+function normalizeOptionalSelector(value: string | undefined): string {
+    return (value ?? "").trim();
 }

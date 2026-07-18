@@ -22,6 +22,9 @@ public sealed class RepairStatusController(DavDatabaseClient dbClient, ConfigMan
             .Take(50)
             .ToListAsync(HttpContext.RequestAborted)
             .ConfigureAwait(false);
+        var maxRepairWorkers = configManager.IsRepairJobEnabled()
+            ? configManager.GetAdaptiveMaxConcurrentRepairJobs()
+            : 0;
 
         return Ok(new RepairStatusResponse
         {
@@ -29,7 +32,7 @@ public sealed class RepairStatusController(DavDatabaseClient dbClient, ConfigMan
             LastRun = repairStatus.LastRun == null ? null : RepairRunDto.FromModel(repairStatus.LastRun),
             BrokenFiles = brokenFiles.Select(RepairBrokenFileDto.FromModel).ToList(),
             VerifyQueue = RepairWorkerQueueDto.FromStats(workerQueues.Verify, configManager.GetAdaptiveMaxConcurrentVerifyJobs()),
-            RepairQueue = RepairWorkerQueueDto.FromStats(workerQueues.Repair, configManager.GetAdaptiveMaxConcurrentRepairJobs())
+            RepairQueue = RepairWorkerQueueDto.FromStats(workerQueues.Repair, maxRepairWorkers)
         });
     }
 }

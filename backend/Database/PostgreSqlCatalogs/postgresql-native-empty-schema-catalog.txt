@@ -1,0 +1,15 @@
+contract|postgresql-catalog-v3
+database-acl|<owner>|CONNECT|false|<owner>
+database-acl|<owner>|CREATE|false|<owner>
+database-acl|<owner>|TEMPORARY|false|<owner>
+database-acl|PUBLIC|CONNECT|false|<owner>
+database-acl|PUBLIC|TEMPORARY|false|<owner>
+environment-count|default-acl|0
+environment-count|event-trigger|0
+environment-count|publication-namespace|0
+environment-count|publication|0
+environment-count|subscription|0
+schema-acl|<owner>|CREATE|false|<owner>
+schema-acl|<owner>|USAGE|false|<owner>
+scope|<owner>|<owner>|default-database-acl|default-schema-acl
+server|16.14|160014

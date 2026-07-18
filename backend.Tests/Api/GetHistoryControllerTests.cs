@@ -219,7 +219,7 @@ public sealed class GetHistoryControllerTests
     }
 
     [Fact]
-    public async Task GetHistory_HidesCompletedRowsWithActivePostDownloadVerifyJobs()
+    public async Task GetHistory_ShowsCompletedRowsWithActivePostDownloadVerifyJobsAfterArrVisibility()
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
         AddCompletedHistoryWithPostDownloadVerifyJob(dbContext, WorkerJob.JobStatus.Pending);
@@ -234,8 +234,8 @@ public sealed class GetHistoryControllerTests
 
         var ok = Assert.IsType<OkObjectResult>(result);
         var response = Assert.IsType<GetHistoryResponse>(ok.Value);
-        Assert.Empty(response.History.Slots);
-        Assert.Equal(0, response.History.TotalCount);
+        Assert.Single(response.History.Slots);
+        Assert.Equal(1, response.History.TotalCount);
     }
 
     [Fact]
@@ -257,6 +257,73 @@ public sealed class GetHistoryControllerTests
         var slot = Assert.Single(response.History.Slots);
         Assert.Equal(historyId.ToString(), slot.NzoId);
         Assert.Equal(1, response.History.TotalCount);
+    }
+
+    [Fact]
+    public async Task GetHistory_ShowsCompletedRowsForUnrelatedVerifyPayloadContainingMarker()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var historyId = AddCompletedHistoryWithPostDownloadVerifyJob(
+            dbContext,
+            WorkerJob.JobStatus.Pending,
+            payloadJson: """{"Kind":"not_post_download_verify"}""");
+        await dbContext.SaveChangesAsync();
+
+        var controller = new GetHistoryController(
+            CreateHttpContext("?status=completed&limit=10"),
+            new DavDatabaseClient(dbContext),
+            CreateConfigManager());
+
+        var result = await HandleWithApiKeyAsync(controller);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<GetHistoryResponse>(ok.Value);
+        var slot = Assert.Single(response.History.Slots);
+        Assert.Equal(historyId.ToString(), slot.NzoId);
+        Assert.Equal(1, response.History.TotalCount);
+    }
+
+    [Fact]
+    public async Task GetHistory_HidesCompletionUntilImportCommandPublishesVisibility()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var history = CreateCompletedHistory(Guid.NewGuid());
+        var now = DateTimeOffset.UtcNow;
+        var command = new ArrImportCommand
+        {
+            Id = Guid.NewGuid(),
+            HistoryItemId = history.Id,
+            Category = history.Category,
+            RequiredInvalidationPathsJson = "[]",
+            Status = ArrImportCommandStatus.Pending,
+            CreatedAt = now,
+            UpdatedAt = now,
+            NextAttemptAt = now,
+            VisibleAt = null
+        };
+        dbContext.HistoryItems.Add(history);
+        dbContext.ArrImportCommands.Add(command);
+        await dbContext.SaveChangesAsync();
+
+        var controller = new GetHistoryController(
+            CreateHttpContext("?status=completed&limit=10"),
+            new DavDatabaseClient(dbContext),
+            CreateConfigManager());
+
+        var hiddenResult = await HandleWithApiKeyAsync(controller);
+
+        var hidden = Assert.IsType<GetHistoryResponse>(Assert.IsType<OkObjectResult>(hiddenResult).Value);
+        Assert.Empty(hidden.History.Slots);
+        Assert.Equal(0, hidden.History.TotalCount);
+
+        command.VisibleAt = DateTimeOffset.UtcNow;
+        await dbContext.SaveChangesAsync();
+
+        var visibleResult = await HandleWithApiKeyAsync(controller);
+
+        var visible = Assert.IsType<GetHistoryResponse>(Assert.IsType<OkObjectResult>(visibleResult).Value);
+        Assert.Equal(history.Id.ToString(), Assert.Single(visible.History.Slots).NzoId);
+        Assert.Equal(1, visible.History.TotalCount);
     }
 
     [Fact]
@@ -302,7 +369,8 @@ public sealed class GetHistoryControllerTests
 
     private static Guid AddCompletedHistoryWithPostDownloadVerifyJob(
         DavDatabaseContext dbContext,
-        WorkerJob.JobStatus workerStatus)
+        WorkerJob.JobStatus workerStatus,
+        string? payloadJson = null)
     {
         var historyId = Guid.NewGuid();
         var mountFolder = DavItem.New(
@@ -342,7 +410,7 @@ public sealed class GetHistoryControllerTests
             UpdatedAt = DateTimeOffset.UtcNow,
             AvailableAt = DateTimeOffset.UtcNow,
             CompletedAt = workerStatus == WorkerJob.JobStatus.Completed ? DateTimeOffset.UtcNow : null,
-            PayloadJson = DavDatabaseClient.CreatePostDownloadVerifyPayloadJson()
+            PayloadJson = payloadJson ?? DavDatabaseClient.CreatePostDownloadVerifyPayloadJson()
         });
         return historyId;
     }

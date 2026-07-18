@@ -3,13 +3,16 @@ import styles from "./route.module.css"
 import { backendClient } from "~/clients/backend-client.server";
 import { HealthTable } from "./components/health-table/health-table";
 import { HealthStats } from "./components/health-stats/health-stats";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createReconnectingWebSocket } from "~/utils/websocket-util";
 import { Alert } from "react-bootstrap";
 import { getWebsocketUrl } from "~/utils/url-base";
-import { useNavigation } from "react-router";
+import { useNavigation, useRevalidator } from "react-router";
 import { OperationsStatus } from "./components/operations-status/operations-status";
 import { useHealthQueueTopUp } from "./health-queue-top-up";
+import { createHealthRefreshController } from "./health-refresh-controller";
+
+const healthRefreshIntervalMs = 5_000;
 
 const topicNames = {
     healthItemStatus: 'hs',
@@ -146,10 +149,43 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     const [uncheckedCount, setUncheckedCount] = useState(loaderData.uncheckedCount);
     const [websocketState, setWebsocketState] = useState<"connecting" | "connected" | "disconnected">("connecting");
     const navigation = useNavigation();
+    const revalidator = useRevalidator();
+    const navigationRef = useRef(navigation);
+    const revalidatorRef = useRef(revalidator);
     const isActionSubmitting = navigation.state !== "idle" && navigation.formMethod?.toLowerCase() === "post";
 
     // effects
     useHealthQueueTopUp(queueItems, setQueueItems, setUncheckedCount);
+
+    useEffect(() => {
+        setHistoryStats(loaderData.historyStats);
+        setQueueItems(loaderData.queueItems);
+        setUncheckedCount(loaderData.uncheckedCount);
+    }, [loaderData.historyStats, loaderData.queueItems, loaderData.uncheckedCount]);
+
+    useEffect(() => {
+        navigationRef.current = navigation;
+        revalidatorRef.current = revalidator;
+    }, [navigation, revalidator]);
+
+    useEffect(() => {
+        const refreshController = createHealthRefreshController({
+            getVisibility: () => document.visibilityState,
+            canRevalidate: () =>
+                navigationRef.current.state === "idle"
+                && revalidatorRef.current.state === "idle",
+            revalidate: () => revalidatorRef.current.revalidate(),
+            intervalMs: healthRefreshIntervalMs,
+        });
+        const onVisibilityChange = () => refreshController.visibilityChanged();
+
+        refreshController.start();
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        return () => {
+            document.removeEventListener("visibilitychange", onVisibilityChange);
+            refreshController.dispose();
+        };
+    }, []);
 
     // events
     const onHealthItemStatus = useCallback(async (message: string) => {
@@ -194,7 +230,6 @@ export default function Health({ loaderData }: Route.ComponentProps) {
             var index = queueItems.findIndex(x => x.id === davItemId);
             if (index === -1) return queueItems;
             return queueItems
-                .filter((_, i) => i >= index)
                 .map(item => item.id === davItemId
                     ? { ...item, progress: Number(progress) }
                     : item

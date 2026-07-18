@@ -171,7 +171,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         {
             try
             {
-                await using var dbContext = new DavDatabaseContext();
+                await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
                 var item = await dbContext.Items.FindAsync(davItemId).ConfigureAwait(false);
                 if (item == null)
                     return;

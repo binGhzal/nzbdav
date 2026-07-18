@@ -2,6 +2,7 @@ import importlib.util
 import pathlib
 import sys
 import unittest
+from unittest import mock
 
 
 SCRIPT_PATH = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "nzbdav_arr_report_validation.py"
@@ -13,6 +14,56 @@ SPEC.loader.exec_module(nzbdav_arr_report_validation)
 
 
 class ArrReportValidationTests(unittest.TestCase):
+    def test_fetch_documents_does_not_request_general_config(self):
+        requested_paths = []
+
+        def request_json(_base_url, path, _api_key):
+            requested_paths.append(path)
+            return {}
+
+        with (
+            mock.patch.object(nzbdav_arr_report_validation, "request_json", side_effect=request_json),
+            mock.patch.object(
+                nzbdav_arr_report_validation,
+                "request_config",
+                create=True,
+                side_effect=AssertionError("general config must not be requested with the public API key"),
+            ),
+        ):
+            documents = nzbdav_arr_report_validation.fetch_documents("https://nzbdav.example", "public-key")
+
+        self.assertNotIn("config", documents)
+        self.assertEqual(
+            [
+                "/api/arr/validation",
+                "/api/arr/search-nudges?limit=500",
+                "/api/arr/correlations?limit=500",
+                "/api?mode=fullstatus",
+            ],
+            requested_paths,
+        )
+
+    def test_validate_documents_reads_non_secret_policy_from_validation(self):
+        checks = nzbdav_arr_report_validation.validate_documents(
+            {
+                "validation": {
+                    "configured_apps": ["radarr", "sonarr"],
+                    "search_nudge_mode": "report",
+                    "duplicate_nzb_behavior": "increment",
+                    "queue_items": 1,
+                    "correlation_coverage_percent": 95,
+                    "search_nudges": {"failed": 0},
+                    "issues": [],
+                },
+                "search_nudges": {"commands": []},
+                "fullstatus": {},
+            },
+            min_correlation=90,
+            low_correlation_reason=None,
+        )
+
+        self.assertTrue(all(check["passed"] for check in checks))
+
     def test_validate_documents_accepts_clean_report_mode(self):
         checks = nzbdav_arr_report_validation.validate_documents(
             documents(
@@ -110,26 +161,21 @@ def documents(
     issues,
     queue_items=1,
 ):
-    arr_config = {
-        "SonarrInstances": [{}] if sonarr else [],
-        "RadarrInstances": [{}] if radarr else [],
-        "SearchNudge": {"Mode": search_mode},
-    }
     return {
         "validation": {
+            "configured_apps": [
+                *(["sonarr"] if sonarr else []),
+                *(["radarr"] if radarr else []),
+            ],
+            "search_nudge_mode": search_mode,
+            "duplicate_nzb_behavior": duplicate_behavior,
             "queue_items": queue_items,
             "correlation_coverage_percent": coverage,
             "search_nudges": {"failed": failed_nudges},
             "issues": issues,
         },
         "search_nudges": {"commands": []},
-        "fullstatus": {"status": {"arr_search_nudge": {"mode": search_mode}}},
-        "config": {
-            "configItems": [
-                {"configName": "arr.instances", "configValue": __import__("json").dumps(arr_config)},
-                {"configName": "api.duplicate-nzb-behavior", "configValue": duplicate_behavior},
-            ]
-        },
+        "fullstatus": {},
     }
 
 

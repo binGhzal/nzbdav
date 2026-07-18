@@ -1,0 +1,308 @@
+name: "Reusable Verification Gate"
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  transfer-native:
+    name: "Transfer native (${{ matrix.libc }} / ${{ matrix.arch }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            platform: linux/amd64
+            uname: x86_64
+            libc: glibc
+            image: mcr.microsoft.com/dotnet/sdk:10.0-noble@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5
+          - arch: arm64
+            platform: linux/arm64
+            uname: aarch64
+            libc: glibc
+            image: mcr.microsoft.com/dotnet/sdk:10.0-noble@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5
+          - arch: x64
+            platform: linux/amd64
+            uname: x86_64
+            libc: musl
+            image: mcr.microsoft.com/dotnet/sdk:10.0-alpine@sha256:940f919ae84dd92ccd4aab7686fa5b777870b006c9360351039e16bcaad73d89
+          - arch: arm64
+            platform: linux/arm64
+            uname: aarch64
+            libc: musl
+            image: mcr.microsoft.com/dotnet/sdk:10.0-alpine@sha256:940f919ae84dd92ccd4aab7686fa5b777870b006c9360351039e16bcaad73d89
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU for arm64 ABI execution
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+        with:
+          platforms: arm64
+
+      - name: Execute Transfer descriptor and security suite
+        env:
+          DOTNET_SDK_IMAGE: ${{ matrix.image }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          EXPECTED_UNAME: ${{ matrix.uname }}
+          RESULT_NAME: transfer-${{ matrix.libc }}-${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          result_dir="$PWD/artifacts/test-results/$RESULT_NAME"
+          mkdir -p "$result_dir"
+          docker run --rm --platform "$TARGET_PLATFORM" \
+            -v "$PWD:/source:ro" \
+            -v "$result_dir:/results" \
+            "$DOTNET_SDK_IMAGE" sh -euc '
+              test "$(uname -m)" = "'"$EXPECTED_UNAME"'"
+              mkdir -p /tmp/nzbdav
+              cp -a /source/backend /source/backend.Tests /tmp/nzbdav/
+              cd /tmp/nzbdav
+              dotnet restore backend.Tests/backend.Tests.csproj --nologo
+              dotnet test backend.Tests/backend.Tests.csproj \
+                --configuration Release --no-restore --nologo \
+                --filter "FullyQualifiedName~backend.Tests.Database.Transfer&FullyQualifiedName!~backend.Tests.Database.Transfer.TransferV3ImportStateStorePostgreSqlTests" \
+                --logger "trx;LogFileName='"$RESULT_NAME"'.trx" \
+                --results-directory /results
+            '
+          python3 scripts/validate_trx_results.py \
+            "$result_dir/$RESULT_NAME.trx"
+
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    services:
+      postgres:
+        image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+        env:
+          POSTGRES_DB: nzbdav
+          POSTGRES_USER: nzbdav
+          POSTGRES_PASSWORD: nzbdav
+          TZ: Etc/UTC
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U nzbdav -d nzbdav"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,size=512m
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore backend
+        run: >-
+          dotnet restore backend.Tests/backend.Tests.csproj
+          -p:NuGetAudit=true
+          -p:NuGetAuditMode=all
+          -warnaserror:NU1901,NU1902,NU1903,NU1904
+
+      - name: Scan NuGet vulnerabilities
+        run: dotnet list backend.Tests/backend.Tests.csproj package --vulnerable --include-transitive
+
+      - name: Test native PostgreSQL integration first
+        env:
+          TZ: Etc/UTC
+          NZBDAV_LEGACY_TIMESTAMP_TIMEZONE: Etc/UTC
+          NZBDAV_REQUIRE_POSTGRES_TESTS: "1"
+          NZBDAV_TEST_POSTGRES_CONNECTION_STRING: "Host=127.0.0.1;Port=55432;Database=nzbdav;Username=nzbdav;Password=nzbdav;Timezone=Etc/UTC;GSS Encryption Mode=Disable"
+        run: >-
+          dotnet test backend.Tests/backend.Tests.csproj
+          --configuration Release --no-restore
+          --filter "FullyQualifiedName~PostgreSql"
+          --logger "trx;LogFileName=postgres-first.trx"
+          --results-directory artifacts/test-results/postgres-first
+
+      - name: Test complete backend suite
+        env:
+          TZ: Etc/UTC
+          NZBDAV_LEGACY_TIMESTAMP_TIMEZONE: Etc/UTC
+          NZBDAV_REQUIRE_POSTGRES_TESTS: "1"
+          NZBDAV_TEST_POSTGRES_CONNECTION_STRING: "Host=127.0.0.1;Port=55432;Database=nzbdav;Username=nzbdav;Password=nzbdav;Timezone=Etc/UTC;GSS Encryption Mode=Disable"
+        run: >-
+          dotnet test backend.Tests/backend.Tests.csproj
+          --configuration Release --no-restore
+          --logger "trx;LogFileName=backend-full.trx"
+          --results-directory artifacts/test-results/backend-full
+
+      - name: Validate native backend TRX results
+        run: >-
+          python3 scripts/validate_trx_results.py
+          artifacts/test-results/postgres-first/postgres-first.trx
+          artifacts/test-results/backend-full/backend-full.trx
+
+      - name: Test PostgreSQL integration on Alpine musl
+        env:
+          DOTNET_SDK_IMAGE: mcr.microsoft.com/dotnet/sdk:10.0-alpine@sha256:940f919ae84dd92ccd4aab7686fa5b777870b006c9360351039e16bcaad73d89
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/test-results/postgres-musl
+          docker run --rm --network host \
+            -e TZ=Etc/UTC \
+            -e NZBDAV_LEGACY_TIMESTAMP_TIMEZONE=Etc/UTC \
+            -e NZBDAV_REQUIRE_POSTGRES_TESTS=1 \
+            -e 'NZBDAV_TEST_POSTGRES_CONNECTION_STRING=Host=127.0.0.1;Port=55432;Database=nzbdav;Username=nzbdav;Password=nzbdav;Timezone=Etc/UTC;GSS Encryption Mode=Disable' \
+            -v "$PWD:/source:ro" \
+            -v "$PWD/artifacts/test-results/postgres-musl:/results" \
+            "$DOTNET_SDK_IMAGE" sh -euc '
+              mkdir -p /tmp/nzbdav
+              cp -a /source/backend /source/backend.Tests /tmp/nzbdav/
+              cd /tmp/nzbdav
+              dotnet restore backend.Tests/backend.Tests.csproj
+              dotnet test backend.Tests/backend.Tests.csproj \
+                --configuration Release --no-restore \
+                --filter "FullyQualifiedName~PostgreSql" \
+                --logger "trx;LogFileName=postgres-musl.trx" \
+                --results-directory /results
+            '
+          python3 scripts/validate_trx_results.py \
+            artifacts/test-results/postgres-musl/postgres-musl.trx
+
+      - name: Validate Python tooling
+        run: |
+          python3 -m compileall -q scripts tests
+          python3 -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Assert public PostgreSQL migration command remains disabled
+        run: |
+          set +e
+          output=$(NZBDAV_DATABASE_PROVIDER=postgres \
+            dotnet run --project backend/NzbWebDAV.csproj --configuration Release --no-build -- \
+            --db-migration 2>&1)
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::Public PostgreSQL migration command unexpectedly succeeded."
+            exit 1
+          fi
+          if ! grep -Fq \
+            "PostgreSQL runtime is disabled until the provider-native migration and transfer gates pass" \
+            <<<"$output"; then
+            echo "::error::Public PostgreSQL refusal message was not emitted."
+            exit 1
+          fi
+          if grep -Fq "NZBDAV_DATABASE_CONNECTION_STRING" <<<"$output"; then
+            echo "::error::Public PostgreSQL refusal read the connection secret path."
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24.x"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Scan npm vulnerabilities
+        working-directory: frontend
+        run: npm audit --audit-level=moderate
+
+      - name: Typecheck frontend
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Test frontend
+        working-directory: frontend
+        run: npm run test
+
+      - name: Build frontend client
+        working-directory: frontend
+        run: npm run build
+
+      - name: Build frontend server
+        working-directory: frontend
+        run: npm run build:server
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke test frontend server
+        working-directory: frontend
+        run: npm run test:e2e
+
+      - name: Build Docker image
+        run: docker build -t nzbdav:ci .
+
+      - name: Test entrypoint lifecycle contract
+        run: sh tests/test_entrypoint_contract.sh
+
+      - name: Test container lifecycle contract
+        env:
+          NZBDAV_TEST_IMAGE: nzbdav:ci
+        run: sh tests/test_entrypoint_container.sh
+
+      - name: Assert pinned runtime versions
+        run: |
+          docker run --rm --entrypoint sh nzbdav:ci -euc '
+            test "$(node --version)" = "v24.18.0"
+            test "$(npm --version)" = "11.16.0"
+            test "$(cat /etc/alpine-release)" = "3.23.5"
+            dotnet --list-runtimes | grep -Fq "Microsoft.NETCore.App 10.0.9"
+            dotnet --list-runtimes | grep -Fq "Microsoft.AspNetCore.App 10.0.9"
+          '
+
+      - name: Test migration failure exits nonzero
+        run: |
+          set +e
+          timeout 60s docker run --rm \
+            -e CONFIG_PATH=/dev/null \
+            -e FRONTEND_BACKEND_API_KEY=ci-entrypoint-test \
+            nzbdav:ci >/tmp/nzbdav-entrypoint.log 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::Container exited successfully after a forced migration failure."
+            exit 1
+          fi
+          if [ "$rc" -eq 124 ]; then
+            echo "::error::Container did not fail closed after the forced migration failure."
+            exit 1
+          fi
+
+      - name: Validate changed-range whitespace
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PR_BASE_SHA" ]; then
+            base="$PR_BASE_SHA"
+            range="$base...$GITHUB_SHA"
+          elif [ -n "$PUSH_BEFORE_SHA" ] \
+            && [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ] \
+            && git rev-parse --verify "$PUSH_BEFORE_SHA^{commit}" >/dev/null 2>&1; then
+            base="$PUSH_BEFORE_SHA"
+            range="$base..$GITHUB_SHA"
+          elif git rev-parse --verify "$GITHUB_SHA^" >/dev/null 2>&1; then
+            base=$(git rev-parse "$GITHUB_SHA^")
+            range="$base..$GITHUB_SHA"
+          else
+            base=$(git hash-object -t tree /dev/null)
+            range="$base..$GITHUB_SHA"
+          fi
+          echo "Checking whitespace in $range"
+          git diff --check "$range"

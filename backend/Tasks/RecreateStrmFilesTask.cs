@@ -2,6 +2,7 @@
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -11,10 +12,11 @@ namespace NzbWebDAV.Tasks;
 public class RecreateStrmFilesTask(
     ConfigManager configManager,
     DavDatabaseClient dbClient,
-    WebsocketManager websocketManager
-) : BaseTask(websocketManager, WebsocketTopic.RecreateStrmFilesTaskProgress)
+    WebsocketManager websocketManager,
+    MaintenanceProgressReporter? progressReporter = null
+) : BaseTask(websocketManager, WebsocketTopic.RecreateStrmFilesTaskProgress, progressReporter)
 {
-    public async Task RecreateStrmFiles()
+    public async Task RecreateStrmFiles(CancellationToken cancellationToken = default)
     {
         Report("Collecting all strm file candidates...");
 
@@ -25,9 +27,10 @@ public class RecreateStrmFilesTask(
             .AsAsyncEnumerable();
         var progress = 0;
 
-        await foreach (var file in files.WithCancellation(CancellationToken).ConfigureAwait(false))
+        await foreach (var file in files.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            ReportDebounced($"Creating strm file {progress + 1}.");
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportDebounced($"Creating strm file {progress + 1}.", progress, null);
             try
             {
                 await StrmFileUtil.CreateStrmFileAsync(configManager, file).ConfigureAwait(false);
@@ -39,7 +42,7 @@ public class RecreateStrmFilesTask(
             }
         }
 
-        Report($"Done. Created {progress} strm files.");
+        Report($"Done. Created {progress} strm files.", progress, progress);
     }
 
     private static bool IsPerFileFilesystemException(Exception exception) =>
@@ -50,16 +53,8 @@ public class RecreateStrmFilesTask(
             or NotSupportedException
             or ArgumentException;
 
-    protected override async Task ExecuteInternal()
+    protected override Task ExecuteInternal(CancellationToken cancellationToken)
     {
-        try
-        {
-            await RecreateStrmFiles().ConfigureAwait(false);
-        }
-        catch (Exception e)
-        {
-            Report($"Failed: {e.Message}");
-            Log.Error(e, "Failed to recreate strm files.");
-        }
+        return RecreateStrmFiles(cancellationToken);
     }
 }

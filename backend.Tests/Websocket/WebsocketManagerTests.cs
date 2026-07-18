@@ -1,5 +1,7 @@
 using System.Net.WebSockets;
 using System.Reflection;
+using System.Text;
+using System.Text.Json;
 using NzbWebDAV.Websocket;
 
 namespace backend.Tests.Websocket;
@@ -20,6 +22,7 @@ public sealed class WebsocketManagerTests
         Assert.Equal(1, failedSocket.SendCount);
         Assert.Equal(2, healthySocket.SendCount);
         Assert.Equal(1, GetAuthenticatedSocketCount(manager));
+        Assert.Equal(1, GetSocketSendStateCount(manager));
     }
 
     [Fact]
@@ -47,6 +50,46 @@ public sealed class WebsocketManagerTests
         Assert.Equal(1, blockedSocket.SendCount);
         Assert.Equal(1, healthySocket.SendCount);
         Assert.Equal(1, GetAuthenticatedSocketCount(manager));
+        Assert.Equal(1, GetSocketSendStateCount(manager));
+    }
+
+    [Fact]
+    public async Task SendMessage_SerializesEachSocketWithoutBlockingFanoutToOtherSockets()
+    {
+        var manager = new WebsocketManager();
+        var orderedSocket = new RecordingWebSocket(
+            failSends: false,
+            blockFirstSend: true,
+            rejectConcurrentSends: true);
+        var fastSocket = new RecordingWebSocket(failSends: false);
+        AddAuthenticatedSockets(manager, orderedSocket, fastSocket);
+
+        var removeTask = manager.SendMessage(WebsocketTopic.QueueItemRemoved, "queue-id");
+        await orderedSocket.FirstSendStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        var historyTask = manager.SendMessage(WebsocketTopic.HistoryItemAdded, "history-json");
+
+        int orderedSendCountBeforeRelease;
+        bool fastSocketReceivedBothBeforeRelease;
+        try
+        {
+            await fastSocket.SecondSendStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            orderedSendCountBeforeRelease = orderedSocket.SendCount;
+            fastSocketReceivedBothBeforeRelease = fastSocket.SendCount == 2;
+        }
+        finally
+        {
+            orderedSocket.ReleaseFirstSend();
+        }
+
+        await Task.WhenAll(removeTask, historyTask).WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(1, orderedSendCountBeforeRelease);
+        Assert.True(fastSocketReceivedBothBeforeRelease);
+        Assert.Equal(1, orderedSocket.MaxConcurrentSends);
+        Assert.Equal(["qr", "ha"], orderedSocket.Messages.Select(GetTopic));
+        Assert.Equal(["qr", "ha"], fastSocket.Messages.Select(GetTopic));
+        Assert.Equal(2, GetAuthenticatedSocketCount(manager));
+        Assert.Equal(2, GetSocketSendStateCount(manager));
     }
 
     private static void AddAuthenticatedSockets(WebsocketManager manager, params WebSocket[] sockets)
@@ -61,6 +104,22 @@ public sealed class WebsocketManagerTests
         return GetAuthenticatedSockets(manager).Count;
     }
 
+    private static int GetSocketSendStateCount(WebsocketManager manager)
+    {
+        var field = typeof(WebsocketManager).GetField(
+            "_socketSendStates",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        var states = Assert.IsAssignableFrom<System.Collections.IDictionary>(field.GetValue(manager));
+        return states.Count;
+    }
+
+    private static string GetTopic(string message)
+    {
+        using var json = JsonDocument.Parse(message);
+        return Assert.IsType<string>(json.RootElement.GetProperty("Topic").GetString());
+    }
+
     private static HashSet<WebSocket> GetAuthenticatedSockets(WebsocketManager manager)
     {
         var field = typeof(WebsocketManager).GetField(
@@ -70,13 +129,41 @@ public sealed class WebsocketManagerTests
         return Assert.IsType<HashSet<WebSocket>>(field.GetValue(manager));
     }
 
-    private sealed class RecordingWebSocket(bool failSends) : WebSocket
+    private sealed class RecordingWebSocket(
+        bool failSends,
+        bool blockFirstSend = false,
+        bool rejectConcurrentSends = false) : WebSocket
     {
-        public int SendCount { get; private set; }
+        private readonly Lock _messagesLock = new();
+        private readonly List<string> _messages = [];
+        private readonly TaskCompletionSource _releaseFirstSend =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _activeSends;
+        private int _maxConcurrentSends;
+        private int _sendCount;
+
+        public TaskCompletionSource FirstSendStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource SecondSendStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int SendCount => Volatile.Read(ref _sendCount);
+        public int MaxConcurrentSends => Volatile.Read(ref _maxConcurrentSends);
+        public IReadOnlyList<string> Messages
+        {
+            get
+            {
+                lock (_messagesLock) return _messages.ToArray();
+            }
+        }
         public override WebSocketCloseStatus? CloseStatus => null;
         public override string? CloseStatusDescription => null;
         public override WebSocketState State => WebSocketState.Open;
         public override string? SubProtocol => null;
+
+        public void ReleaseFirstSend()
+        {
+            _releaseFirstSend.TrySetResult();
+        }
 
         public override void Abort()
         {
@@ -114,16 +201,44 @@ public sealed class WebsocketManagerTests
                 closeStatusDescription: "closed"));
         }
 
-        public override Task SendAsync(
+        public override async Task SendAsync(
             ArraySegment<byte> buffer,
             WebSocketMessageType messageType,
             bool endOfMessage,
             CancellationToken cancellationToken)
         {
-            SendCount++;
-            if (failSends)
-                throw new IOException("send failed");
-            return Task.CompletedTask;
+            var activeSends = Interlocked.Increment(ref _activeSends);
+            UpdateMax(ref _maxConcurrentSends, activeSends);
+            var sendCount = Interlocked.Increment(ref _sendCount);
+            lock (_messagesLock)
+                _messages.Add(Encoding.UTF8.GetString(buffer.Array!, buffer.Offset, buffer.Count));
+            if (sendCount == 1) FirstSendStarted.TrySetResult();
+            if (sendCount == 2) SecondSendStarted.TrySetResult();
+
+            try
+            {
+                if (rejectConcurrentSends && activeSends > 1)
+                    throw new IOException("overlapping WebSocket sends are not supported");
+                if (failSends)
+                    throw new IOException("send failed");
+                if (blockFirstSend && sendCount == 1)
+                    await _releaseFirstSend.Task.ConfigureAwait(false);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activeSends);
+            }
+        }
+
+        private static void UpdateMax(ref int location, int value)
+        {
+            var observed = Volatile.Read(ref location);
+            while (value > observed)
+            {
+                var original = Interlocked.CompareExchange(ref location, value, observed);
+                if (original == observed) return;
+                observed = original;
+            }
         }
     }
 

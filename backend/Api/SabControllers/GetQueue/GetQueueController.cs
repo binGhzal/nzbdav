@@ -35,7 +35,7 @@ public class GetQueueController(
             })
             .Where(x => MatchesRequestFilters(x.queueItem, request, x.status))
             .ToList();
-        var inProgressQueueItemIds = inProgressQueueItems
+        var inProgressQueueItemIds = rawInProgressQueueItems
             .Select(x => x.queueItem.Id)
             .ToHashSet();
         // get total count
@@ -58,25 +58,14 @@ public class GetQueueController(
                 ct,
                 inProgressQueueItemIds).ConfigureAwait(false)
             : 0;
-        var includePostDownloadVerifyItems = ShouldIncludePostDownloadVerifyItems(request);
-        var postDownloadVerifyTotalCount = includePostDownloadVerifyItems
-            ? await CountPostDownloadVerifyItemsAsync(request, ct).ConfigureAwait(false)
-            : 0;
         var includePostDownloadRepairItems = ShouldIncludePostDownloadRepairItems(request);
         var postDownloadRepairTotalCount = includePostDownloadRepairItems
             ? await CountPostDownloadRepairItemsAsync(request, ct).ConfigureAwait(false)
             : 0;
         var totalCount = inProgressQueueItems.Count
                          + waitingTotalCount
-                         + postDownloadVerifyTotalCount
                          + postDownloadRepairTotalCount;
         var totalCountAll = await dbClient.GetQueueItemsCount(request.Category, ct).ConfigureAwait(false)
-                            + await CountPostDownloadVerifyItemsAsync(
-                                    request,
-                                    ct,
-                                    includeRegardlessOfStatus: true,
-                                    onlyCategoryFilter: true)
-                                .ConfigureAwait(false)
                             + await CountPostDownloadRepairItemsAsync(
                                     request,
                                     ct,
@@ -85,9 +74,7 @@ public class GetQueueController(
                                 .ConfigureAwait(false);
 
         List<GetQueueResponse.QueueSlot> slots;
-        if (inProgressQueueItems.Count == 0
-            && postDownloadVerifyTotalCount == 0
-            && postDownloadRepairTotalCount == 0)
+        if (inProgressQueueItems.Count == 0 && postDownloadRepairTotalCount == 0)
         {
             // Common live-refresh path: with no active rows to merge, let the database do paging
             // instead of over-fetching start + limit rows and sorting/skipping them in memory.
@@ -137,9 +124,6 @@ public class GetQueueController(
                     waitingLimit,
                     ct).ConfigureAwait(false)
                 : [];
-            var postDownloadVerifyItems = includePostDownloadVerifyItems && waitingLimit > 0
-                ? await GetPostDownloadVerifyItemsAsync(request, waitingLimit, ct).ConfigureAwait(false)
-                : [];
             var postDownloadRepairItems = includePostDownloadRepairItems && waitingLimit > 0
                 ? await GetPostDownloadRepairItemsAsync(request, waitingLimit, ct).ConfigureAwait(false)
                 : [];
@@ -151,7 +135,6 @@ public class GetQueueController(
                     null,
                     x.Priority == QueueItem.PriorityOption.Paused ? "Paused" : "Queued",
                     null)))
-                .Concat(postDownloadVerifyItems.Select(x => QueueListItem.FromPostDownloadWorker(x)))
                 .Concat(postDownloadRepairItems.Select(x => QueueListItem.FromPostDownloadWorker(x)))
                 .ToList();
             var hints = await dbClient.GetQueuePriorityHintsAsync(
@@ -187,7 +170,6 @@ public class GetQueueController(
             ? "Paused"
             : inProgressQueueItems.Count > 0 ? "Downloading"
             : postDownloadRepairTotalCount > 0 ? "Repairing"
-            : postDownloadVerifyTotalCount > 0 ? "Verifying"
             : totalCount > 0 ? "Queued"
             : "Idle";
 
@@ -210,77 +192,6 @@ public class GetQueueController(
                 SizeLeft = $"{GetQueueResponse.QueueSlot.FormatSizeMB((long)sizeLeftBytes)} MB",
             }
         };
-    }
-
-    private async Task<int> CountPostDownloadVerifyItemsAsync(
-        GetQueueRequest request,
-        CancellationToken ct,
-        bool includeRegardlessOfStatus = false,
-        bool onlyCategoryFilter = false)
-    {
-        if (!includeRegardlessOfStatus && !ShouldIncludePostDownloadVerifyItems(request)) return 0;
-        return await GetPostDownloadVerifyItemsQuery(request, onlyCategoryFilter)
-            .CountAsync(ct)
-            .ConfigureAwait(false);
-    }
-
-    private async Task<List<PostDownloadWorkerQueueItem>> GetPostDownloadVerifyItemsAsync(
-        GetQueueRequest request,
-        int limit,
-        CancellationToken ct)
-    {
-        if (!ShouldIncludePostDownloadVerifyItems(request) || limit <= 0) return [];
-        return await GetPostDownloadVerifyItemsQuery(request, onlyCategoryFilter: false)
-            .OrderByDescending(x => x.WorkerPriority)
-            .ThenBy(x => x.HistoryCreatedAt)
-            .Take(limit)
-            .ToListAsync(ct)
-            .ConfigureAwait(false);
-    }
-
-    private IQueryable<PostDownloadWorkerQueueItem> GetPostDownloadVerifyItemsQuery(
-        GetQueueRequest request,
-        bool onlyCategoryFilter)
-    {
-        var activeStatuses = new[]
-        {
-            WorkerJob.JobStatus.Pending,
-            WorkerJob.JobStatus.Leased,
-            WorkerJob.JobStatus.Retry
-        };
-        var query =
-            from workerJob in dbClient.Ctx.WorkerJobs.AsNoTracking()
-            join historyItem in dbClient.Ctx.HistoryItems.AsNoTracking()
-                on workerJob.TargetId equals historyItem.DownloadDirId
-            where workerJob.Kind == WorkerJob.JobKind.Verify
-                  && activeStatuses.Contains(workerJob.Status)
-                  && workerJob.PayloadJson != null
-                  && workerJob.PayloadJson.Contains("post_download_verify")
-                  && historyItem.DownloadStatus == HistoryItem.DownloadStatusOption.Completed
-            select new PostDownloadWorkerQueueItem
-            {
-                HistoryItemId = historyItem.Id,
-                HistoryCreatedAt = historyItem.CreatedAt,
-                FileName = historyItem.FileName,
-                JobName = historyItem.JobName,
-                Category = historyItem.Category,
-                TotalSegmentBytes = historyItem.TotalSegmentBytes,
-                WorkerPriority = workerJob.Priority,
-                Status = "Verifying"
-            };
-
-        if (request.Category != null)
-            query = query.Where(x => x.Category == request.Category);
-        if (onlyCategoryFilter) return query;
-
-        if (request.NzoIds.Count > 0)
-            query = query.Where(x => request.NzoIds.Contains(x.HistoryItemId));
-        if (!string.IsNullOrWhiteSpace(request.Search))
-            query = query.Where(x => x.JobName.Contains(request.Search) || x.FileName.Contains(request.Search));
-        if (request.Priorities.Count > 0)
-            query = ApplyPostDownloadWorkerPriorityFilter(query, request.Priorities);
-
-        return query;
     }
 
     private async Task<int> CountPostDownloadRepairItemsAsync(
@@ -373,11 +284,6 @@ public class GetQueueController(
             query = ApplyPostDownloadWorkerPriorityFilter(query, request.Priorities);
 
         return query;
-    }
-
-    private static bool ShouldIncludePostDownloadVerifyItems(GetQueueRequest request)
-    {
-        return request.Statuses.Count == 0 || request.Statuses.Contains("verifying");
     }
 
     private static bool ShouldIncludePostDownloadRepairItems(GetQueueRequest request)

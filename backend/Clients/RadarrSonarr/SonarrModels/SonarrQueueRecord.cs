@@ -6,11 +6,11 @@ namespace NzbWebDAV.Clients.RadarrSonarr.SonarrModels;
 public class SonarrQueueRecord: ArrQueueRecord
 {
     [JsonPropertyName("seriesId")]
-    public int SeriesId { get; set; }
+    public int? SeriesId { get; set; }
 
     [JsonPropertyName("episodeId")]
-    public int EpisodeId { get; set; }
+    public int? EpisodeId { get; set; }
 
     [JsonPropertyName("seasonNumber")]
-    public int SeasonNumber { get; set; }
+    public int? SeasonNumber { get; set; }
 }

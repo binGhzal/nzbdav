@@ -207,7 +207,7 @@ public sealed class ContentIndexSnapshotWriterService : BackgroundService
     private static async Task WriteSnapshotCoreAsync(long requestCount, CancellationToken cancellationToken)
     {
         var sw = Stopwatch.StartNew();
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
         await ContentIndexSnapshotStore.WriteAsync(dbContext, cancellationToken).ConfigureAwait(false);
         Log.Information(
             "Persisted /content recovery snapshot in {ElapsedMs} ms after coalescing {RequestCount} content-index change(s).",

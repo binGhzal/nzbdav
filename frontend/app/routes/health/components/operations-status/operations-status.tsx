@@ -1,15 +1,18 @@
 import { Form } from "react-router";
 import type {
     ArrCorrelationsResponse,
+    ArrImportCommandStatus,
     ArrDownloadCorrelation,
     ArrSearchNudgeCommandsResponse,
     ArrSearchNudgeRequestOptions,
     ArrValidationResponse,
+    CriticalPathStatus,
     FullStatusResponse,
     ProviderDiagnosticStatus,
     RepairRun,
     RepairStatusResponse,
     RepairWorkerQueue,
+    RcloneInvalidationStatus,
 } from "~/clients/backend-client.server";
 import styles from "./operations-status.module.css";
 import { useState } from "react";
@@ -87,6 +90,8 @@ export function OperationsStatus({
                     <RepairActions activeRun={activeRun} brokenFiles={brokenFiles} isActionSubmitting={isActionSubmitting} />
                 </section>
 
+                <CriticalPathPanel status={fullStatus?.critical_path} />
+
                 <section className={styles.panel}>
                     <div className={styles.header}>
                         <h3 className={styles.title}>Cache</h3>
@@ -114,12 +119,30 @@ export function OperationsStatus({
                         <Metric label="Active" value={fullStatus?.mount.active_operations ?? 0} />
                         <Metric label="Errors" value={fullStatus?.mount.fuse_errors ?? 0} tone={fullStatus?.mount.fuse_errors ? "danger" : undefined} />
                     </div>
+                    <RcloneInvalidationMetrics status={fullStatus?.rclone_invalidations ?? null} />
                     {fullStatus?.mount.message &&
                         <div className={styles.mutedLine}>{fullStatus.mount.message}</div>
                     }
                     {fullStatus?.mount.directory &&
                         <div className={styles.mutedLine}>{fullStatus.mount.directory}</div>
                     }
+                </section>
+
+                <section className={styles.panel}>
+                    <div className={styles.header}>
+                        <h3 className={styles.title}>Database</h3>
+                        <span className={styles.badge}>{fullStatus?.database.provider ?? "unknown"}</span>
+                    </div>
+                    <div className={styles.metricGrid}>
+                        <Metric label="Database" value={fullStatus ? formatBytes(fullStatus.database.database_bytes) : "unknown"} />
+                        <Metric label="WAL" value={fullStatus ? formatBytes(fullStatus.database.wal_bytes) : "unknown"} />
+                        <Metric label="Checkpoint Backlog" value={fullStatus ? formatBytes(fullStatus.database.checkpoint_backlog_bytes) : "unknown"} tone={fullStatus?.database.checkpoint_busy ? "warning" : undefined} />
+                        <Metric label="Freelist" value={fullStatus ? formatBytes(fullStatus.database.freelist_bytes) : "unknown"} />
+                        <Metric label="Query p95/p99" value={fullStatus ? `${fullStatus.database.query_p95_ms}/${fullStatus.database.query_p99_ms}ms` : "unknown"} />
+                        <Metric label="Txn p95/p99" value={fullStatus ? `${fullStatus.database.transaction_p95_ms}/${fullStatus.database.transaction_p99_ms}ms` : "unknown"} />
+                        <Metric label="Busy Retries" value={fullStatus?.database.busy_retries ?? 0} tone={fullStatus?.database.busy_retries ? "warning" : undefined} />
+                        <Metric label="Lease Retries" value={fullStatus?.database.lease_retries ?? 0} tone={fullStatus?.database.lease_retries ? "warning" : undefined} />
+                    </div>
                 </section>
 
                 <section className={styles.panel}>
@@ -160,6 +183,7 @@ export function OperationsStatus({
                         <Metric label="Duplicates" value={fullStatus?.arr_prioritization.duplicates ?? 0} tone={fullStatus?.arr_prioritization.duplicates ? "warning" : undefined} />
                         <Metric label="Nudge Failures" value={fullStatus?.arr_search_nudge.failed ?? 0} tone={fullStatus?.arr_search_nudge.failed ? "danger" : undefined} />
                     </div>
+                    <ArrImportMetrics status={fullStatus?.arr_import_commands ?? null} />
                     <div className={styles.workerGrid}>
                         <WorkerRow
                             label="Search"
@@ -176,6 +200,10 @@ export function OperationsStatus({
                                 .map(x => `${x.state} ${x.count}`)
                                 .join(" · ")}
                         </div>
+                    ) : null}
+                    {fullStatus?.arr_import_commands.last_error
+                        && fullStatus.arr_import_commands.last_error !== fullStatus.arr_import_commands.last_quarantine_reason ? (
+                        <div className={styles.mutedLine}>{fullStatus.arr_import_commands.last_error}</div>
                     ) : null}
                 </section>
 
@@ -375,6 +403,57 @@ export function OperationsStatus({
     );
 }
 
+export function ArrImportMetrics({ status }: { status: ArrImportCommandStatus | null }) {
+    return (
+        <>
+            <div className={styles.metricGrid}>
+                <Metric label="Import Pending" value={status?.pending ?? 0} />
+                <Metric label="Rclone Wait" value={status?.waiting_for_invalidation ?? 0} tone={status?.waiting_for_invalidation ? "warning" : undefined} />
+                <Metric label="Import Retry" value={status?.retry ?? 0} tone={status?.retry ? "danger" : undefined} />
+                <Metric label="Refresh Sent" value={status?.dispatched ?? 0} />
+                <Metric label="No ARR Route" value={status?.no_route ?? 0} tone={status?.no_route ? "warning" : undefined} />
+                <Metric label="Import Quarantine" value={status?.quarantined ?? 0} tone={status?.quarantined ? "danger" : undefined} />
+                <Metric label="Oldest Import" value={status?.oldest_active_age_seconds == null ? "none" : `${status.oldest_active_age_seconds}s`} />
+            </div>
+            {status?.last_quarantine_reason ? (
+                <div className={styles.mutedLine}>{status.last_quarantine_reason}</div>
+            ) : null}
+        </>
+    );
+}
+
+export function CriticalPathPanel({ status }: { status: CriticalPathStatus | undefined }) {
+    const stages: Array<[string, CriticalPathStatus[keyof CriticalPathStatus] | undefined]> = [
+        ["Blob durability", status?.add_file_blob_write],
+        ["NZB scan", status?.add_file_nzb_scan],
+        ["Acceptance commit", status?.add_file_atomic_commit],
+        ["Queue parse", status?.queue_parse],
+        ["First segments", status?.queue_first_segment_discovery],
+        ["PAR2", status?.queue_par2_discovery],
+        ["Processors", status?.queue_processors],
+        ["Completion", status?.queue_completion],
+    ];
+
+    return (
+        <section className={styles.panel}>
+            <div className={styles.header}>
+                <h3 className={styles.title}>Critical Path</h3>
+                <span className={styles.badge}>{status ? `${status.queue_completion.count} completions` : "unknown"}</span>
+            </div>
+            <div className={styles.metricGrid}>
+                {stages.map(([label, stage]) =>
+                    <Metric
+                        key={label}
+                        label={stage?.failures ? `${label} · ${stage.failures} failures` : label}
+                        value={!stage || stage.latency_samples === 0 ? "no samples" : `${stage.p95_ms}/${stage.p99_ms} ms`}
+                        tone={stage?.failures ? "danger" : undefined}
+                    />
+                )}
+            </div>
+        </section>
+    );
+}
+
 function CorrelationForm({
     correlation,
     isActionSubmitting,
@@ -554,7 +633,27 @@ function Metric({ label, value, tone }: { label: string; value: string | number;
     );
 }
 
-function getDegradedMessages(
+export function RcloneInvalidationMetrics({ status }: { status: RcloneInvalidationStatus | null }) {
+    if (!status) return null;
+    const rcConfigured = !status.visibility_fence_required
+        ? "not required"
+        : status.remote_control_enabled && status.host_configured
+            ? "configured"
+            : "incomplete";
+    return (
+        <div className={styles.metricGrid}>
+            <Metric label="Pending Invalidations" value={status.pending} tone={status.failed ? "danger" : undefined} />
+            <Metric label="Due Invalidations" value={status.ready} tone={status.ready ? "warning" : undefined} />
+            <Metric label="Failed Invalidations" value={status.failed} tone={status.failed ? "danger" : undefined} />
+            <Metric label="Oldest Pending" value={formatAge(status.oldest_pending_age_seconds)} tone={isAgedInvalidation(status) ? "warning" : undefined} />
+            <Metric label="Whole-cache Fence" value={status.whole_cache_visibility_fence_pending ? "pending" : "clear"} tone={status.whole_cache_visibility_fence_pending ? "warning" : undefined} />
+            <Metric label="RC Config" value={rcConfigured} tone={rcConfigured === "incomplete" ? "danger" : undefined} />
+            <Metric label="RC Evidence" value={status.last_successful_configured_call_at ? formatDate(status.last_successful_configured_call_at) : "none"} tone={status.pending && !status.last_successful_configured_call_at ? "warning" : undefined} />
+        </div>
+    );
+}
+
+export function getDegradedMessages(
     fullStatus: FullStatusResponse | null,
     repairStatus: RepairStatusResponse | null,
     fullStatusError: string | null,
@@ -572,8 +671,23 @@ function getDegradedMessages(
     if (arrValidationError) messages.push(arrValidationError);
     if (arrNudgesError) messages.push(arrNudgesError);
     if (arrCorrelationsError) messages.push(arrCorrelationsError);
+    const rclone = fullStatus?.rclone_invalidations;
+    if (rclone?.visibility_fence_required && !rclone.remote_control_enabled) {
+        messages.push("Rclone remote control is disabled while the rclone visibility fence is required.");
+    } else if (rclone?.visibility_fence_required && !rclone.host_configured) {
+        messages.push("Rclone remote control has no configured host while the visibility fence is required.");
+    }
+    if (rclone?.runtime_last_error) messages.push("The latest configured rclone remote-control call failed.");
+    if (rclone?.whole_cache_visibility_fence_pending) {
+        messages.push("Rclone whole-cache visibility fence is pending.");
+    }
     if (fullStatus?.rclone_invalidations.failed) messages.push("Rclone invalidation failures need attention.");
-    if (fullStatus?.rclone_invalidations.pending || fullStatus?.rclone_invalidations.ready) messages.push("Rclone invalidations are waiting to drain.");
+    if (rclone?.visibility_fence_required && rclone.pending && isAgedInvalidation(rclone)) {
+        messages.push(rclone.last_successful_configured_call_at
+            ? "Rclone invalidations have been pending for more than 10 seconds."
+            : "Rclone has no successful configured remote-control call for the pending visibility fence.");
+    }
+    if (fullStatus?.mount.state === "external-unverified") messages.push("External mount readiness and link traversal have not been verified.");
     if (fullStatus?.mount.enabled && !fullStatus.mount.ready) messages.push("Mounted filesystem is not ready.");
     if (fullStatus?.mount.fuse_errors) messages.push("Mounted filesystem reported FUSE errors.");
     if (repairStatus?.broken_files.length) messages.push("Repair has broken files requiring operator review.");
@@ -585,6 +699,20 @@ function getDegradedMessages(
         if (issue.severity === "error") messages.push(issue.message);
     }
     return messages;
+}
+
+const RCLONE_INVALIDATION_DEGRADED_AFTER_SECONDS = 10;
+
+function isAgedInvalidation(status: RcloneInvalidationStatus) {
+    return status.oldest_pending_age_seconds !== null
+        && status.oldest_pending_age_seconds >= RCLONE_INVALIDATION_DEGRADED_AFTER_SECONDS;
+}
+
+function formatAge(value: number | null) {
+    if (value === null) return "none";
+    if (value < 1) return "<1s";
+    if (value < 60) return `${Math.floor(value)}s`;
+    return `${Math.floor(value / 60)}m`;
 }
 
 function getCacheUsage(fullStatus: FullStatusResponse) {

@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Database.Transfer;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services;
@@ -12,6 +13,12 @@ using NzbWebDAV.Streams.Caching;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Config;
+
+public interface IRuntimePressureSource
+{
+    double GetMemoryPressureMultiplier();
+    double GetThreadPoolPressureMultiplier();
+}
 
 public class ConfigManager
 {
@@ -36,16 +43,34 @@ public class ConfigManager
 
     private readonly Dictionary<string, string> _config = new();
     private readonly object _runtimePressureLock = new();
+    private readonly IRuntimePressureSource _runtimePressureSource;
     private DateTimeOffset _lastCpuSampleAt = DateTimeOffset.UtcNow;
     private double _lastCpuUsageSeconds = GetCurrentCpuUsageSeconds();
     private double _lastProcessCpuCores;
     private double _lastCpuPressureMultiplier = 1.00;
     public event EventHandler<ConfigEventArgs>? OnConfigChanged;
 
+    public ConfigManager() : this(SystemRuntimePressureSource.Instance)
+    {
+    }
+
+    public ConfigManager(IRuntimePressureSource runtimePressureSource)
+    {
+        _runtimePressureSource = runtimePressureSource
+                                 ?? throw new ArgumentNullException(nameof(runtimePressureSource));
+    }
+
     public async Task LoadConfig()
     {
-        await using var dbContext = new DavDatabaseContext();
-        var configItems = await dbContext.ConfigItems.ToListAsync().ConfigureAwait(false);
+        await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
+        var configItems = await dbContext.ConfigItems
+            .AsNoTracking()
+            .Where(x => x.ConfigName != TransferV3ReservedConfigPolicy.ImportStateKey)
+            .ToListAsync()
+            .ConfigureAwait(false);
+        configItems = configItems
+            .Where(configItem => !TransferV3ReservedConfigPolicy.IsReserved(configItem.ConfigName))
+            .ToList();
         lock (_config)
         {
             _config.Clear();
@@ -128,6 +153,9 @@ public class ConfigManager
 
     public void UpdateValues(List<ConfigItem> configItems)
     {
+        ArgumentNullException.ThrowIfNull(configItems);
+        TransferV3ReservedConfigPolicy.ThrowIfReserved(configItems.Select(item => item.ConfigName));
+
         var changedConfig = new Dictionary<string, string>();
         lock (_config)
         {
@@ -164,7 +192,7 @@ public class ConfigManager
         if (existingValue is null || newValue is null) return false;
 
         if (configName == "rclone.host")
-            return NormalizeEndpointConfigOrNull(existingValue) == NormalizeEndpointConfigOrNull(newValue);
+            return EndpointIdentity.AreEquivalent(existingValue, newValue);
 
         if (IsMountTypeConfig(configName))
             return NormalizeMountTypeOrNull(existingValue) == NormalizeMountTypeOrNull(newValue);
@@ -212,7 +240,7 @@ public class ConfigManager
     private static string? NormalizeEndpointConfigOrNull(string? value)
     {
         if (value is null) return null;
-        var normalized = value.Trim().TrimEnd('/');
+        var normalized = value.Trim();
         return normalized.Length == 0 ? null : normalized;
     }
 
@@ -236,7 +264,7 @@ public class ConfigManager
 
     private static bool IsRcloneOptionalCredentialConfig(string configName)
     {
-        return configName is "rclone.user" or "rclone.pass";
+        return configName is "rclone.user" or "rclone.pass" or "rclone.fs";
     }
 
     private static string? NormalizeOptionalTextConfigOrNull(string? value)
@@ -680,8 +708,8 @@ public class ConfigManager
     public RuntimePressureSnapshot GetRuntimePressureSnapshot()
     {
         var cpuPressure = GetProcessCpuPressure();
-        var memoryMultiplier = GetMemoryPressureMultiplier();
-        var threadPoolMultiplier = GetThreadPoolPressureMultiplier();
+        var memoryMultiplier = _runtimePressureSource.GetMemoryPressureMultiplier();
+        var threadPoolMultiplier = _runtimePressureSource.GetThreadPoolPressureMultiplier();
         var effectiveMultiplier = Math.Min(cpuPressure.Multiplier, Math.Min(memoryMultiplier, threadPoolMultiplier));
         return new RuntimePressureSnapshot(
             ProcessCpuCores: cpuPressure.ProcessCpuCores,
@@ -806,6 +834,15 @@ public class ConfigManager
             var pending when pending >= cpuCount * 32L => 0.75,
             _ => 1.00
         };
+    }
+
+    private sealed class SystemRuntimePressureSource : IRuntimePressureSource
+    {
+        public static SystemRuntimePressureSource Instance { get; } = new();
+
+        public double GetMemoryPressureMultiplier() => ConfigManager.GetMemoryPressureMultiplier();
+
+        public double GetThreadPoolPressureMultiplier() => ConfigManager.GetThreadPoolPressureMultiplier();
     }
 
     public sealed record RuntimePressureSnapshot(
@@ -1279,6 +1316,11 @@ public class ConfigManager
     public string? GetRclonePass()
     {
         return NormalizeOptionalTextConfigOrNull(GetConfigValue("rclone.pass"));
+    }
+
+    public string? GetRcloneFs()
+    {
+        return NormalizeOptionalTextConfigOrNull(GetConfigValue("rclone.fs"))?.Trim();
     }
 
     public string GetUserAgent()

@@ -1,54 +1,35 @@
-﻿using NzbWebDAV.Utils;
+using NzbWebDAV.Services;
+using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Tasks;
 
 public abstract class BaseTask(
     WebsocketManager websocketManager,
-    WebsocketTopic reportTopic
+    WebsocketTopic reportTopic,
+    MaintenanceProgressReporter? progressReporter = null
 )
 {
-    protected abstract Task ExecuteInternal();
-    
-    private static readonly SemaphoreSlim Semaphore = new(1, 1);
-    private static Task? _runningTask;
+    private readonly Action<Action> _debounce = DebounceUtil.CreateDebounce();
 
-    protected readonly CancellationToken CancellationToken = SigtermUtil.GetCancellationToken();
+    protected CancellationToken ExecutionCancellationToken { get; private set; }
 
-    private static readonly Action<Action> Debounce = DebounceUtil.CreateDebounce();
+    protected abstract Task ExecuteInternal(CancellationToken cancellationToken);
 
-
-    public async Task<bool> Execute()
+    public Task Execute(CancellationToken cancellationToken = default)
     {
-        await Semaphore.WaitAsync(CancellationToken).ConfigureAwait(false);
-        Task? task;
-        try
-        {
-            // if the task is already running, return immediately.
-            if (_runningTask is { IsCompleted: false })
-                return false;
-
-            // otherwise, run the task.
-            _runningTask = Task.Run(ExecuteInternal, CancellationToken);
-            task = _runningTask;
-        }
-        finally
-        {
-            Semaphore.Release();
-        }
-
-        // and wait for it to finish.
-        await task.ConfigureAwait(false);
-        return true;
+        ExecutionCancellationToken = cancellationToken;
+        return ExecuteInternal(cancellationToken);
     }
 
-    protected virtual void Report(string message)
+    protected virtual void Report(string message, int? current = null, int? total = null)
     {
+        progressReporter?.Invoke(new MaintenanceTaskProgress(message, current, total)).GetAwaiter().GetResult();
         _ = websocketManager.SendMessage(reportTopic, message);
     }
 
-    protected void ReportDebounced(string message)
+    protected void ReportDebounced(string message, int? current = null, int? total = null)
     {
-        Debounce(() => Report(message));
+        _debounce(() => Report(message, current, total));
     }
 }

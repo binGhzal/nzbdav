@@ -19,10 +19,21 @@ public static class SabPagination
 
     public static int ParseLimit(string? value, string parameterName = "limit")
     {
+        return ParseBoundedLimit(value, parameterName, zeroMeansMaximum: false);
+    }
+
+    public static int ParseQueueLimit(string? value)
+    {
+        return ParseBoundedLimit(value, "limit", zeroMeansMaximum: true);
+    }
+
+    private static int ParseBoundedLimit(string? value, string parameterName, bool zeroMeansMaximum)
+    {
         if (value is null) return MaxLimit;
         if (!int.TryParse(value, out var limit))
             throw new BadHttpRequestException($"Invalid {parameterName} parameter");
 
+        if (zeroMeansMaximum && limit == 0) return MaxLimit;
         return Math.Clamp(limit, 0, MaxLimit);
     }
 

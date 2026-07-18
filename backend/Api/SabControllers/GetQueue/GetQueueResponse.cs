@@ -98,6 +98,9 @@ public class GetQueueResponse : SabBaseResponse
         [JsonPropertyName("arr_priority")]
         public ArrPriorityObject? ArrPriority { get; init; }
 
+        [JsonPropertyName("can_manage")]
+        public bool CanManage { get; init; } = true;
+
         public static QueueSlot FromQueueItem
         (
             QueueItem queueItem,
@@ -121,6 +124,7 @@ public class GetQueueResponse : SabBaseResponse
                 SizeInMB = FormatSizeMB(queueItem.TotalSegmentBytes),
                 SizeLeftInMB = FormatSizeMB((100 - Math.Clamp(progressPercentage, 0, 100)) * queueItem.TotalSegmentBytes / 100),
                 ArrPriority = priorityHint == null ? null : ArrPriorityObject.FromHint(priorityHint),
+                CanManage = true,
             };
         }
 
@@ -149,19 +153,9 @@ public class GetQueueResponse : SabBaseResponse
                 SizeInMB = FormatSizeMB(totalSegmentBytes),
                 SizeLeftInMB = "0.00",
                 ArrPriority = null,
+                CanManage = false,
             };
         }
-
-        public static QueueSlot FromPostDownloadVerify
-        (
-            Guid nzoId,
-            string fileName,
-            string category,
-            long totalSegmentBytes,
-            string priority,
-            int index = 0
-        ) =>
-            FromPostDownloadWorker(nzoId, fileName, category, totalSegmentBytes, priority, "Verifying", index);
 
         public static string FormatSizeMB(long bytes)
         {

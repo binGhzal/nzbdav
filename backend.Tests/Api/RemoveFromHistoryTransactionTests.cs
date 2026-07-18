@@ -16,10 +16,13 @@ namespace backend.Tests.Api;
 public sealed class RemoveFromHistoryTransactionTests
 {
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
+    [InlineData(true, ImportReceiptState.Removed)]
+    [InlineData(false, ImportReceiptState.Removed)]
+    [InlineData(true, ImportReceiptState.VerificationQuarantined)]
+    [InlineData(false, ImportReceiptState.VerificationQuarantined)]
     public async Task ControllerOwnedVerifiedDuplicateReturnsSuccessWithoutSecondBroadcast(
-        bool cleanupIsStillQueued)
+        bool cleanupIsStillQueued,
+        ImportReceiptState receiptState)
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -36,10 +39,15 @@ public sealed class RemoveFromHistoryTransactionTests
                 Id = Guid.NewGuid(),
                 DavItemId = davItemId,
                 HistoryItemId = historyId,
-                State = ImportReceiptState.Removed,
+                State = receiptState,
                 CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
                 UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
-                RemovedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+                RemovedAt = receiptState == ImportReceiptState.Removed
+                    ? DateTimeOffset.UtcNow.AddMinutes(-1)
+                    : null,
+                Detail = receiptState == ImportReceiptState.VerificationQuarantined
+                    ? "confirmed missing articles"
+                    : null
             });
             if (cleanupIsStillQueued)
             {
@@ -65,6 +73,11 @@ public sealed class RemoveFromHistoryTransactionTests
 
         Assert.True(response.Status);
         Assert.Equal("prior-removal", GetLastHistoryRemovalMessage(websocketManager));
+        await using var assertionContext = new DavDatabaseContext(options);
+        var receipt = await assertionContext.ImportReceipts.SingleAsync(x => x.DavItemId == davItemId);
+        Assert.Equal(receiptState, receipt.State);
+        if (receiptState == ImportReceiptState.VerificationQuarantined)
+            Assert.Equal("confirmed missing articles", receipt.Detail);
     }
 
     [Fact]

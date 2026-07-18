@@ -181,6 +181,57 @@ namespace NzbWebDAV.Database.Migrations
                     b.ToTable("ArrDownloadLifecycleEvents", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.ArrImportCommand", b =>
+                {
+                    b.Property<Guid>("Id");
+
+                    b.Property<int>("Attempts");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(255);
+
+                    b.Property<long?>("CompletedAt");
+
+                    b.Property<long>("CreatedAt");
+
+                    b.Property<Guid>("HistoryItemId");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2048);
+
+                    b.Property<long?>("LastAttemptAt");
+
+                    b.Property<long?>("LeaseExpiresAt");
+
+                    b.Property<Guid?>("LeaseToken");
+
+                    b.Property<long>("NextAttemptAt");
+
+                    b.Property<string>("RequiredInvalidationPathsJson")
+                        .IsRequired();
+
+                    b.Property<string>("ResultsJson")
+                        .IsRequired();
+
+                    b.Property<int>("Status");
+
+                    b.Property<long>("UpdatedAt");
+
+                    b.Property<long?>("VisibleAt");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HistoryItemId")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "LeaseExpiresAt");
+
+                    b.HasIndex("Status", "NextAttemptAt", "CreatedAt");
+
+                    b.ToTable("ArrImportCommands", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.ArrSearchNudgeCommand", b =>
                 {
                     b.Property<Guid>("Id");
@@ -323,6 +374,15 @@ namespace NzbWebDAV.Database.Migrations
                     b.HasIndex("Type", "HistoryItemId", "NextHealthCheck", "ReleaseDate", "Id");
 
                     b.ToTable("DavItems", (string)null);
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.ArrImportCommand", b =>
+                {
+                    b.HasOne("NzbWebDAV.Database.Models.HistoryItem", null)
+                        .WithMany()
+                        .HasForeignKey("HistoryItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.DavMultipartFile", b =>
@@ -505,6 +565,52 @@ namespace NzbWebDAV.Database.Migrations
                     b.ToTable("ImportReceipts", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.MaintenanceRun", b =>
+                {
+                    b.Property<Guid>("Id");
+
+                    b.Property<int?>("ActiveSlot");
+
+                    b.Property<long?>("CancellationRequestedAt");
+
+                    b.Property<long?>("CompletedAt");
+
+                    b.Property<long>("CreatedAt");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(4096);
+
+                    b.Property<int>("Kind");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(2048);
+
+                    b.Property<int>("ProgressCurrent");
+
+                    b.Property<int?>("ProgressTotal");
+
+                    b.Property<string>("RequestedBy")
+                        .IsRequired()
+                        .HasMaxLength(32);
+
+                    b.Property<long?>("StartedAt");
+
+                    b.Property<int>("Status");
+
+                    b.Property<long>("UpdatedAt");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActiveSlot")
+                        .IsUnique();
+
+                    b.HasIndex("Kind", "CreatedAt");
+
+                    b.HasIndex("Status", "CreatedAt");
+
+                    b.ToTable("MaintenanceRuns", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.NzbName", b =>
                 {
                     b.Property<Guid>("Id");
@@ -534,6 +640,9 @@ namespace NzbWebDAV.Database.Migrations
 
                     b.Property<string>("Path")
                         .IsRequired();
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken();
 
                     b.HasKey("Id");
 

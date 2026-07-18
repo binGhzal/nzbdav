@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Api.SabControllers.GetHistory;
 
@@ -16,9 +17,10 @@ public class GetHistoryController(
     private async Task<GetHistoryResponse> GetHistoryAsync(GetHistoryRequest request)
     {
         // get query
-        var hideActiveRepairJobs = await HasActiveRepairWorkersAsync(request.CancellationToken)
+        var hasActiveRepairJobs = await HistoryVisibilityPolicy
+            .HasActiveRepairJobsAsync(dbClient.Ctx, request.CancellationToken)
             .ConfigureAwait(false);
-        IQueryable<HistoryItem> query = GetHistoryItemsVisibleToSab(hideActiveRepairJobs);
+        IQueryable<HistoryItem> query = GetHistoryItemsVisibleToSab(hasActiveRepairJobs);
         if (request.NzoIds.Count > 0)
             query = query.Where(q => request.NzoIds.Contains(q.Id));
         if (request.Category != null)
@@ -43,7 +45,7 @@ public class GetHistoryController(
             .ConfigureAwait(false);
         var totalCountAll = IsUnfiltered(request)
             ? totalCount
-            : await GetHistoryItemsVisibleToSab(hideActiveRepairJobs)
+            : await GetHistoryItemsVisibleToSab(hasActiveRepairJobs)
                 .CountAsync(request.CancellationToken)
                 .ConfigureAwait(false);
 
@@ -93,52 +95,11 @@ public class GetHistoryController(
         };
     }
 
-    private async Task<bool> HasActiveRepairWorkersAsync(CancellationToken ct)
-    {
-        var activeWorkerStatuses = new[]
-        {
-            WorkerJob.JobStatus.Pending,
-            WorkerJob.JobStatus.Leased,
-            WorkerJob.JobStatus.Retry
-        };
-
-        return await dbClient.Ctx.WorkerJobs.AsNoTracking()
-            .AnyAsync(workerJob =>
-                workerJob.Kind == WorkerJob.JobKind.Repair
-                && activeWorkerStatuses.Contains(workerJob.Status), ct)
-            .ConfigureAwait(false);
-    }
-
-    private IQueryable<HistoryItem> GetHistoryItemsVisibleToSab(bool hideActiveRepairJobs)
-    {
-        var activeWorkerStatuses = new[]
-        {
-            WorkerJob.JobStatus.Pending,
-            WorkerJob.JobStatus.Leased,
-            WorkerJob.JobStatus.Retry
-        };
-
-        var query = dbClient.Ctx.HistoryItems
-            .AsNoTracking()
-            .Where(historyItem =>
-                historyItem.DownloadDirId == null
-                || !dbClient.Ctx.WorkerJobs.AsNoTracking().Any(workerJob =>
-                    workerJob.Kind == WorkerJob.JobKind.Verify
-                    && activeWorkerStatuses.Contains(workerJob.Status)
-                    && workerJob.TargetId == historyItem.DownloadDirId.Value
-                    && workerJob.PayloadJson != null
-                    && workerJob.PayloadJson.Contains("post_download_verify")));
-
-        if (!hideActiveRepairJobs) return query;
-
-        return query.Where(historyItem =>
-                !dbClient.Ctx.Items.AsNoTracking().Any(davItem =>
-                    davItem.HistoryItemId == historyItem.Id
-                    && dbClient.Ctx.WorkerJobs.AsNoTracking().Any(workerJob =>
-                        workerJob.Kind == WorkerJob.JobKind.Repair
-                        && activeWorkerStatuses.Contains(workerJob.Status)
-                        && workerJob.TargetId == davItem.Id)));
-    }
+    private IQueryable<HistoryItem> GetHistoryItemsVisibleToSab(bool hasActiveRepairJobs) =>
+        HistoryVisibilityPolicy.VisibleToSab(
+            dbClient.Ctx.HistoryItems.AsNoTracking(),
+            dbClient.Ctx,
+            hasActiveRepairJobs);
 
     protected override async Task<IActionResult> Handle()
     {

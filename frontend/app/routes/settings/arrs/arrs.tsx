@@ -449,6 +449,7 @@ function InstanceForm({ instance, index, type, onUpdate, onRemove }: InstanceFor
             const formData = new FormData();
             formData.append('host', host);
             formData.append('apiKey', apiKey);
+            formData.append('type', type);
 
             const response = await fetch(withUrlBase('/api/test-arr-connection'), {
                 method: 'POST',

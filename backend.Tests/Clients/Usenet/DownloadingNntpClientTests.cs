@@ -142,8 +142,11 @@ public class DownloadingNntpClientTests
     {
         using var innerClient = new BlockingNntpClient();
         using var client = new DownloadingNntpClient(innerClient, CreateConfigManager(maxDownloadConnections: 1));
-        using var lowTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        using var verifyTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // These tokens cover the complete multi-stage scheduling scenario, not
+        // one wait. Keep enough headroom for a fully parallel backend test run;
+        // individual hand-offs are still asserted in order below.
+        using var lowTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var verifyTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var verifyPriorityContext = verifyTimeout.Token.SetContext(new DownloadPriorityContext
         {
             Priority = SemaphorePriority.Normal
@@ -197,8 +200,11 @@ public class DownloadingNntpClientTests
             providerName: "provider",
             providerPriority: 0,
             statPipeliningEnabled: true);
-        using var lowTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        using var verifyTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // These tokens cover the complete multi-stage scheduling scenario, not
+        // one wait. Leave headroom for a fully parallel backend test run; the
+        // individual hand-offs are still asserted in order below.
+        using var lowTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var verifyTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var activeDownloadPriority = lowTimeout.Token.SetContext(new DownloadPriorityContext
         {
             Priority = SemaphorePriority.Low

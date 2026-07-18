@@ -1,23 +1,24 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using NzbWebDAV.Config;
-using NzbWebDAV.Database;
-using NzbWebDAV.Tasks;
-using NzbWebDAV.Websocket;
+﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using NzbWebDAV.Api.Controllers.Maintenance;
+using NzbWebDAV.Database.Models;
+using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Api.Controllers;
 
 [ApiController]
 [Route("api/recreate-strm-files")]
-public class RecreateStrmFiles(
-    ConfigManager configManager,
-    DavDatabaseClient dbClient,
-    WebsocketManager websocketManager
-) : BaseApiController
+public class RecreateStrmFiles(MaintenanceRunService service) : BaseApiController
 {
-    protected override async Task<IActionResult> HandleRequest()
+    protected override Task<IActionResult> HandleRequest()
     {
-        var task = new RecreateStrmFilesTask(configManager, dbClient, websocketManager);
-        var executed = await task.Execute().ConfigureAwait(false);
-        return Ok(executed);
+        if (!HttpMethods.IsPost(HttpContext.Request.Method))
+            return Task.FromResult<IActionResult>(
+                MaintenanceControllerHelpers.MethodNotAllowed(this, HttpMethods.Post));
+        return MaintenanceControllerHelpers.StartRunAsync(
+            this,
+            service,
+            MaintenanceRunKind.RecreateStrmFiles,
+            HttpContext.RequestAborted);
     }
 }

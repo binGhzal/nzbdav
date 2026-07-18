@@ -31,14 +31,22 @@ public sealed class DatabaseProviderSelectionTests
     }
 
     [Fact]
-    public void DavDatabaseContext_UsesPostgresWhenConfigured()
+    public void SqliteMigrationSnapshotMatchesTheRuntimeModel()
+    {
+        using var env = DatabaseEnvironmentScope.Create(provider: null, connectionString: null);
+        using var dbContext = new DavDatabaseContext();
+
+        Assert.False(dbContext.Database.HasPendingModelChanges());
+    }
+
+    [Fact]
+    public void DavDatabaseContext_RefusesPostgresBecauseItOwnsOnlySqliteMigrations()
     {
         const string connectionString = "Host=localhost;Port=5432;Database=nzbdav;Username=nzbdav;Password=secret";
         using var env = DatabaseEnvironmentScope.Create("postgres", connectionString);
-        using var dbContext = new DavDatabaseContext();
+        var error = Assert.Throws<InvalidOperationException>(() => new DavDatabaseContext());
 
-        Assert.Equal("Npgsql.EntityFrameworkCore.PostgreSQL", dbContext.Database.ProviderName);
-        Assert.Equal(connectionString, dbContext.Database.GetConnectionString());
+        Assert.Equal(DavDatabaseContext.SqliteOwnerProviderMismatchMessage, error.Message);
     }
 
     private sealed class DatabaseEnvironmentScope : IDisposable

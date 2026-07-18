@@ -6,6 +6,7 @@ declare const styles: {
   readonly "queueFilters": string;
   readonly "queueFilter": string;
   readonly "queueFilterActive": string;
+  readonly "uploadButton": string;
   readonly "alert": string;
   readonly "list": string;
   readonly "listItem": string;

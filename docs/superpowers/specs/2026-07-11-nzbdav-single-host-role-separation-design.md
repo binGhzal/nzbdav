@@ -168,8 +168,9 @@ Control owns:
 - Aggregated health and status responses.
 
 Workers and gateway never receive a database path or connection string.
-PostgreSQL remains supported, but it is not required for this single-host
-topology.
+PostgreSQL remains a future provider target, but the runtime stays fail-closed
+until the provider-native migration and transfer gates pass. It is not required
+for this single-host topology.
 
 ## Worker Lease Contract
 

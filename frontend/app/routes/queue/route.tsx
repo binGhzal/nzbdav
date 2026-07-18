@@ -171,6 +171,7 @@ export default function Queue(props: Route.ComponentProps) {
     // queue/history events
     const queueEvents = useQueueEvents(
         setUploadingFiles,
+        queueSlots,
         setQueueSlots,
         setTotalQueueCount,
         uploadQueueRef,
@@ -180,6 +181,7 @@ export default function Queue(props: Route.ComponentProps) {
         props.loaderData.queueSort,
         requestQueueRefresh);
     const historyEvents = useHistoryEvents(
+        historySlots,
         setHistorySlots,
         setTotalHistoryCount,
         props.loaderData.historyPage,
@@ -187,7 +189,7 @@ export default function Queue(props: Route.ComponentProps) {
         requestQueueRefresh);
 
     // websocket
-    initializeQueueHistoryWebsocket(queueEvents, historyEvents);
+    initializeQueueHistoryWebsocket(queueEvents, historyEvents, requestQueueRefresh);
 
     // uploads
     const dropzone = useQueueDropzone(setUploadingFiles, uploadQueueRef, manualCategoryRef);

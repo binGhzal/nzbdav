@@ -43,7 +43,8 @@ public class SabApiController(
     MountStatusProvider mountStatusProvider,
     UsenetStreamingClient usenetClient,
     ArrDownloadReportService arrDownloadReportService,
-    ArrOperationsService arrOperationsService
+    ArrOperationsService arrOperationsService,
+    NzbBlobIngestCoordinator nzbBlobIngestCoordinator
 ) : ControllerBase
 {
     [HttpGet]
@@ -120,11 +121,11 @@ public class SabApiController(
             case "addfile":
                 return new AddFileController(
                     HttpContext, dbClient, queueManager, configManager, websocketManager, arrDownloadReportService,
-                    arrOperationsService);
+                    arrOperationsService, nzbBlobIngestCoordinator);
             case "addurl":
                 return new AddUrlController(
                     HttpContext, dbClient, queueManager, configManager, websocketManager, arrDownloadReportService,
-                    arrOperationsService);
+                    arrOperationsService, nzbBlobIngestCoordinator);
 
             case "queue" when HttpContext.GetRequestParam("name") == "delete":
                 return new RemoveFromQueueController(
@@ -171,7 +172,7 @@ public class SabApiController(
         {
             if (RequiresAuthentication)
             {
-                var apiKey = RequestContext.GetRequestApiKey();
+                var apiKey = RequestContext.GetProtocolRequestApiKey();
                 var isValidKey = apiKey?.IsAny(
                     ConfigManager.GetApiKey(),
                     EnvironmentUtil.GetRequiredVariable("FRONTEND_BACKEND_API_KEY")

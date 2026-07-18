@@ -1,5 +1,6 @@
 using System.Reflection;
 using backend.Tests.Services;
+using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 
@@ -110,6 +111,21 @@ public sealed class BlobStoreTests
     }
 
     [Fact]
+    public async Task Delete_RemovesCrashLeftTemporaryFilesForTheBlob()
+    {
+        await _fixture.ResetAsync();
+        var id = Guid.NewGuid();
+        var blobPath = GetBlobPath(id);
+        var tempPath = $"{blobPath}.tmp-crash";
+        Directory.CreateDirectory(Path.GetDirectoryName(blobPath)!);
+        await File.WriteAllTextAsync(tempPath, "partial");
+
+        BlobStore.Delete(id);
+
+        Assert.False(File.Exists(tempPath));
+    }
+
+    [Fact]
     public async Task WriteBlob_ReplacesExistingSerializedBlobAtomically()
     {
         await _fixture.ResetAsync();
@@ -154,6 +170,48 @@ public sealed class BlobStoreTests
         finally
         {
             BlobStore.Delete(id);
+        }
+    }
+
+    [Fact]
+    public async Task FailedDatabaseCommitLeavesDurableBlobForAmbiguousCommitRecovery()
+    {
+        await _fixture.ResetAsync();
+        var blobId = Guid.NewGuid();
+        var duplicateKey = $"blob-commit-{Guid.NewGuid():N}";
+        try
+        {
+            await using (var setup = await _fixture.CreateMigratedContextAsync())
+            {
+                setup.ConfigItems.Add(new ConfigItem
+                {
+                    ConfigName = duplicateKey,
+                    ConfigValue = "existing"
+                });
+                await setup.SaveChangesAsync();
+            }
+
+            await using var failing = new DavDatabaseContext();
+            failing.BlobNzbFiles.Add(new DavNzbFile
+            {
+                Id = blobId,
+                SegmentIds = ["segment"]
+            });
+            failing.ConfigItems.Add(new ConfigItem
+            {
+                ConfigName = duplicateKey,
+                ConfigValue = "duplicate"
+            });
+
+            await Assert.ThrowsAsync<DbUpdateException>(() => failing.SaveChangesAsync());
+
+            var blob = await BlobStore.ReadBlob<DavNzbFile>(blobId);
+            Assert.NotNull(blob);
+            Assert.Equal(["segment"], blob.SegmentIds);
+        }
+        finally
+        {
+            BlobStore.Delete(blobId);
         }
     }
 

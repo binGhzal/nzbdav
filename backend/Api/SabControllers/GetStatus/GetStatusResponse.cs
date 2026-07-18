@@ -60,6 +60,12 @@ public class GetStatusResponse
         [JsonPropertyName("rclone_invalidations")]
         public RcloneInvalidationStatus RcloneInvalidations { get; init; } = new();
 
+        [JsonPropertyName("database")]
+        public DatabaseStatus Database { get; init; } = new() { Provider = "unknown" };
+
+        [JsonPropertyName("critical_path")]
+        public CriticalPathStatus CriticalPath { get; init; } = new();
+
         [JsonPropertyName("cache")]
         public CacheStatus Cache { get; init; } = new();
 
@@ -94,6 +100,9 @@ public class GetStatusResponse
 
         [JsonPropertyName("arr_download_report")]
         public ArrDownloadReportStatus ArrDownloadReport { get; init; } = new();
+
+        [JsonPropertyName("arr_import_commands")]
+        public ArrImportCommandDiagnosticStatus ArrImportCommands { get; init; } = new();
 
         [JsonPropertyName("total_streams_opened")]
         public long TotalStreamsOpened { get; init; }

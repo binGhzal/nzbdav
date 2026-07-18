@@ -8,8 +8,10 @@ using NzbWebDAV.Database.Models;
 
 namespace NzbWebDAV.Services;
 
-public sealed class ArrOperationsService(ConfigManager configManager)
+public sealed class ArrOperationsService(ConfigManager configManager, TimeProvider? timeProvider = null)
 {
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
     public async Task<ArrValidationResponse> BuildValidationAsync
     (
         DavDatabaseClient dbClient,
@@ -20,6 +22,10 @@ public sealed class ArrOperationsService(ConfigManager configManager)
         var arrConfig = configManager.GetArrConfig();
         var prioritization = configManager.GetArrPrioritizationOptions();
         var searchNudge = configManager.GetArrSearchNudgeOptions();
+        var configuredApps = new List<string>();
+        if (arrConfig.SonarrInstances.Count > 0) configuredApps.Add("sonarr");
+        if (arrConfig.RadarrInstances.Count > 0) configuredApps.Add("radarr");
+        if (arrConfig.LidarrInstances.Count > 0) configuredApps.Add("lidarr");
         var stats = await dbClient.GetArrIntegrationStatsAsync(now, ct).ConfigureAwait(false);
         var activeQueueItems = await dbClient.Ctx.QueueItems
             .AsNoTracking()
@@ -71,6 +77,9 @@ public sealed class ArrOperationsService(ConfigManager configManager)
         {
             GeneratedAt = now,
             InstanceCount = arrConfig.GetInstanceCount(),
+            ConfiguredApps = configuredApps,
+            SearchNudgeMode = searchNudge.Mode,
+            DuplicateNzbBehavior = configManager.GetDuplicateNzbBehavior(),
             QueueItems = queueItems,
             QueueItemsTotal = queueItemsTotal,
             IgnoredQueueItems = ignoredQueueItems,
@@ -260,7 +269,13 @@ public sealed class ArrOperationsService(ConfigManager configManager)
     {
         app = NormalizeApp(app);
         var now = DateTimeOffset.UtcNow;
-        var instanceHost = Get(payload, "instance_host", "instancehost", $"{app}_host", $"{app}_url") ?? "";
+        var instanceHost = Get(
+            payload,
+            "instance_host",
+            "instancehost",
+            $"{app}_applicationurl",
+            $"{app}_host",
+            $"{app}_url") ?? "";
         var instanceKey = Get(payload, "instance_key", "instancekey")
                           ?? (!string.IsNullOrWhiteSpace(instanceHost)
                               ? ArrIntegration.GetInstanceKey(app, instanceHost)
@@ -398,7 +413,9 @@ public sealed class ArrOperationsService(ConfigManager configManager)
             || ArrIntegration.NormalizeTitle(x.JobName) == normalizedJob);
         if (activeDuplicate) return true;
 
-        var recentCutoff = DateTime.UtcNow.AddHours(-24);
+        var recentCutoff = LocalWallQueryBounds.NormalizeInclusiveLowerBound(
+            dbContext,
+            _timeProvider.GetLocalNow().DateTime.AddHours(-24));
         var recentCandidates = await dbContext.HistoryItems
             .AsNoTracking()
             .Where(x => x.Category == category)

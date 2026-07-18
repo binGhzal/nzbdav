@@ -5,6 +5,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Mount;
 using NzbWebDAV.WebDav;
+using static backend.Tests.Database.LegacyTimestampContractTests;
 
 namespace backend.Tests.Mount;
 
@@ -55,6 +56,35 @@ public sealed class DfsDavPathResolverTests
         Assert.NotNull(nzbsNode);
         Assert.Equal(DfsDavNodeKind.Directory, nzbsNode.Kind);
         Assert.Equal(DavItem.NzbFolder.Id, nzbsNode.Item?.Id);
+    }
+
+    [Fact]
+    public async Task VirtualCategoryUsesInjectedLocalWallTimeThroughNodeAndStat()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var localZone = FixedLocalZone();
+        var timeProvider = new FixedTimeProvider(
+            new DateTimeOffset(2026, 7, 12, 1, 2, 3, TimeSpan.Zero),
+            localZone);
+        var resolver = new DfsDavPathResolver(
+            new DavDatabaseClient(dbContext),
+            _fixture.CreateConfigManager(),
+            timeProvider);
+
+        var category = Assert.Single(
+            await resolver.ListAsync("/content"),
+            x => x.Name == "movies");
+
+        var expectedLocalWall = new DateTime(2026, 7, 12, 5, 2, 3, DateTimeKind.Unspecified);
+        Assert.Equal(expectedLocalWall, category.Item!.CreatedAt);
+        Assert.Equal(DateTimeKind.Unspecified, category.Item.CreatedAt.Kind);
+        Assert.Equal(expectedLocalWall, category.CreatedAt);
+        Assert.Equal(DateTimeKind.Unspecified, category.CreatedAt.Kind);
+        var stat = DfsFileSystem.CreateStatForTimeZone(category, localZone);
+        var expectedUnixTime = new DateTimeOffset(2026, 7, 12, 1, 2, 3, TimeSpan.Zero).ToUnixTimeSeconds();
+        Assert.Equal(expectedUnixTime, stat.st_atime);
+        Assert.Equal(expectedUnixTime, stat.st_mtime);
+        Assert.Equal(expectedUnixTime, stat.st_ctime);
     }
 
     [Theory]

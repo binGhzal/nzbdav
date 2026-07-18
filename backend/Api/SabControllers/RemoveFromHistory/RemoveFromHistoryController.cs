@@ -52,9 +52,13 @@ public class RemoveFromHistoryController(
             await activeTransaction.CreateSavepointAsync(savepointName, request.CancellationToken)
                 .ConfigureAwait(false);
         }
+        IReadOnlyList<Guid> removedIds = [];
         try
         {
-            await dbClient.RemoveHistoryItemsAsync(nzoIds, request.DeleteCompletedFiles, request.CancellationToken)
+            removedIds = await dbClient.RemoveHistoryItemsAsync(
+                    nzoIds,
+                    request.DeleteCompletedFiles,
+                    request.CancellationToken)
                 .ConfigureAwait(false);
             await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
             if (ownedTransaction != null)
@@ -102,7 +106,8 @@ public class RemoveFromHistoryController(
 
             throw;
         }
-        _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemRemoved, string.Join(",", nzoIds));
+        if (removedIds.Count > 0)
+            _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemRemoved, string.Join(",", removedIds));
         return new RemoveFromHistoryResponse() { Status = true };
     }
 
@@ -167,7 +172,9 @@ public class RemoveFromHistoryController(
             if (await dbContext.ImportReceipts
                     .AsNoTracking()
                     .AnyAsync(
-                        x => idBatch.Contains(x.HistoryItemId) && x.State != ImportReceiptState.Removed,
+                        x => idBatch.Contains(x.HistoryItemId)
+                             && x.State != ImportReceiptState.Removed
+                             && x.State != ImportReceiptState.VerificationQuarantined,
                         CancellationToken.None)
                     .ConfigureAwait(false))
             {

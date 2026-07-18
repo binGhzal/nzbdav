@@ -125,6 +125,7 @@ export type PageRowProps = {
     meta?: ReactNode,
     fileSizeBytes: number,
     actions: ReactNode,
+    isSelectable?: boolean,
     onRowSelectionChanged: (isSelected: boolean) => void
 }
 export function PageRow(props: PageRowProps) {
@@ -132,23 +133,31 @@ export function PageRow(props: PageRowProps) {
         props.isRemoving && styles.removing,
         props.isUploading && styles.uploading
     ];
+    const nameCell = (
+        <>
+            <Truncate>{props.name}</Truncate>
+            {props.meta &&
+                <div className={styles.metaLine}>{props.meta}</div>
+            }
+            <div className={styles.mobile}>
+                <div className={styles.badges}>
+                    <StatusBadge status={props.status} percentage={props.percentage} error={props.error} />
+                    <CategoryBadge category={props.category} />
+                </div>
+                <div>{formatFileSize(props.fileSizeBytes)}</div>
+            </div>
+        </>
+    );
 
     return (
         <tr className={classNames(rowStyles)}>
             <td>
-                <TriCheckbox state={props.isSelected} onChange={props.onRowSelectionChanged}>
-                    <Truncate>{props.name}</Truncate>
-                    {props.meta &&
-                        <div className={styles.metaLine}>{props.meta}</div>
-                    }
-                    <div className={styles.mobile}>
-                        <div className={styles.badges}>
-                            <StatusBadge status={props.status} percentage={props.percentage} error={props.error} />
-                            <CategoryBadge category={props.category} />
-                        </div>
-                        <div>{formatFileSize(props.fileSizeBytes)}</div>
-                    </div>
-                </TriCheckbox>
+                {props.isSelectable === false
+                    ? nameCell
+                    : <TriCheckbox state={props.isSelected} onChange={props.onRowSelectionChanged}>
+                        {nameCell}
+                    </TriCheckbox>
+                }
             </td>
             <td className={styles.desktop}>
                 <CategoryBadge category={props.category} />

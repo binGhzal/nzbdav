@@ -38,15 +38,28 @@ public class HealthCheckService : BackgroundService
     private const int MaxBlobSegmentReadConcurrency = 8;
     private const int MaxDeduplicatedVerificationSegments = 20_000;
     private const int MaxProviderVerificationBatchSegments = 2_000;
+    private const string PostDownloadVerificationQuarantineReason =
+        "Confirmed missing articles after download; automatic repair is disabled and operator review is required.";
+
+    [Flags]
+    public enum VerificationOutcome
+    {
+        Healthy = 0,
+        ConfirmedMissing = 1,
+        Indeterminate = 2,
+    }
 
     private readonly ConfigManager _configManager;
     private readonly INntpClient _usenetClient;
     private readonly QueueWorkLaneCoordinator _queueWorkLaneCoordinator;
     private readonly WebsocketManager _websocketManager;
+    private readonly HistoryVisibilityNotifier _historyVisibilityNotifier;
     private readonly IWorkerJobCoordinator _workerJobCoordinator;
     private readonly WorkerLeaseOptions _workerLeaseOptions;
     private readonly object _activeHealthChecksLock = new();
     private readonly HashSet<Guid> _activeHealthChecks = [];
+    private readonly object _workerTasksLock = new();
+    private readonly HashSet<Task> _workerTasks = [];
     private readonly object _inFlightSegmentChecksLock = new();
     private readonly Dictionary<string, TaskCompletionSource<SegmentCheckResult>> _inFlightSegmentChecks =
         new(StringComparer.Ordinal);
@@ -76,13 +89,16 @@ public class HealthCheckService : BackgroundService
         QueueWorkLaneCoordinator queueWorkLaneCoordinator,
         WebsocketManager websocketManager,
         IWorkerJobCoordinator? workerJobCoordinator = null,
-        IOptions<WorkerLeaseOptions>? workerLeaseOptions = null
+        IOptions<WorkerLeaseOptions>? workerLeaseOptions = null,
+        HistoryVisibilityNotifier? historyVisibilityNotifier = null
     )
     {
         _configManager = configManager;
         _usenetClient = usenetClient;
         _queueWorkLaneCoordinator = queueWorkLaneCoordinator;
         _websocketManager = websocketManager;
+        _historyVisibilityNotifier = historyVisibilityNotifier
+            ?? new HistoryVisibilityNotifier(configManager, websocketManager);
         _workerLeaseOptions = WorkerLeaseOptions.Validate(
             workerLeaseOptions?.Value ?? new WorkerLeaseOptions());
         _workerJobCoordinator = workerJobCoordinator ?? new DatabaseWorkerJobCoordinator(
@@ -145,7 +161,13 @@ public class HealthCheckService : BackgroundService
                             activeVerificationJobs - 1,
                             isPostDownloadVerification ? Math.Max(1, verifyJob.Priority) : verifyJob.Priority);
                         verifyLease = null;
-                        _ = RunVerificationWorkerAsync(verifyJob, workerSegmentConcurrency, workerLease, stoppingToken);
+                        TrackWorker(
+                            RunVerificationWorkerAsync(
+                                verifyJob,
+                                workerSegmentConcurrency,
+                                workerLease,
+                                stoppingToken),
+                            verifyJob);
                     }
                     finally
                     {
@@ -169,7 +191,7 @@ public class HealthCheckService : BackgroundService
                 var delay = startedWorker
                     ? TimeSpan.FromMilliseconds(250)
                     : GetActiveHealthCheckCount() > 0 ? TimeSpan.FromSeconds(1) : TimeSpan.FromSeconds(5);
-                await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
+                await HealthWorkerWakeSignal.WaitAsync(delay, stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException e) when (BackgroundServiceCancellationUtil.IsExpectedCancellation(e, stoppingToken))
             {
@@ -178,8 +200,61 @@ public class HealthCheckService : BackgroundService
             catch (Exception e)
             {
                 Log.Error(e, $"Unexpected error performing background health checks: {e.Message}");
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
+                await HealthWorkerWakeSignal
+                    .WaitAsync(TimeSpan.FromSeconds(5), stoppingToken)
+                    .ConfigureAwait(false);
             }
+        }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken).ConfigureAwait(false);
+
+        Task[] workerTasks;
+        lock (_workerTasksLock)
+        {
+            workerTasks = [.. _workerTasks];
+        }
+
+        if (workerTasks.Length > 0)
+            await Task.WhenAll(workerTasks).WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private void TrackWorker(Task workerTask, WorkerLease workerJob)
+    {
+        var observedTask = ObserveWorkerAsync(workerTask, workerJob);
+        lock (_workerTasksLock)
+        {
+            _workerTasks.Add(observedTask);
+        }
+
+        _ = RemoveTrackedWorkerAsync(observedTask);
+    }
+
+    private static async Task ObserveWorkerAsync(Task workerTask, WorkerLease workerJob)
+    {
+        try
+        {
+            await workerTask.ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            Log.Error(
+                e,
+                "Unexpected {WorkerKind} child worker fault for {WorkerJobId}: {Message}",
+                workerJob.Kind,
+                workerJob.Identity.JobId,
+                e.Message);
+        }
+    }
+
+    private async Task RemoveTrackedWorkerAsync(Task workerTask)
+    {
+        await workerTask.ConfigureAwait(false);
+        lock (_workerTasksLock)
+        {
+            _workerTasks.Remove(workerTask);
         }
     }
 
@@ -274,7 +349,7 @@ public class HealthCheckService : BackgroundService
         bool autoEnqueueDueItems,
         CancellationToken ct)
     {
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
         var dbClient = new DavDatabaseClient(dbContext);
         var currentDateTime = DateTimeOffset.UtcNow;
 
@@ -361,7 +436,7 @@ public class HealthCheckService : BackgroundService
         var renewalTask = RenewLeaseAsync(workerJob.Identity, workerCts, renewalState, renewalStop.Token);
         try
         {
-            await using var dbContext = new DavDatabaseContext();
+            await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
             var dbClient = new DavDatabaseClient(dbContext);
             var davItem = await dbContext.Items
                 .FirstOrDefaultAsync(x => x.Id == workerJob.TargetId, workerCts.Token)
@@ -404,15 +479,47 @@ public class HealthCheckService : BackgroundService
             }
 
             var isPostDownloadVerification = IsPostDownloadVerificationJob(workerJob);
-            await PerformHealthCheckAsync(
+            var automaticRepairEnabled = _configManager.IsRepairJobEnabled();
+            var outcome = await PerformHealthCheckAsync(
                     davItem,
                     dbClient,
                     segmentConcurrency,
                     workerCts.Token,
                     repairRunId,
                     skipReleaseDateProbe: isPostDownloadVerification,
-                    useRecentlyVerifiedSegmentCache: isPostDownloadVerification)
+                    useRecentlyVerifiedSegmentCache: isPostDownloadVerification,
+                    verificationQuarantineTarget: isPostDownloadVerification && !automaticRepairEnabled
+                        ? davItem
+                        : null,
+                    automaticRepairEnabledOverride: automaticRepairEnabled)
                 .ConfigureAwait(false);
+            if (isPostDownloadVerification
+                && !automaticRepairEnabled
+                && outcome.HasFlag(VerificationOutcome.ConfirmedMissing))
+            {
+                await FailLeasedWorkerJobWithPolicyAsync(
+                        workerJob,
+                        new InvalidDataException(PostDownloadVerificationQuarantineReason),
+                        WorkerJob.JobKind.Verify,
+                        workerCts.Token,
+                        WorkerJob.FailureClass.InvalidData,
+                        maxAttempts: 1)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            if (isPostDownloadVerification && outcome.HasFlag(VerificationOutcome.Indeterminate))
+            {
+                await FailLeasedWorkerJobWithPolicyAsync(
+                        workerJob,
+                        new IOException("Post-download article verification was inconclusive and will be retried."),
+                        WorkerJob.JobKind.Verify,
+                        workerCts.Token,
+                        WorkerJob.FailureClass.Provider,
+                        WorkerMaxAttempts)
+                    .ConfigureAwait(false);
+                return;
+            }
             await TryCompleteWorkerJobAsync(workerJob, workerCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (workerCts.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
@@ -423,7 +530,11 @@ public class HealthCheckService : BackgroundService
         catch (Exception e)
         {
             Log.Error(e, "Unexpected error performing background health check for {DavItemId}: {Message}", workerJob.TargetId, e.Message);
-            var failedStatus = await FailLeasedWorkerJobAsync(workerJob, e, WorkerJob.JobKind.Verify, ct)
+            var failedStatus = await FailLeasedWorkerJobAsync(
+                    workerJob,
+                    e,
+                    WorkerJob.JobKind.Verify,
+                    CancellationToken.None)
                 .ConfigureAwait(false);
             var repairRunId = DavDatabaseClient.TryGetRepairRunId(workerJob.PayloadJson);
             if (repairRunId.HasValue && failedStatus.HasValue)
@@ -432,7 +543,7 @@ public class HealthCheckService : BackgroundService
                         workerJob.TargetId,
                         e,
                         failedStatus is WorkerJob.JobStatus.Quarantined,
-                        ct)
+                        CancellationToken.None)
                     .ConfigureAwait(false);
         }
         finally
@@ -447,7 +558,108 @@ public class HealthCheckService : BackgroundService
 
     private static bool IsPostDownloadVerificationJob(WorkerLease workerJob)
     {
-        return workerJob.Priority > 0 || DavDatabaseClient.IsPostDownloadVerifyPayload(workerJob.PayloadJson);
+        return DavDatabaseClient.IsPostDownloadVerifyPayload(workerJob.PayloadJson);
+    }
+
+    private static async Task ApplyPostDownloadVerificationQuarantineAsync(
+        DavDatabaseContext dbContext,
+        DavItem target,
+        string reason,
+        CancellationToken ct)
+    {
+        var boundedReason = reason.Length <= 1024 ? reason : reason[..1024];
+        var historyItemIds = await dbContext.HistoryItems
+            .AsNoTracking()
+            .Where(x => x.DownloadDirId == target.Id
+                        || target.HistoryItemId != null && x.Id == target.HistoryItemId.Value)
+            .Select(x => x.Id)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        if (target.HistoryItemId is { } targetHistoryItemId)
+            historyItemIds.Add(targetHistoryItemId);
+
+        var normalizedTargetPath = ContentPathUtil.NormalizeSeparators(target.Path).TrimEnd('/');
+        var targetPrefix = normalizedTargetPath + "/";
+        var releaseItemIds = await dbContext.Items
+            .AsNoTracking()
+            .Where(x => x.Path == normalizedTargetPath || x.Path.StartsWith(targetPrefix))
+            .Select(x => x.Id)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        var receiptHistoryItemIds = await dbContext.ImportReceipts
+            .AsNoTracking()
+            .Where(x => releaseItemIds.Contains(x.DavItemId))
+            .Select(x => x.HistoryItemId)
+            .Distinct()
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        historyItemIds.AddRange(receiptHistoryItemIds);
+
+        var now = DateTimeOffset.UtcNow;
+        var importReceipts = new ImportReceiptService(dbContext);
+        foreach (var historyItemId in historyItemIds.Distinct())
+        {
+            await dbContext.HistoryItems
+                .Where(x => x.Id == historyItemId
+                            && x.DownloadStatus == HistoryItem.DownloadStatusOption.Completed)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.DownloadStatus, HistoryItem.DownloadStatusOption.Failed)
+                    .SetProperty(x => x.FailMessage, boundedReason), ct)
+                .ConfigureAwait(false);
+            await importReceipts
+                .MarkVerificationQuarantineAsync(historyItemId, now, boundedReason, ct)
+                .ConfigureAwait(false);
+            await dbContext.ArrImportCommands
+                .Where(x => x.HistoryItemId == historyItemId
+                            && x.Status != ArrImportCommandStatus.Quarantined)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.Status, ArrImportCommandStatus.Quarantined)
+                    .SetProperty(x => x.VisibleAt, x => x.VisibleAt ?? now)
+                    .SetProperty(x => x.UpdatedAt, now)
+                    .SetProperty(x => x.NextAttemptAt, now)
+                    .SetProperty(x => x.LeaseToken, (Guid?)null)
+                    .SetProperty(x => x.LeaseExpiresAt, (DateTimeOffset?)null)
+                    .SetProperty(x => x.CompletedAt, now)
+                    .SetProperty(x => x.LastError, boundedReason), ct)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<bool> SaveConfirmedMissingAsync(
+        DavDatabaseClient dbClient,
+        DavItem? verificationQuarantineTarget,
+        CancellationToken ct)
+    {
+        if (verificationQuarantineTarget is null)
+        {
+            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+            return true;
+        }
+
+        if (dbClient.Ctx.Database.CurrentTransaction is not null)
+        {
+            await ApplyPostDownloadVerificationQuarantineAsync(
+                    dbClient.Ctx,
+                    verificationQuarantineTarget,
+                    PostDownloadVerificationQuarantineReason,
+                    ct)
+                .ConfigureAwait(false);
+            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+            // The caller owns the transaction, so publishing here would expose
+            // quarantine state that can still be rolled back.
+            return false;
+        }
+
+        await using var transaction = await dbClient.Ctx.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+        await ApplyPostDownloadVerificationQuarantineAsync(
+                dbClient.Ctx,
+                verificationQuarantineTarget,
+                PostDownloadVerificationQuarantineReason,
+                ct)
+            .ConfigureAwait(false);
+        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        await transaction.CommitAsync(ct).ConfigureAwait(false);
+        return true;
     }
 
     private async Task<bool> TryStartRepairWorkerAsync(WorkerLease workerJob, CancellationToken ct)
@@ -461,7 +673,7 @@ public class HealthCheckService : BackgroundService
         }
 
         Interlocked.Increment(ref _activeRepairJobs);
-        _ = RunRepairWorkerAsync(workerJob, ct);
+        TrackWorker(RunRepairWorkerAsync(workerJob, ct), workerJob);
         return true;
     }
 
@@ -473,7 +685,7 @@ public class HealthCheckService : BackgroundService
         var renewalTask = RenewLeaseAsync(workerJob.Identity, workerCts, renewalState, renewalStop.Token);
         try
         {
-            await using var dbContext = new DavDatabaseContext();
+            await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
             var dbClient = new DavDatabaseClient(dbContext);
             var davItem = await dbContext.Items
                 .FirstOrDefaultAsync(x => x.Id == workerJob.TargetId, workerCts.Token)
@@ -485,8 +697,10 @@ public class HealthCheckService : BackgroundService
                 return;
             }
 
+            var historyItemId = davItem.HistoryItemId;
             await Repair(davItem, dbClient, workerCts.Token, repairRunId).ConfigureAwait(false);
-            await TryCompleteWorkerJobAsync(workerJob, workerCts.Token).ConfigureAwait(false);
+            await TryCompleteRepairWorkerJobAsync(workerJob, historyItemId, workerCts.Token)
+                .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (workerCts.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
         {
@@ -496,7 +710,12 @@ public class HealthCheckService : BackgroundService
         catch (Exception e)
         {
             Log.Error(e, "Unexpected error performing background repair for {DavItemId}: {Message}", workerJob.TargetId, e.Message);
-            await FailLeasedWorkerJobAsync(workerJob, e, WorkerJob.JobKind.Repair, ct).ConfigureAwait(false);
+            await FailLeasedWorkerJobAsync(
+                    workerJob,
+                    e,
+                    WorkerJob.JobKind.Repair,
+                    CancellationToken.None)
+                .ConfigureAwait(false);
         }
         finally
         {
@@ -515,21 +734,46 @@ public class HealthCheckService : BackgroundService
         CancellationToken ct
     )
     {
+        return await FailLeasedWorkerJobWithPolicyAsync(
+                workerJob,
+                exception,
+                kind,
+                ct,
+                WorkerJob.FailureClass.Retryable,
+                WorkerMaxAttempts)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<WorkerJob.JobStatus?> FailLeasedWorkerJobWithPolicyAsync
+    (
+        WorkerLease workerJob,
+        Exception exception,
+        WorkerJob.JobKind kind,
+        CancellationToken ct,
+        WorkerJob.FailureClass failureKind,
+        int maxAttempts
+    )
+    {
         try
         {
             var failed = await _workerJobCoordinator.FailAsync(
                     workerJob.Identity,
-                    WorkerJob.FailureClass.Retryable,
+                    failureKind,
                     exception.Message,
                     DateTimeOffset.UtcNow.AddMinutes(kind == WorkerJob.JobKind.Repair ? 15 : 5),
-                    WorkerMaxAttempts,
+                    maxAttempts,
                     DateTimeOffset.UtcNow,
                     ct)
                 .ConfigureAwait(false);
             if (!failed) return null;
-            return workerJob.Attempt >= WorkerMaxAttempts
+            var status = workerJob.Attempt >= maxAttempts
                 ? WorkerJob.JobStatus.Quarantined
                 : WorkerJob.JobStatus.Retry;
+            if (status == WorkerJob.JobStatus.Quarantined)
+                await _historyVisibilityNotifier
+                    .PublishForDavItemIfVisibleAsync(workerJob.TargetId, CancellationToken.None)
+                    .ConfigureAwait(false);
+            return status;
         }
         catch (Exception e)
         {
@@ -558,6 +802,10 @@ public class HealthCheckService : BackgroundService
                 if (!acknowledged)
                     Log.Warning("Lost {WorkerKind} worker lease {WorkerJobId} before cancellation acknowledgement.",
                         kind, workerJob.Identity.JobId);
+                else
+                    await _historyVisibilityNotifier
+                        .PublishForDavItemIfVisibleAsync(workerJob.TargetId, CancellationToken.None)
+                        .ConfigureAwait(false);
                 return;
             }
 
@@ -580,11 +828,40 @@ public class HealthCheckService : BackgroundService
 
     private async Task<bool> TryCompleteWorkerJobAsync(WorkerLease workerJob, CancellationToken ct)
     {
+        return await CompleteWorkerJobAndPublishHistoryAsync(workerJob, historyItemId: null, ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<bool> TryCompleteRepairWorkerJobAsync(
+        WorkerLease workerJob,
+        Guid? historyItemId,
+        CancellationToken ct)
+    {
+        return await CompleteWorkerJobAndPublishHistoryAsync(workerJob, historyItemId, ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<bool> CompleteWorkerJobAndPublishHistoryAsync(
+        WorkerLease workerJob,
+        Guid? historyItemId,
+        CancellationToken ct)
+    {
         var completed = await _workerJobCoordinator.CompleteAsync(
             workerJob.Identity, null, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
         if (!completed)
             Log.Warning("Lost {WorkerKind} worker lease {WorkerJobId} before completion.",
                 workerJob.Kind, workerJob.Identity.JobId);
+        if (completed)
+        {
+            if (historyItemId is { } capturedHistoryItemId)
+                await _historyVisibilityNotifier
+                    .PublishIfVisibleAsync(capturedHistoryItemId, CancellationToken.None)
+                    .ConfigureAwait(false);
+            else
+                await _historyVisibilityNotifier
+                    .PublishForDavItemIfVisibleAsync(workerJob.TargetId, CancellationToken.None)
+                    .ConfigureAwait(false);
+        }
         return completed;
     }
 
@@ -634,7 +911,7 @@ public class HealthCheckService : BackgroundService
     {
         try
         {
-            await using var dbContext = new DavDatabaseContext();
+            await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
             var dbClient = new DavDatabaseClient(dbContext);
             await dbClient.MarkRepairVerificationFailureAsync(
                     repairRunId,
@@ -667,7 +944,7 @@ public class HealthCheckService : BackgroundService
             .Where(x => x.HistoryItemId == null);
     }
 
-    public async Task PerformHealthCheckAsync
+    public async Task<VerificationOutcome> PerformHealthCheckAsync
     (
         DavItem davItem,
         DavDatabaseClient dbClient,
@@ -675,22 +952,26 @@ public class HealthCheckService : BackgroundService
         CancellationToken ct,
         Guid? repairRunId = null,
         bool skipReleaseDateProbe = false,
-        bool useRecentlyVerifiedSegmentCache = false
+        bool useRecentlyVerifiedSegmentCache = false,
+        DavItem? verificationQuarantineTarget = null,
+        bool? automaticRepairEnabledOverride = null
     )
     {
+        var automaticRepairEnabled = automaticRepairEnabledOverride ?? _configManager.IsRepairJobEnabled();
         try
         {
             if (davItem.Type == DavItem.ItemType.Directory)
             {
-                await PerformDirectoryHealthCheckAsync(
+                return await PerformDirectoryHealthCheckAsync(
                         davItem,
                         dbClient,
                         concurrency,
                         ct,
                         repairRunId,
-                        useRecentlyVerifiedSegmentCache)
+                        useRecentlyVerifiedSegmentCache,
+                        verificationQuarantineTarget,
+                        automaticRepairEnabled)
                     .ConfigureAwait(false);
-                return;
             }
 
             // update the release date, if null
@@ -699,14 +980,21 @@ public class HealthCheckService : BackgroundService
             {
                 await RecordTemporaryMetadataUnavailableAsync(davItem, dbClient, ct, repairRunId, metadata.Error)
                     .ConfigureAwait(false);
-                return;
+                return VerificationOutcome.Indeterminate;
             }
 
             var segments = metadata.Segments;
             if (segments.Count == 0)
             {
-                await RecordMissingFileMetadataAsync(davItem, dbClient, ct, repairRunId).ConfigureAwait(false);
-                return;
+                await RecordMissingFileMetadataAsync(
+                        davItem,
+                        dbClient,
+                        ct,
+                        repairRunId,
+                        verificationQuarantineTarget,
+                        automaticRepairEnabled)
+                    .ConfigureAwait(false);
+                return VerificationOutcome.ConfirmedMissing;
             }
 
             if (davItem.ReleaseDate == null && !skipReleaseDateProbe)
@@ -747,14 +1035,22 @@ public class HealthCheckService : BackgroundService
 
             if (checkBatch.Missing > 0 && checkBatch.ProviderErrors == 0 && checkBatch.Unknown == 0)
             {
-                await RecordMissingSegmentsAsync(davItem, dbClient, checkBatch, ct, repairRunId).ConfigureAwait(false);
-                return;
+                await RecordMissingSegmentsAsync(
+                        davItem,
+                        dbClient,
+                        checkBatch,
+                        ct,
+                        repairRunId,
+                        verificationQuarantineTarget,
+                        automaticRepairEnabled)
+                    .ConfigureAwait(false);
+                return VerificationOutcome.ConfirmedMissing;
             }
 
             if (checkBatch.ProviderErrors > 0 || checkBatch.Unknown > 0)
             {
                 await RecordUnknownVerificationAsync(davItem, dbClient, checkBatch, ct, repairRunId).ConfigureAwait(false);
-                return;
+                return VerificationOutcome.Indeterminate;
             }
 
             // update the database
@@ -766,6 +1062,7 @@ public class HealthCheckService : BackgroundService
                     useRecentlyVerifiedSegmentCache,
                     ct)
                 .ConfigureAwait(false);
+            return VerificationOutcome.Healthy;
         }
         catch (UsenetArticleNotFoundException e)
         {
@@ -775,9 +1072,12 @@ public class HealthCheckService : BackgroundService
                 AddCachedMissingSegmentIds(NzbSegmentIdSet.Decode(e.SegmentId));
 
             var utcNow = DateTimeOffset.UtcNow;
+            var message = automaticRepairEnabled
+                ? "File had missing articles. Queued automatic repair."
+                : "File had missing articles. Automatic repair is disabled; operator review is required.";
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = utcNow + AutoRepairRetryDelay;
-            dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+            var healthResult = new HealthCheckResult()
             {
                 Id = Guid.NewGuid(),
                 DavItemId = davItem.Id,
@@ -785,44 +1085,59 @@ public class HealthCheckService : BackgroundService
                 CreatedAt = utcNow,
                 Result = HealthCheckResult.HealthResult.Unhealthy,
                 RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
-                Message = "File had missing articles. Queued automatic repair."
-            }));
-            await dbClient.EnqueueWorkerJobAsync(
-                    WorkerJob.JobKind.Repair,
-                    davItem.Id,
-                    priority: 0,
-                    now: utcNow,
-                    payloadJson: repairRunId.HasValue
-                        ? DavDatabaseClient.CreateRepairRunPayloadJson(repairRunId.Value)
-                        : null,
-                    ct: ct)
-                .ConfigureAwait(false);
+                Message = message
+            };
+            dbClient.Ctx.HealthCheckResults.Add(healthResult);
+            if (automaticRepairEnabled)
+            {
+                await dbClient.EnqueueWorkerJobAsync(
+                        WorkerJob.JobKind.Repair,
+                        davItem.Id,
+                        priority: 0,
+                        now: utcNow,
+                        payloadJson: repairRunId.HasValue
+                            ? DavDatabaseClient.CreateRepairRunPayloadJson(repairRunId.Value)
+                            : null,
+                        ct: ct)
+                    .ConfigureAwait(false);
+            }
             await MarkRepairEntryAsync(
                     dbClient,
                     repairRunId,
                     davItem,
                     RepairEntryHealth.RepairEntryState.Missing,
-                    "File had missing articles. Queued automatic repair.",
+                    message,
                     ct)
                 .ConfigureAwait(false);
-            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+            if (await SaveConfirmedMissingAsync(
+                        dbClient,
+                        verificationQuarantineTarget,
+                        ct)
+                    .ConfigureAwait(false))
+                SendStatus(healthResult);
+            return VerificationOutcome.ConfirmedMissing;
         }
     }
 
-    private async Task PerformDirectoryHealthCheckAsync
+    private async Task<VerificationOutcome> PerformDirectoryHealthCheckAsync
     (
         DavItem directory,
         DavDatabaseClient dbClient,
         int concurrency,
         CancellationToken ct,
         Guid? repairRunId,
-        bool useRecentlyVerifiedSegmentCache
+        bool useRecentlyVerifiedSegmentCache,
+        DavItem? verificationQuarantineTarget,
+        bool automaticRepairEnabled
     )
     {
         var fileItems = await GetDirectoryHealthCheckFileItems(directory, dbClient, ct).ConfigureAwait(false);
-        if (fileItems.Count == 0) return;
+        if (fileItems.Count == 0) return VerificationOutcome.Healthy;
 
         var itemSegments = await GetAllSegmentMetadataAsync(fileItems, dbClient, ct).ConfigureAwait(false);
+        var outcome = VerificationOutcome.Healthy;
+        var deferredMissingStatuses = new List<HealthCheckResult>();
+        var deferredHealthyStatuses = new List<HealthCheckResult>();
         foreach (var metadata in itemSegments)
         {
             if (metadata.State == SegmentMetadataReadState.TemporarilyUnavailable)
@@ -834,12 +1149,24 @@ public class HealthCheckService : BackgroundService
                         repairRunId,
                         metadata.Error)
                     .ConfigureAwait(false);
+                outcome |= VerificationOutcome.Indeterminate;
                 continue;
             }
 
             if (metadata.Segments.Count == 0)
             {
-                await RecordMissingFileMetadataAsync(metadata.Item, dbClient, ct, repairRunId).ConfigureAwait(false);
+                var healthResult = await RecordMissingFileMetadataAsync(
+                        metadata.Item,
+                        dbClient,
+                        ct,
+                        repairRunId,
+                        verificationQuarantineTarget,
+                        automaticRepairEnabled,
+                        deferSave: verificationQuarantineTarget is not null)
+                    .ConfigureAwait(false);
+                if (verificationQuarantineTarget is not null)
+                    deferredMissingStatuses.Add(healthResult);
+                outcome |= VerificationOutcome.ConfirmedMissing;
                 continue;
             }
         }
@@ -848,7 +1175,18 @@ public class HealthCheckService : BackgroundService
             .SelectMany(x => x.Segments)
             .Distinct(StringComparer.Ordinal)
             .ToList();
-        if (allSegments.Count == 0) return;
+        if (allSegments.Count == 0)
+        {
+            await FinalizeDirectoryHealthCheckAsync(
+                    dbClient,
+                    verificationQuarantineTarget,
+                    outcome,
+                    deferredMissingStatuses,
+                    deferredHealthyStatuses,
+                    ct)
+                .ConfigureAwait(false);
+            return outcome;
+        }
 
         var debounce = DebounceUtil.CreateDebounce();
         var progressHook = ProgressExtensions.FromAction(progress =>
@@ -875,7 +1213,7 @@ public class HealthCheckService : BackgroundService
                 var segments = metadata.Segments;
                 if (segments.Count == 0) continue;
 
-                await RecordHealthyVerificationAsync(
+                var healthResult = await RecordHealthyVerificationAsync(
                         dbClient,
                         item,
                         segments,
@@ -884,10 +1222,18 @@ public class HealthCheckService : BackgroundService
                         ct,
                         saveChanges: false)
                     .ConfigureAwait(false);
+                deferredHealthyStatuses.Add(healthResult);
             }
 
-            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
-            return;
+            await FinalizeDirectoryHealthCheckAsync(
+                    dbClient,
+                    verificationQuarantineTarget,
+                    outcome,
+                    deferredMissingStatuses,
+                    deferredHealthyStatuses,
+                    ct)
+                .ConfigureAwait(false);
+            return outcome;
         }
 
         var resultsBySegment = checkBatch.Results
@@ -909,17 +1255,30 @@ public class HealthCheckService : BackgroundService
 
             if (itemBatch.Missing > 0 && itemBatch.ProviderErrors == 0 && itemBatch.Unknown == 0)
             {
-                await RecordMissingSegmentsAsync(item, dbClient, itemBatch, ct, repairRunId).ConfigureAwait(false);
+                var missingHealthResult = await RecordMissingSegmentsAsync(
+                        item,
+                        dbClient,
+                        itemBatch,
+                        ct,
+                        repairRunId,
+                        verificationQuarantineTarget,
+                        automaticRepairEnabled,
+                        deferSave: verificationQuarantineTarget is not null)
+                    .ConfigureAwait(false);
+                if (verificationQuarantineTarget is not null)
+                    deferredMissingStatuses.Add(missingHealthResult);
+                outcome |= VerificationOutcome.ConfirmedMissing;
                 continue;
             }
 
             if (itemBatch.ProviderErrors > 0 || itemBatch.Unknown > 0)
             {
                 await RecordUnknownVerificationAsync(item, dbClient, itemBatch, ct, repairRunId).ConfigureAwait(false);
+                outcome |= VerificationOutcome.Indeterminate;
                 continue;
             }
 
-            await RecordHealthyVerificationAsync(
+            var healthyResult = await RecordHealthyVerificationAsync(
                     dbClient,
                     item,
                     segments,
@@ -928,9 +1287,46 @@ public class HealthCheckService : BackgroundService
                     ct,
                     saveChanges: false)
                 .ConfigureAwait(false);
+            deferredHealthyStatuses.Add(healthyResult);
         }
 
-        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        await FinalizeDirectoryHealthCheckAsync(
+                dbClient,
+                verificationQuarantineTarget,
+                outcome,
+                deferredMissingStatuses,
+                deferredHealthyStatuses,
+                ct)
+            .ConfigureAwait(false);
+        return outcome;
+    }
+
+    private async Task FinalizeDirectoryHealthCheckAsync(
+        DavDatabaseClient dbClient,
+        DavItem? verificationQuarantineTarget,
+        VerificationOutcome outcome,
+        IReadOnlyList<HealthCheckResult> deferredMissingStatuses,
+        IReadOnlyList<HealthCheckResult> deferredHealthyStatuses,
+        CancellationToken ct)
+    {
+        if (verificationQuarantineTarget is not null
+            && outcome.HasFlag(VerificationOutcome.ConfirmedMissing))
+        {
+            if (await SaveConfirmedMissingAsync(dbClient, verificationQuarantineTarget, ct).ConfigureAwait(false))
+            {
+                foreach (var result in deferredMissingStatuses)
+                    SendStatus(result);
+                foreach (var result in deferredHealthyStatuses)
+                    SendStatus(result);
+            }
+            return;
+        }
+
+        if (await SaveHealthResultsForObservableCommitAsync(dbClient, ct).ConfigureAwait(false))
+        {
+            foreach (var result in deferredHealthyStatuses)
+                SendStatus(result);
+        }
     }
 
     private static async Task<List<DavItem>> GetDirectoryHealthCheckFileItems
@@ -1291,19 +1687,24 @@ public class HealthCheckService : BackgroundService
         }
     }
 
-    private async Task RecordMissingFileMetadataAsync
+    private async Task<HealthCheckResult> RecordMissingFileMetadataAsync
     (
         DavItem davItem,
         DavDatabaseClient dbClient,
         CancellationToken ct,
-        Guid? repairRunId
+        Guid? repairRunId,
+        DavItem? verificationQuarantineTarget,
+        bool automaticRepairEnabled,
+        bool deferSave = false
     )
     {
         var utcNow = DateTimeOffset.UtcNow;
-        const string message = "File metadata is missing or contains no article segments. Queued automatic repair.";
+        var message = automaticRepairEnabled
+            ? "File metadata is missing or contains no article segments. Queued automatic repair."
+            : "File metadata is missing or contains no article segments. Automatic repair is disabled; operator review is required.";
         davItem.LastHealthCheck = utcNow;
         davItem.NextHealthCheck = utcNow + AutoRepairRetryDelay;
-        dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+        var healthResult = new HealthCheckResult()
         {
             Id = Guid.NewGuid(),
             DavItemId = davItem.Id,
@@ -1312,17 +1713,21 @@ public class HealthCheckService : BackgroundService
             Result = HealthCheckResult.HealthResult.Unhealthy,
             RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
             Message = message
-        }));
-        await dbClient.EnqueueWorkerJobAsync(
-                WorkerJob.JobKind.Repair,
-                davItem.Id,
-                priority: 0,
-                now: utcNow,
-                payloadJson: repairRunId.HasValue
-                    ? DavDatabaseClient.CreateRepairRunPayloadJson(repairRunId.Value)
-                    : null,
-                ct: ct)
-            .ConfigureAwait(false);
+        };
+        dbClient.Ctx.HealthCheckResults.Add(healthResult);
+        if (automaticRepairEnabled)
+        {
+            await dbClient.EnqueueWorkerJobAsync(
+                    WorkerJob.JobKind.Repair,
+                    davItem.Id,
+                    priority: 0,
+                    now: utcNow,
+                    payloadJson: repairRunId.HasValue
+                        ? DavDatabaseClient.CreateRepairRunPayloadJson(repairRunId.Value)
+                        : null,
+                    ct: ct)
+                .ConfigureAwait(false);
+        }
         await MarkRepairEntryAsync(
                 dbClient,
                 repairRunId,
@@ -1331,7 +1736,10 @@ public class HealthCheckService : BackgroundService
                 message,
                 ct)
             .ConfigureAwait(false);
-        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        if (!deferSave
+            && await SaveConfirmedMissingAsync(dbClient, verificationQuarantineTarget, ct).ConfigureAwait(false))
+            SendStatus(healthResult);
+        return healthResult;
     }
 
     private async Task RecordTemporaryMetadataUnavailableAsync
@@ -1351,7 +1759,7 @@ public class HealthCheckService : BackgroundService
         ]).Trim();
         davItem.LastHealthCheck = utcNow;
         davItem.NextHealthCheck = utcNow + ProviderErrorRetryDelay;
-        dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+        var healthResult = new HealthCheckResult()
         {
             Id = Guid.NewGuid(),
             DavItemId = davItem.Id,
@@ -1360,7 +1768,8 @@ public class HealthCheckService : BackgroundService
             Result = HealthCheckResult.HealthResult.Unhealthy,
             RepairStatus = HealthCheckResult.RepairAction.None,
             Message = message
-        }));
+        };
+        dbClient.Ctx.HealthCheckResults.Add(healthResult);
         await MarkRepairEntryAsync(
                 dbClient,
                 repairRunId,
@@ -1369,16 +1778,20 @@ public class HealthCheckService : BackgroundService
                 message,
                 ct)
             .ConfigureAwait(false);
-        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        if (await SaveHealthResultsForObservableCommitAsync(dbClient, ct).ConfigureAwait(false))
+            SendStatus(healthResult);
     }
 
-    private async Task RecordMissingSegmentsAsync
+    private async Task<HealthCheckResult> RecordMissingSegmentsAsync
     (
         DavItem davItem,
         DavDatabaseClient dbClient,
         SegmentCheckBatch checkBatch,
         CancellationToken ct,
-        Guid? repairRunId
+        Guid? repairRunId,
+        DavItem? verificationQuarantineTarget,
+        bool automaticRepairEnabled,
+        bool deferSave = false
     )
     {
         var utcNow = DateTimeOffset.UtcNow;
@@ -1390,26 +1803,40 @@ public class HealthCheckService : BackgroundService
         if (FilenameUtil.IsImportantFileType(davItem.Name))
             AddCachedMissingSegmentIds(missingSegmentIds);
 
-        ApplyMissingSegmentPolicy(davItem, dbClient, checkBatch, utcNow, SendStatus);
-        await dbClient.EnqueueWorkerJobAsync(
-                WorkerJob.JobKind.Repair,
-                davItem.Id,
-                priority: 0,
-                now: utcNow,
-                payloadJson: repairRunId.HasValue
-                    ? DavDatabaseClient.CreateRepairRunPayloadJson(repairRunId.Value)
-                    : null,
-                ct: ct)
-            .ConfigureAwait(false);
+        var healthResult = ApplyMissingSegmentPolicy(
+            davItem,
+            dbClient,
+            checkBatch,
+            utcNow,
+            automaticRepairEnabled: automaticRepairEnabled);
+        if (automaticRepairEnabled)
+        {
+            await dbClient.EnqueueWorkerJobAsync(
+                    WorkerJob.JobKind.Repair,
+                    davItem.Id,
+                    priority: 0,
+                    now: utcNow,
+                    payloadJson: repairRunId.HasValue
+                        ? DavDatabaseClient.CreateRepairRunPayloadJson(repairRunId.Value)
+                        : null,
+                    ct: ct)
+                .ConfigureAwait(false);
+        }
+        var message = automaticRepairEnabled
+            ? $"File had {checkBatch.Missing} missing articles. Queued automatic repair."
+            : $"File had {checkBatch.Missing} missing articles. Automatic repair is disabled; operator review is required.";
         await MarkRepairEntryAsync(
                 dbClient,
                 repairRunId,
                 davItem,
                 RepairEntryHealth.RepairEntryState.Missing,
-                $"File had {checkBatch.Missing} missing articles. Queued automatic repair.",
+                message,
                 ct)
             .ConfigureAwait(false);
-        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        if (!deferSave
+            && await SaveConfirmedMissingAsync(dbClient, verificationQuarantineTarget, ct).ConfigureAwait(false))
+            SendStatus(healthResult);
+        return healthResult;
     }
 
     private async Task RecordUnknownVerificationAsync
@@ -1422,7 +1849,7 @@ public class HealthCheckService : BackgroundService
     )
     {
         var utcNow = DateTimeOffset.UtcNow;
-        ApplyUnknownVerificationPolicy(davItem, dbClient, checkBatch, utcNow, SendStatus);
+        var healthResult = ApplyUnknownVerificationPolicy(davItem, dbClient, checkBatch, utcNow);
         await MarkRepairEntryAsync(
                 dbClient,
                 repairRunId,
@@ -1433,10 +1860,20 @@ public class HealthCheckService : BackgroundService
                 $"Verification inconclusive: provider_errors={checkBatch.ProviderErrors}, unknown={checkBatch.Unknown}.",
                 ct)
             .ConfigureAwait(false);
-        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        if (await SaveHealthResultsForObservableCommitAsync(dbClient, ct).ConfigureAwait(false))
+            SendStatus(healthResult);
     }
 
-    private async Task RecordHealthyVerificationAsync
+    private static async Task<bool> SaveHealthResultsForObservableCommitAsync(
+        DavDatabaseClient dbClient,
+        CancellationToken ct)
+    {
+        var hasCallerOwnedTransaction = dbClient.Ctx.Database.CurrentTransaction is not null;
+        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        return !hasCallerOwnedTransaction;
+    }
+
+    private async Task<HealthCheckResult> RecordHealthyVerificationAsync
     (
         DavDatabaseClient dbClient,
         DavItem davItem,
@@ -1452,7 +1889,7 @@ public class HealthCheckService : BackgroundService
             AddRecentlyVerifiedSegmentIds(segments);
         davItem.LastHealthCheck = DateTimeOffset.UtcNow;
         davItem.NextHealthCheck = GetNextHealthyCheckAt(davItem.LastHealthCheck.Value, davItem.ReleaseDate);
-        dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+        var healthResult = new HealthCheckResult()
         {
             Id = Guid.NewGuid(),
             DavItemId = davItem.Id,
@@ -1461,7 +1898,8 @@ public class HealthCheckService : BackgroundService
             Result = HealthCheckResult.HealthResult.Healthy,
             RepairStatus = HealthCheckResult.RepairAction.None,
             Message = "File is healthy."
-        }));
+        };
+        dbClient.Ctx.HealthCheckResults.Add(healthResult);
         await MarkRepairEntryAsync(
                 dbClient,
                 repairRunId,
@@ -1471,16 +1909,21 @@ public class HealthCheckService : BackgroundService
                 ct)
             .ConfigureAwait(false);
         if (saveChanges)
-            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        {
+            if (await SaveHealthResultsForObservableCommitAsync(dbClient, ct).ConfigureAwait(false))
+                SendStatus(healthResult);
+        }
+        return healthResult;
     }
 
-    public static void ApplyMissingSegmentPolicy
+    public static HealthCheckResult ApplyMissingSegmentPolicy
     (
         DavItem davItem,
         DavDatabaseClient dbClient,
         SegmentCheckBatch checkBatch,
         DateTimeOffset utcNow,
-        Func<HealthCheckResult, HealthCheckResult>? onResult = null
+        Func<HealthCheckResult, HealthCheckResult>? onResult = null,
+        bool automaticRepairEnabled = true
     )
     {
         davItem.LastHealthCheck = utcNow;
@@ -1493,12 +1936,16 @@ public class HealthCheckService : BackgroundService
             CreatedAt = utcNow,
             Result = HealthCheckResult.HealthResult.Unhealthy,
             RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
-            Message = $"File had {checkBatch.Missing} missing articles. Queued automatic repair."
+            Message = automaticRepairEnabled
+                ? $"File had {checkBatch.Missing} missing articles. Queued automatic repair."
+                : $"File had {checkBatch.Missing} missing articles. Automatic repair is disabled; operator review is required."
         };
-        dbClient.Ctx.HealthCheckResults.Add(onResult?.Invoke(result) ?? result);
+        var storedResult = onResult?.Invoke(result) ?? result;
+        dbClient.Ctx.HealthCheckResults.Add(storedResult);
+        return storedResult;
     }
 
-    public static void ApplyUnknownVerificationPolicy
+    public static HealthCheckResult ApplyUnknownVerificationPolicy
     (
         DavItem davItem,
         DavDatabaseClient dbClient,
@@ -1523,7 +1970,9 @@ public class HealthCheckService : BackgroundService
                 "Will retry before automatic repair."
             ])
         };
-        dbClient.Ctx.HealthCheckResults.Add(onResult?.Invoke(result) ?? result);
+        var storedResult = onResult?.Invoke(result) ?? result;
+        dbClient.Ctx.HealthCheckResults.Add(storedResult);
+        return storedResult;
     }
 
     private static async Task MarkRepairEntryAsync

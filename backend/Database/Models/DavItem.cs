@@ -35,14 +35,15 @@ public class DavItem
         DateTimeOffset? lastHealthCheck,
         Guid? historyItemId,
         Guid? fileBlobId,
-        Guid? nzbBlobId = null
+        Guid? nzbBlobId = null,
+        TimeProvider? timeProvider = null
     )
     {
         return new DavItem()
         {
             Id = id,
             IdPrefix = id.GetFiveLengthPrefix(),
-            CreatedAt = DateTime.Now,
+            CreatedAt = (timeProvider ?? TimeProvider.System).GetLocalNow().DateTime,
             ParentId = parent.Id,
             Name = name,
             FileSize = fileSize,

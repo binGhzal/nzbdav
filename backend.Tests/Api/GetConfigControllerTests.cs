@@ -6,6 +6,7 @@ using NzbWebDAV.Api.Controllers.GetConfig;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Database.Transfer;
 using backend.Tests.Services;
 
 namespace backend.Tests.Api;
@@ -29,6 +30,7 @@ public sealed class GetConfigControllerTests
         await SetConfigAsync(dbContext, "rclone.host", "http://rclone:5572");
         await SetConfigAsync(dbContext, "rclone.pass", "rclone-secret");
         await SetConfigAsync(dbContext, "api.key", "sab-secret");
+        await SetConfigAsync(dbContext, "api.strm-key", "strm-secret");
         await SetConfigAsync(dbContext, "webdav.pass", "webdav-hash");
         await SetConfigAsync(dbContext, "usenet.providers", UpdateConfigControllerTests.CreateProviderConfigJson("provider-secret"));
         await SetConfigAsync(dbContext, "arr.instances", UpdateConfigControllerTests.CreateArrConfigJson("arr-secret"));
@@ -39,6 +41,7 @@ public sealed class GetConfigControllerTests
                 "rclone.host",
                 "rclone.pass",
                 "api.key",
+                "api.strm-key",
                 "webdav.pass",
                 "usenet.providers",
                 "arr.instances"
@@ -52,6 +55,7 @@ public sealed class GetConfigControllerTests
         Assert.Equal("http://rclone:5572", items["rclone.host"]);
         Assert.Equal(RedactedSecret, items["rclone.pass"]);
         Assert.Equal(RedactedSecret, items["api.key"]);
+        Assert.Equal(RedactedSecret, items["api.strm-key"]);
         Assert.Equal(RedactedSecret, items["webdav.pass"]);
         Assert.DoesNotContain("provider-secret", items["usenet.providers"]);
         Assert.DoesNotContain("arr-secret", items["arr.instances"]);
@@ -60,7 +64,7 @@ public sealed class GetConfigControllerTests
     }
 
     [Fact]
-    public async Task HandleApiRequest_CanIncludeSecretsWhenExplicitlyRequested()
+    public async Task HandleApiRequest_RedactsSecretsWhenExplicitlyRequested()
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
         await SetConfigAsync(dbContext, "rclone.pass", "rclone-secret");
@@ -73,7 +77,51 @@ public sealed class GetConfigControllerTests
         var response = Assert.IsType<GetConfigResponse>(ok.Value);
         var item = Assert.Single(response.ConfigItems);
         Assert.Equal("rclone.pass", item.ConfigName);
-        Assert.Equal("rclone-secret", item.ConfigValue);
+        Assert.Equal(RedactedSecret, item.ConfigValue);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task HandleApiRequest_NeverReturnsReservedImportState
+    (
+        bool includeSecrets,
+        bool includeOrdinaryKey
+    )
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"DELETE FROM ConfigItems WHERE ConfigName = {TransferV3ReservedConfigPolicy.ImportStateKey}");
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"INSERT INTO ConfigItems (ConfigName, ConfigValue) VALUES ({TransferV3ReservedConfigPolicy.ImportStateKey}, {TransferV3ImportStateCodec.FreshCanonicalJson})");
+        await SetConfigAsync(dbContext, "rclone.host", "http://rclone:5572");
+
+        try
+        {
+            var keys = includeOrdinaryKey
+                ? new[] { TransferV3ReservedConfigPolicy.ImportStateKey, "rclone.host" }
+                : [TransferV3ReservedConfigPolicy.ImportStateKey];
+            var controller = CreateController(dbContext, keys, includeSecrets);
+
+            var result = await HandleWithApiKeyAsync(controller);
+
+            var ok = Assert.IsType<OkObjectResult>(result);
+            var response = Assert.IsType<GetConfigResponse>(ok.Value);
+            Assert.DoesNotContain(
+                response.ConfigItems,
+                item => item.ConfigName == TransferV3ReservedConfigPolicy.ImportStateKey);
+            if (includeOrdinaryKey)
+                Assert.Equal("http://rclone:5572", Assert.Single(response.ConfigItems).ConfigValue);
+            else
+                Assert.Empty(response.ConfigItems);
+        }
+        finally
+        {
+            await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                $"DELETE FROM ConfigItems WHERE ConfigName = {TransferV3ReservedConfigPolicy.ImportStateKey}");
+        }
     }
 
     private static GetConfigController CreateController
@@ -135,4 +183,5 @@ public sealed class GetConfigControllerTests
             Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", previousApiKey);
         }
     }
+
 }

@@ -6,6 +6,7 @@ using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Nzb;
 using UsenetSharp.Models;
+using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
 
@@ -36,43 +37,63 @@ public static class FetchFirstSegmentsStep
     {
         try
         {
-            // get the first article stream
+            // NZB's standard file date lets the hot path use BODY instead of
+            // ARTICLE. Fall back to ARTICLE for malformed/legacy NZBs where
+            // the post timestamp is unavailable.
             var firstSegment = nzbFile.GetSegmentIds()[0];
-            var article = await usenetClient
-                .DecodedArticleWithFallbackAsync(firstSegment, cancellationToken)
-                .ConfigureAwait(false);
-            await using var bodyStream = article.Stream!;
-
-            // read up to the first 16KB from the stream
-            var totalRead = 0;
-            var buffer = new byte[16 * 1024];
-            while (totalRead < buffer.Length)
+            YencStream bodyStream;
+            DateTimeOffset releaseDate;
+            if (nzbFile.PostedAt.HasValue)
             {
-                var read = await bodyStream.ReadAsync(buffer.AsMemory(totalRead, buffer.Length - totalRead),
-                    cancellationToken).ConfigureAwait(false);
-                if (read == 0) break;
-                totalRead += read;
+                var body = await usenetClient
+                    .DecodedBodyWithFallbackAsync(firstSegment, cancellationToken)
+                    .ConfigureAwait(false);
+                bodyStream = body.Stream!;
+                releaseDate = nzbFile.PostedAt.Value;
+            }
+            else
+            {
+                var article = await usenetClient
+                    .DecodedArticleWithFallbackAsync(firstSegment, cancellationToken)
+                    .ConfigureAwait(false);
+                bodyStream = article.Stream!;
+                releaseDate = article.ArticleHeaders!.Date;
             }
 
-            // determine bytes read
-            var first16KB = totalRead < buffer.Length
-                ? buffer.AsSpan(0, totalRead).ToArray()
-                : buffer;
-
-            // get the yencHeaders
-            var yencHeaders = await bodyStream
-                .GetYencHeadersAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            // return
-            return new NzbFileWithFirstSegment
+            await using (bodyStream.ConfigureAwait(false))
             {
-                NzbFile = nzbFile,
-                First16KB = first16KB,
-                Header = yencHeaders,
-                MissingFirstSegment = false,
-                ReleaseDate = article.ArticleHeaders!.Date
-            };
+
+                // read up to the first 16KB from the stream
+                var totalRead = 0;
+                var buffer = new byte[16 * 1024];
+                while (totalRead < buffer.Length)
+                {
+                    var read = await bodyStream.ReadAsync(buffer.AsMemory(totalRead, buffer.Length - totalRead),
+                        cancellationToken).ConfigureAwait(false);
+                    if (read == 0) break;
+                    totalRead += read;
+                }
+
+                // determine bytes read
+                var first16KB = totalRead < buffer.Length
+                    ? buffer.AsSpan(0, totalRead).ToArray()
+                    : buffer;
+
+                // get the yencHeaders
+                var yencHeaders = await bodyStream
+                    .GetYencHeadersAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+                // return
+                return new NzbFileWithFirstSegment
+                {
+                    NzbFile = nzbFile,
+                    First16KB = first16KB,
+                    Header = yencHeaders,
+                    MissingFirstSegment = false,
+                    ReleaseDate = releaseDate
+                };
+            }
         }
         catch (UsenetArticleNotFoundException)
         {

@@ -56,21 +56,21 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             return await Ctx.Items.SumAsync(x => x.FileSize, ct).ConfigureAwait(false) ?? 0;
         }
 
-        const string sql = @"
-            WITH RECURSIVE RecursiveChildren AS (
-                SELECT Id, FileSize
-                FROM DavItems
-                WHERE ParentId = @parentId
+        const string sql = """
+            WITH RECURSIVE "RecursiveChildren" AS (
+                SELECT "Id", "FileSize"
+                FROM "DavItems"
+                WHERE "ParentId" = @parentId
 
                 UNION ALL
 
-                SELECT d.Id, d.FileSize
-                FROM DavItems d
-                INNER JOIN RecursiveChildren rc ON d.ParentId = rc.Id
+                SELECT d."Id", d."FileSize"
+                FROM "DavItems" AS d
+                INNER JOIN "RecursiveChildren" AS rc ON d."ParentId" = rc."Id"
             )
-            SELECT IFNULL(SUM(FileSize), 0)
-            FROM RecursiveChildren;
-        ";
+            SELECT COALESCE(SUM("FileSize"), 0)
+            FROM "RecursiveChildren";
+            """;
         var connection = Ctx.Database.GetDbConnection();
         if (connection.State != System.Data.ConnectionState.Open) await connection.OpenAsync(ct).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
@@ -156,7 +156,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     )
     {
         // read queue item from database
-        var nowTime = DateTime.Now;
+        var nowTime = LocalWallQueryBounds.NormalizeInclusiveUpperBound(Ctx, DateTime.Now);
         var referenceTime = DateTimeOffset.UtcNow;
         var queueItems = Ctx.QueueItems.AsQueryable();
         if (excludeIds is { Count: > 0 })
@@ -225,7 +225,9 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     )
     {
         var referenceTime = now ?? DateTimeOffset.UtcNow;
-        var localNow = now.HasValue ? now.Value.LocalDateTime : DateTime.Now;
+        var localNow = LocalWallQueryBounds.NormalizeInclusiveUpperBound(
+            Ctx,
+            now.HasValue ? now.Value.LocalDateTime : DateTime.Now);
         var leaseExpiresAt = referenceTime + leaseDuration;
 
         await using var transaction = await Ctx.Database
@@ -686,21 +688,46 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         return await Ctx.HistoryItems.FirstOrDefaultAsync(x => x.Id == guid).ConfigureAwait(false);
     }
 
-    public async Task RemoveHistoryItemsAsync(List<Guid> ids, bool deleteFiles, CancellationToken ct = default)
+    public async Task<IReadOnlyList<Guid>> RemoveHistoryItemsAsync(
+        List<Guid> ids,
+        bool deleteFiles,
+        CancellationToken ct = default)
     {
         var receiptService = new ImportReceiptService(Ctx);
         var now = DateTimeOffset.UtcNow;
+        var removableIds = new List<Guid>();
         foreach (var idBatch in ids.Distinct().Chunk(HistoryMutationBatchSize))
         {
+            var quarantinedIds = (await Ctx.ImportReceipts
+                    .AsNoTracking()
+                    .Where(x => idBatch.Contains(x.HistoryItemId)
+                                && x.State == ImportReceiptState.VerificationQuarantined)
+                    .Select(x => x.HistoryItemId)
+                    .Distinct()
+                    .ToListAsync(ct)
+                    .ConfigureAwait(false))
+                .ToHashSet();
+            foreach (var entry in Ctx.ChangeTracker.Entries<ImportReceipt>()
+                         .Where(x => x.State is not EntityState.Deleted and not EntityState.Detached
+                                     && idBatch.Contains(x.Entity.HistoryItemId)
+                                     && x.Entity.State == ImportReceiptState.VerificationQuarantined))
+                quarantinedIds.Add(entry.Entity.HistoryItemId);
+
+            var removableBatch = idBatch
+                .Where(x => !quarantinedIds.Contains(x))
+                .ToArray();
+            if (removableBatch.Length == 0) continue;
+            removableIds.AddRange(removableBatch);
+
             await receiptService
-                .MarkRemovedBatchAsync(idBatch, now, ct)
+                .MarkRemovedBatchAsync(removableBatch, now, ct)
                 .ConfigureAwait(false);
 
             if (deleteFiles)
             {
                 var results = await (
                     from h in Ctx.HistoryItems
-                    where idBatch.Contains(h.Id)
+                    where removableBatch.Contains(h.Id)
                     join d in Ctx.Items on h.DownloadDirId equals d.Id into items
                     from d in items.DefaultIfEmpty()
                     select new { HistoryItem = h, DavItem = d }
@@ -716,13 +743,15 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             }
 
             var existingHistoryItems = await Ctx.HistoryItems
-                .Where(x => idBatch.Contains(x.Id))
+                .Where(x => removableBatch.Contains(x.Id))
                 .ToListAsync(ct)
                 .ConfigureAwait(false);
             Ctx.HistoryItems.RemoveRange(existingHistoryItems);
             await AddMissingHistoryCleanupItemsAsync(existingHistoryItems.Select(x => x.Id).ToList(), deleteFiles, ct)
                 .ConfigureAwait(false);
         }
+
+        return removableIds;
     }
 
     private async Task AddMissingHistoryCleanupItemsAsync(List<Guid> ids, bool deleteFiles, CancellationToken ct)
@@ -803,10 +832,21 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .GroupBy(_ => 1)
             .Select(g => new
             {
-                Pending = g.Count(),
-                Ready = g.Count(x => x.NextAttemptAt <= referenceTime),
-                Failed = g.Count(x => x.Attempts > 0 || x.LastError != null),
-                MaxAttempts = g.Max(x => (int?)x.Attempts) ?? 0
+                Pending = g.Count(x => x.Path != RcloneInvalidationItem.WholeCacheVisibilityFencePath),
+                Ready = g.Count(x =>
+                    x.Path != RcloneInvalidationItem.WholeCacheVisibilityFencePath
+                    && x.NextAttemptAt <= referenceTime),
+                Failed = g.Count(x =>
+                    x.Path != RcloneInvalidationItem.WholeCacheVisibilityFencePath
+                    && (x.Attempts > 0 || x.LastError != null)),
+                WholeCacheVisibilityFencePending = g.Any(
+                    x => x.Path == RcloneInvalidationItem.WholeCacheVisibilityFencePath),
+                MaxAttempts = g
+                    .Where(x => x.Path != RcloneInvalidationItem.WholeCacheVisibilityFencePath)
+                    .Max(x => (int?)x.Attempts) ?? 0,
+                OldestPendingAt = g
+                    .Where(x => x.Path != RcloneInvalidationItem.WholeCacheVisibilityFencePath)
+                    .Min(x => (DateTimeOffset?)x.CreatedAt)
             })
             .FirstOrDefaultAsync(ct)
             .ConfigureAwait(false);
@@ -824,8 +864,64 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             summary?.Pending ?? 0,
             summary?.Ready ?? 0,
             summary?.Failed ?? 0,
+            summary?.WholeCacheVisibilityFencePending ?? false,
             summary?.MaxAttempts ?? 0,
-            lastError);
+            lastError,
+            summary?.OldestPendingAt);
+    }
+
+    public async Task<ArrImportCommandStats> GetArrImportCommandStatsAsync(
+        CancellationToken ct = default)
+    {
+        var counts = await Ctx.ArrImportCommands
+            .AsNoTracking()
+            .GroupBy(x => x.Status)
+            .Select(x => new { Status = x.Key, Count = x.Count() })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        var activeStatuses = new[]
+        {
+            ArrImportCommandStatus.Pending,
+            ArrImportCommandStatus.WaitingForInvalidation,
+            ArrImportCommandStatus.Executing,
+            ArrImportCommandStatus.Retry,
+        };
+        var oldestActiveAt = await Ctx.ArrImportCommands
+            .AsNoTracking()
+            .Where(x => activeStatuses.Contains(x.Status))
+            .OrderBy(x => x.CreatedAt)
+            .Select(x => (DateTimeOffset?)x.CreatedAt)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        var lastError = await Ctx.ArrImportCommands
+            .AsNoTracking()
+            .Where(x => x.LastError != null)
+            .OrderByDescending(x => x.LastAttemptAt ?? x.UpdatedAt)
+            .Select(x => x.LastError)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        var lastQuarantineReason = await Ctx.ArrImportCommands
+            .AsNoTracking()
+            .Where(x => x.Status == ArrImportCommandStatus.Quarantined && x.LastError != null)
+            .OrderByDescending(x => x.UpdatedAt)
+            .Select(x => x.LastError)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+
+        int Count(ArrImportCommandStatus status) =>
+            counts.FirstOrDefault(x => x.Status == status)?.Count ?? 0;
+
+        return new ArrImportCommandStats(
+            Pending: Count(ArrImportCommandStatus.Pending),
+            WaitingForInvalidation: Count(ArrImportCommandStatus.WaitingForInvalidation),
+            Executing: Count(ArrImportCommandStatus.Executing),
+            Retry: Count(ArrImportCommandStatus.Retry),
+            Dispatched: Count(ArrImportCommandStatus.Dispatched),
+            NoRoute: Count(ArrImportCommandStatus.NoRoute),
+            Quarantined: Count(ArrImportCommandStatus.Quarantined),
+            OldestActiveAt: oldestActiveAt,
+            LastError: lastError,
+            LastQuarantineReason: lastQuarantineReason);
     }
 
     public async Task<HealthWorkerQueueStats> GetHealthWorkerQueueStatsAsync
@@ -861,9 +957,23 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         int Pending,
         int Ready,
         int Failed,
+        bool WholeCacheVisibilityFencePending,
         int MaxAttempts,
-        string? LastError
+        string? LastError,
+        DateTimeOffset? OldestPendingAt
     );
+
+    public sealed record ArrImportCommandStats(
+        int Pending,
+        int WaitingForInvalidation,
+        int Executing,
+        int Retry,
+        int Dispatched,
+        int NoRoute,
+        int Quarantined,
+        DateTimeOffset? OldestActiveAt,
+        string? LastError,
+        string? LastQuarantineReason);
 
     public sealed record HealthWorkerQueueStats
     (
@@ -1698,20 +1808,27 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     )
     {
         var referenceTime = now ?? DateTimeOffset.UtcNow;
-        var rows = await Ctx.WorkerJobs
+        var localReferenceTime = LocalWallQueryBounds.NormalizeInclusiveUpperBound(
+            Ctx,
+            referenceTime.LocalDateTime);
+        var workerRows = Ctx.WorkerJobs
             .AsNoTracking()
             .GroupBy(x => new { x.Kind, x.Status })
             .Select(x => new
             {
-                x.Key.Kind,
-                x.Key.Status,
+                Kind = x.Key.Kind,
+                Status = (WorkerJob.JobStatus?)x.Key.Status,
                 Count = x.Count(),
-                Ready = x.Count(y =>
-                    (y.Status == WorkerJob.JobStatus.Pending
-                     || y.Status == WorkerJob.JobStatus.Retry
-                     || y.Status == WorkerJob.JobStatus.Leased && y.LeaseExpiresAt <= referenceTime)
-                    && y.AvailableAt <= referenceTime
-                    && (y.LeaseExpiresAt == null || y.LeaseExpiresAt <= referenceTime)),
+                Ready = x.Key.Kind == WorkerJob.JobKind.Download
+                    ? 0
+                    : x.Count(y =>
+                        y.CancelRequestedAt == null
+                        && (y.Status == WorkerJob.JobStatus.Pending
+                         || y.Status == WorkerJob.JobStatus.Retry
+                         || y.Status == WorkerJob.JobStatus.Leased && y.LeaseExpiresAt <= referenceTime)
+                        && y.AvailableAt <= referenceTime
+                        && (y.LeaseExpiresAt == null || y.LeaseExpiresAt <= referenceTime)),
+                EligibleRetry = 0,
                 ActiveLease = x.Count(y =>
                     y.Status == WorkerJob.JobStatus.Leased
                     && (y.LeaseExpiresAt == null || y.LeaseExpiresAt > referenceTime)),
@@ -1719,15 +1836,59 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                     y.Status == WorkerJob.JobStatus.Leased
                     && y.LeaseExpiresAt != null
                     && y.LeaseExpiresAt <= referenceTime)
-            })
+            });
+        var downloadReadinessRows = Ctx.QueueItems
+            .AsNoTracking()
+            .GroupBy(_ => WorkerJob.JobKind.Download)
+            .Select(x => new
+            {
+                Kind = x.Key,
+                Status = (WorkerJob.JobStatus?)null,
+                Count = 0,
+                Ready = x.Count(queueItem =>
+                    queueItem.Priority != QueueItem.PriorityOption.Paused
+                    && (queueItem.PauseUntil == null || queueItem.PauseUntil <= localReferenceTime)
+                    && (!Ctx.WorkerJobs.Any(job =>
+                            job.Kind == WorkerJob.JobKind.Download
+                            && job.TargetId == queueItem.Id)
+                        || Ctx.WorkerJobs.Any(job =>
+                            job.Kind == WorkerJob.JobKind.Download
+                            && job.TargetId == queueItem.Id
+                            && job.CancelRequestedAt == null
+                            && job.AvailableAt <= referenceTime
+                            && (job.LeaseExpiresAt == null || job.LeaseExpiresAt <= referenceTime)
+                            && (job.Status == WorkerJob.JobStatus.Pending
+                                || job.Status == WorkerJob.JobStatus.Retry
+                                || job.Status == WorkerJob.JobStatus.Leased
+                                && job.LeaseExpiresAt <= referenceTime)))),
+                EligibleRetry = x.Count(queueItem =>
+                    queueItem.Priority != QueueItem.PriorityOption.Paused
+                    && (queueItem.PauseUntil == null || queueItem.PauseUntil <= localReferenceTime)
+                    && Ctx.WorkerJobs.Any(job =>
+                        job.Kind == WorkerJob.JobKind.Download
+                        && job.TargetId == queueItem.Id
+                        && job.Status == WorkerJob.JobStatus.Retry
+                        && job.CancelRequestedAt == null
+                        && job.AvailableAt <= referenceTime
+                        && (job.LeaseExpiresAt == null || job.LeaseExpiresAt <= referenceTime))),
+                ActiveLease = 0,
+                ExpiredLease = 0
+            });
+        var rows = await workerRows
+            .Concat(downloadReadinessRows)
             .ToListAsync(ct)
             .ConfigureAwait(false);
         var statusCounts = rows
-            .Select(x => new WorkerJobStatusCount(x.Kind, x.Status, x.Count))
+            .Where(x => x.Status.HasValue)
+            .Select(x => new WorkerJobStatusCount(x.Kind, x.Status!.Value, x.Count))
             .ToArray();
         var readyCounts = rows
             .GroupBy(x => x.Kind)
             .Select(x => new WorkerJobReadyCount(x.Key, x.Sum(y => y.Ready)))
+            .ToArray();
+        var eligibleRetryCounts = rows
+            .GroupBy(x => x.Kind)
+            .Select(x => new WorkerJobRetryCount(x.Key, x.Sum(y => y.EligibleRetry)))
             .ToArray();
         var leaseCounts = rows
             .GroupBy(x => x.Kind)
@@ -1738,7 +1899,12 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .ToArray();
 
         return new WorkerJobQueueStats(
-            Download: WorkerJobKindStats.FromRows(WorkerJob.JobKind.Download, statusCounts, readyCounts, leaseCounts),
+            Download: WorkerJobKindStats.FromRows(
+                WorkerJob.JobKind.Download,
+                statusCounts,
+                readyCounts,
+                leaseCounts,
+                eligibleRetryCounts),
             Verify: WorkerJobKindStats.FromRows(WorkerJob.JobKind.Verify, statusCounts, readyCounts, leaseCounts),
             Repair: WorkerJobKindStats.FromRows(WorkerJob.JobKind.Repair, statusCounts, readyCounts, leaseCounts));
     }
@@ -1783,7 +1949,8 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             WorkerJob.JobKind kind,
             IReadOnlyCollection<WorkerJobStatusCount> statusCounts,
             IReadOnlyCollection<WorkerJobReadyCount> readyCounts,
-            IReadOnlyCollection<WorkerJobLeaseCount>? leaseCounts = null
+            IReadOnlyCollection<WorkerJobLeaseCount>? leaseCounts = null,
+            IReadOnlyCollection<WorkerJobRetryCount>? eligibleRetryCounts = null
         )
         {
             var countsByStatus = statusCounts
@@ -1792,7 +1959,8 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             var ready = readyCounts.FirstOrDefault(x => x.Kind == kind)?.Count ?? 0;
             var leaseCount = leaseCounts?.FirstOrDefault(x => x.Kind == kind);
             var pending = countsByStatus.GetValueOrDefault(WorkerJob.JobStatus.Pending);
-            var retry = countsByStatus.GetValueOrDefault(WorkerJob.JobStatus.Retry);
+            var totalRetry = countsByStatus.GetValueOrDefault(WorkerJob.JobStatus.Retry);
+            var retry = eligibleRetryCounts?.FirstOrDefault(x => x.Kind == kind)?.Count ?? totalRetry;
             var totalLeased = countsByStatus.GetValueOrDefault(WorkerJob.JobStatus.Leased);
             var expiredLeased = leaseCount?.Expired ?? 0;
             var leased = leaseCount?.Active ?? Math.Max(0, totalLeased - expiredLeased);
@@ -1809,7 +1977,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                 Quarantined: quarantined,
                 Completed: completed,
                 Cancelled: cancelled,
-                Total: pending + retry + totalLeased + quarantined + completed + cancelled);
+                Total: pending + totalRetry + totalLeased + quarantined + completed + cancelled);
         }
     }
 
@@ -1821,6 +1989,12 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     );
 
     public sealed record WorkerJobReadyCount
+    (
+        WorkerJob.JobKind Kind,
+        int Count
+    );
+
+    public sealed record WorkerJobRetryCount
     (
         WorkerJob.JobKind Kind,
         int Count

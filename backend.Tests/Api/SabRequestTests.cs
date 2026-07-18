@@ -191,6 +191,40 @@ public sealed class SabRequestTests
     }
 
     [Fact]
+    public void GetQueueRequest_MapsZeroLimitToBoundedUnlimited()
+    {
+        var request = new GetQueueRequest(CreateContext("?limit=0"));
+
+        Assert.Equal(SabPagination.MaxLimit, request.Limit);
+    }
+
+    [Fact]
+    public void GetQueueRequest_DoesNotMapNegativeLimitToMaximum()
+    {
+        var request = new GetQueueRequest(CreateContext("?limit=-1"));
+
+        Assert.Equal(0, request.Limit);
+    }
+
+    [Fact]
+    public void GetHistoryRequest_KeepsZeroLimitEndpointSpecific()
+    {
+        var configManager = new ConfigManager();
+        configManager.UpdateValues([
+            new ConfigItem { ConfigName = "api.ignore-history-limit", ConfigValue = "false" }
+        ]);
+        var request = new GetHistoryRequest(CreateContext("?limit=0"), configManager);
+
+        Assert.Equal(0, request.Limit);
+    }
+
+    [Fact]
+    public void PageSizeParsingKeepsZeroLimitSemantics()
+    {
+        Assert.Equal(0, SabPagination.ParseLimit("0", "pageSize"));
+    }
+
+    [Fact]
     public void GetQueueRequest_NormalizesStatusAliases()
     {
         var request = new GetQueueRequest(CreateContext("?status=Downloading,QuickCheck,PP,Repairing,Queued,Paused"));

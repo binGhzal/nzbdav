@@ -6,7 +6,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import secrets
 import shlex
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -18,6 +21,9 @@ from typing import Any
 DEFAULT_SERVICE = "nzbdav_rclone"
 DEFAULT_STATE_FILE = ".nzbdav-rclone-state.json"
 COMPOSE_CONFIG_HASH_LABEL = "com.docker.compose.config-hash"
+STATE_FORMAT_VERSION = 1
+MAX_STATE_BYTES = 64 * 1024
+STATE_FILE_MODE = 0o600
 
 
 @dataclass(frozen=True)
@@ -69,20 +75,146 @@ def fingerprint_file_digest(digest: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_state(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
+    try:
+        path_stat = path.lstat()
+    except FileNotFoundError:
         return None
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+
+    if not stat.S_ISREG(path_stat.st_mode):
+        raise ValueError(f"State path must be a regular file: {path}")
+    if hasattr(os, "geteuid") and path_stat.st_uid != os.geteuid():
+        raise ValueError(f"State file must be owned by the current user: {path}")
+    if path_stat.st_size > MAX_STATE_BYTES:
+        raise ValueError(f"State file exceeds {MAX_STATE_BYTES} bytes: {path}")
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags)
+    try:
+        opened_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise ValueError(f"State path must be a regular file: {path}")
+        if (opened_stat.st_dev, opened_stat.st_ino) != (path_stat.st_dev, path_stat.st_ino):
+            raise ValueError(f"State file changed while it was being opened: {path}")
+        encoded = read_bounded(descriptor, MAX_STATE_BYTES)
+    finally:
+        os.close(descriptor)
+
+    state = json.loads(encoded.decode("utf-8"), object_pairs_hook=reject_duplicate_json_keys)
+    if not isinstance(state, dict):
+        raise ValueError(f"State file must contain a JSON object: {path}")
+    fingerprint = state.get("fingerprint")
+    if not is_fingerprint(fingerprint):
+        raise ValueError(f"State file contains an invalid fingerprint: {path}")
+    return state
 
 
-def save_state(path: Path, fingerprint: str, payload: dict[str, Any]) -> None:
+def save_state(path: Path, fingerprint: str) -> None:
+    if not is_fingerprint(fingerprint):
+        raise ValueError("State fingerprint must be 64 lowercase hexadecimal characters")
+
     path.parent.mkdir(parents=True, exist_ok=True)
     state = {
+        "format_version": STATE_FORMAT_VERSION,
         "fingerprint": fingerprint,
         "updated_at": datetime.now(timezone.utc).isoformat(),
-        "payload": payload,
     }
-    path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    encoded = (json.dumps(state, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+    directory_flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        directory_flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        directory_flags |= os.O_NOFOLLOW
+    directory_descriptor = os.open(path.parent, directory_flags)
+    temporary_name = f".{path.name}.{secrets.token_hex(16)}.tmp"
+    temporary_descriptor: int | None = None
+    try:
+        existing = try_stat_entry(path.name, directory_descriptor)
+        if existing is not None and not stat.S_ISREG(existing.st_mode):
+            raise ValueError(f"State path must be a regular file: {path}")
+
+        temporary_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_NOFOLLOW"):
+            temporary_flags |= os.O_NOFOLLOW
+        temporary_descriptor = os.open(
+            temporary_name,
+            temporary_flags,
+            STATE_FILE_MODE,
+            dir_fd=directory_descriptor)
+        write_all(temporary_descriptor, encoded)
+        os.fsync(temporary_descriptor)
+        os.close(temporary_descriptor)
+        temporary_descriptor = None
+        os.replace(
+            temporary_name,
+            path.name,
+            src_dir_fd=directory_descriptor,
+            dst_dir_fd=directory_descriptor)
+        os.fsync(directory_descriptor)
+    finally:
+        if temporary_descriptor is not None:
+            os.close(temporary_descriptor)
+        try:
+            os.unlink(temporary_name, dir_fd=directory_descriptor)
+        except FileNotFoundError:
+            pass
+        os.close(directory_descriptor)
+
+
+def try_stat_entry(name: str, directory_descriptor: int) -> os.stat_result | None:
+    try:
+        return os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+
+
+def write_all(descriptor: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        written = os.write(descriptor, view)
+        if written <= 0:
+            raise OSError("State-file write made no progress")
+        view = view[written:]
+
+
+def read_bounded(descriptor: int, limit: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = os.read(descriptor, min(8192, limit + 1 - total))
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > limit:
+            raise ValueError(f"State file exceeds {limit} bytes")
+
+
+def reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"State file contains duplicate JSON key: {key}")
+        value[key] = item
+    return value
+
+
+def is_fingerprint(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def state_needs_rewrite(path: Path, state: dict[str, Any]) -> bool:
+    return (
+        state.get("format_version") != STATE_FORMAT_VERSION
+        or set(state) != {"format_version", "fingerprint", "updated_at"}
+        or stat.S_IMODE(path.lstat().st_mode) != STATE_FILE_MODE
+    )
 
 
 def should_apply(previous_state: dict[str, Any] | None, current_fingerprint: str, force: bool) -> bool:
@@ -278,9 +410,19 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write(error.stderr or str(error))
         return error.returncode
 
-    fingerprint, payload = compute_fingerprint(config_result.stdout, watch_files)
-    previous_state = load_state(state_file)
+    fingerprint, _ = compute_fingerprint(config_result.stdout, watch_files)
+    try:
+        previous_state = load_state(state_file)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+        sys.stderr.write(f"Refusing unsafe rclone state file: {error}\n")
+        return 78
     if not should_apply(previous_state, fingerprint, args.force):
+        if previous_state is not None and state_needs_rewrite(state_file, previous_state):
+            try:
+                save_state(state_file, fingerprint)
+            except (OSError, ValueError) as error:
+                sys.stderr.write(f"Could not rewrite private rclone state: {error}\n")
+                return 74
         print(f"{args.service}: unchanged; skipping docker compose up")
         return 0
 
@@ -293,7 +435,11 @@ def main(argv: list[str] | None = None) -> int:
         if live_state is not None:
             compose_hash, live_container = live_state
             if can_adopt_live_container(compose_hash, live_container, watch_files):
-                save_state(state_file, fingerprint, payload)
+                try:
+                    save_state(state_file, fingerprint)
+                except (OSError, ValueError) as error:
+                    sys.stderr.write(f"Could not write private rclone state: {error}\n")
+                    return 74
                 print(
                     f"{args.service}: running container already matches current config; "
                     "recorded fingerprint without docker compose up")
@@ -310,7 +456,11 @@ def main(argv: list[str] | None = None) -> int:
     except subprocess.CalledProcessError as error:
         return error.returncode
 
-    save_state(state_file, fingerprint, payload)
+    try:
+        save_state(state_file, fingerprint)
+    except (OSError, ValueError) as error:
+        sys.stderr.write(f"Could not write private rclone state: {error}\n")
+        return 74
     print(f"{args.service}: updated and recorded fingerprint {fingerprint}")
     return 0
 

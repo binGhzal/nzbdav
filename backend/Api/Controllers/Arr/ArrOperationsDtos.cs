@@ -11,6 +11,15 @@ public sealed class ArrValidationResponse
     [JsonPropertyName("instance_count")]
     public int InstanceCount { get; init; }
 
+    [JsonPropertyName("configured_apps")]
+    public IReadOnlyList<string> ConfiguredApps { get; init; } = [];
+
+    [JsonPropertyName("search_nudge_mode")]
+    public string SearchNudgeMode { get; init; } = "report";
+
+    [JsonPropertyName("duplicate_nzb_behavior")]
+    public string DuplicateNzbBehavior { get; init; } = "increment";
+
     [JsonPropertyName("queue_items")]
     public int QueueItems { get; init; }
 

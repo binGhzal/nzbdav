@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Database;
@@ -17,7 +18,7 @@ public class DavCleanupService : BackgroundService
         {
             try
             {
-                await using var dbContext = new DavDatabaseContext();
+                await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
 
                 var cleanupItems = await dbContext.DavCleanupItems
                     .Take(BatchSize)
@@ -31,29 +32,25 @@ public class DavCleanupService : BackgroundService
                     continue;
                 }
 
-                var cleanupIds = cleanupItems.Select(x => x.Id).ToList();
+                await DeleteChildrenAndEnqueueInvalidationsAsync(
+                        dbContext,
+                        cleanupItems,
+                        stoppingToken)
+                    .ConfigureAwait(false);
 
-                // Collect children to delete for vfs/forget
-                var deletedItems = await dbContext.Items
-                    .Where(x => x.ParentId != null && cleanupIds.Contains(x.ParentId.Value))
-                    .Select(x => new DavItem { Id = x.Id, Type = x.Type, Path = x.Path })
-                    .ToListAsync(stoppingToken);
+                // A retry can observe no children after a previous transaction committed
+                // but the process stopped before the snapshot became durable.
+                ContentIndexSnapshotWriterService.RequestSnapshot();
+                if (!await ContentIndexSnapshotWriterService.FlushNowAsync(stoppingToken).ConfigureAwait(false))
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
+                    continue;
+                }
 
-                // Delete any children
-                await dbContext.Items
-                    .Where(x => x.ParentId != null && cleanupIds.Contains(x.ParentId.Value))
-                    .ExecuteDeleteAsync(stoppingToken);
-
-                // Queue rclone vfs/forget for deleted children
-                dbContext.EnqueueRcloneVfsForget(deletedItems);
-                if (deletedItems.Count > 0)
-                    ContentIndexSnapshotWriterService.RequestSnapshot();
-
-                // Remove the queue items from database
+                // Drain cleanup rows only after both the deletion transaction and
+                // recovery snapshot are durable.
                 dbContext.DavCleanupItems.RemoveRange(cleanupItems);
                 await dbContext.SaveChangesAsync(stoppingToken).ConfigureAwait(false);
-                if (deletedItems.Count > 0)
-                    await ContentIndexSnapshotWriterService.FlushNowAsync(stoppingToken).ConfigureAwait(false);
 
                 // Continue immediately to next iteration to process more items
             }
@@ -69,5 +66,30 @@ public class DavCleanupService : BackgroundService
                 await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
             }
         }
+    }
+
+    internal static async Task DeleteChildrenAndEnqueueInvalidationsAsync(
+        DavDatabaseContext dbContext,
+        IReadOnlyCollection<DavCleanupItem> cleanupItems,
+        CancellationToken ct)
+    {
+        var cleanupIds = cleanupItems.Select(x => x.Id).ToList();
+        await using var transaction = await dbContext.Database
+            .BeginTransactionAsync(IsolationLevel.Serializable, ct)
+            .ConfigureAwait(false);
+
+        var deletedItems = await dbContext.Items
+            .Where(x => x.ParentId != null && cleanupIds.Contains(x.ParentId.Value))
+            .Select(x => new DavItem { Id = x.Id, Type = x.Type, Path = x.Path })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        await dbContext.Items
+            .Where(x => x.ParentId != null && cleanupIds.Contains(x.ParentId.Value))
+            .ExecuteDeleteAsync(ct)
+            .ConfigureAwait(false);
+        dbContext.EnqueueRcloneVfsForget(deletedItems);
+        await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+        await transaction.CommitAsync(ct).ConfigureAwait(false);
     }
 }

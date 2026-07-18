@@ -46,7 +46,7 @@ public sealed class ArrPriorityService(ConfigManager configManager) : Background
 
         var instances = ArrIntegration.GetInstances(arrConfig);
         var metadata = await LoadMetadataAsync(instances, ct).ConfigureAwait(false);
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
         var now = DateTimeOffset.UtcNow;
         var expiresAt = now.AddSeconds(options.RecomputeIntervalSeconds * 2);
         var queueItems = await dbContext.QueueItems

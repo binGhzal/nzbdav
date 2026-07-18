@@ -331,16 +331,35 @@ public sealed class DatabaseWorkerJobCoordinatorTests
         DateTimeOffset now,
         int priority = 0)
     {
+        var targetId = Guid.NewGuid();
         dbContext.WorkerJobs.Add(new WorkerJob
         {
             Id = Guid.NewGuid(),
             Kind = kind,
             Status = WorkerJob.JobStatus.Pending,
-            TargetId = Guid.NewGuid(),
+            TargetId = targetId,
             Priority = priority,
             CreatedAt = now,
             UpdatedAt = now,
             AvailableAt = now
+        });
+        if (kind != WorkerJob.JobKind.Download) return;
+
+        var localCreatedAt = now.LocalDateTime;
+        localCreatedAt = DateTime.SpecifyKind(
+            new DateTime(localCreatedAt.Ticks - localCreatedAt.Ticks % 10),
+            DateTimeKind.Unspecified);
+        dbContext.QueueItems.Add(new QueueItem
+        {
+            Id = targetId,
+            CreatedAt = localCreatedAt,
+            FileName = $"download-{targetId:N}.nzb",
+            JobName = $"download-{targetId:N}",
+            NzbFileSize = 1,
+            TotalSegmentBytes = 1,
+            Category = "movies",
+            Priority = QueueItem.PriorityOption.Normal,
+            PostProcessing = QueueItem.PostProcessingOption.None
         });
     }
 

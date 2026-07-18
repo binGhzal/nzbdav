@@ -14,9 +14,12 @@ using Serilog;
 
 namespace NzbWebDAV.Services;
 
-public sealed class ArrCorrelationService(ConfigManager configManager) : BackgroundService
+public sealed class ArrCorrelationService(
+    ConfigManager configManager,
+    TimeProvider? timeProvider = null) : BackgroundService
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(2);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -45,24 +48,23 @@ public sealed class ArrCorrelationService(ConfigManager configManager) : Backgro
         if (arrConfig.GetInstanceCount() == 0) return;
 
         foreach (var instance in ArrIntegration.GetInstances(arrConfig))
-            await RefreshInstanceAsync(instance, ct).ConfigureAwait(false);
+            await RefreshInstanceAsync(instance, _timeProvider, ct).ConfigureAwait(false);
     }
 
-    private static async Task RefreshInstanceAsync(ArrInstance instance, CancellationToken ct)
+    private static async Task RefreshInstanceAsync(
+        ArrInstance instance,
+        TimeProvider timeProvider,
+        CancellationToken ct)
     {
         var records = await GetQueueRecordsAsync(instance, ct).ConfigureAwait(false);
         if (records.Count == 0) return;
 
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
         var queueItems = await dbContext.QueueItems
             .AsNoTracking()
             .ToListAsync(ct)
             .ConfigureAwait(false);
-        var recentHistory = await dbContext.HistoryItems
-            .AsNoTracking()
-            .Where(x => x.CreatedAt >= DateTime.UtcNow.AddDays(-14))
-            .ToListAsync(ct)
-            .ConfigureAwait(false);
+        var recentHistory = await GetRecentHistoryAsync(dbContext, timeProvider, ct).ConfigureAwait(false);
         var queueById = queueItems.ToDictionary(x => x.Id);
         var historyById = recentHistory.ToDictionary(x => x.Id);
         var duplicateMediaKeys = records
@@ -97,6 +99,20 @@ public sealed class ArrCorrelationService(ConfigManager configManager) : Backgro
         }
 
         await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    internal static Task<List<HistoryItem>> GetRecentHistoryAsync(
+        DavDatabaseContext dbContext,
+        TimeProvider timeProvider,
+        CancellationToken ct)
+    {
+        var recentHistoryCutoff = LocalWallQueryBounds.NormalizeInclusiveLowerBound(
+            dbContext,
+            timeProvider.GetLocalNow().DateTime.AddDays(-14));
+        return dbContext.HistoryItems
+            .AsNoTracking()
+            .Where(x => x.CreatedAt >= recentHistoryCutoff)
+            .ToListAsync(ct);
     }
 
     private static async Task<List<ArrQueueRecord>> GetQueueRecordsAsync(ArrInstance instance, CancellationToken ct)

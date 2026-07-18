@@ -16,6 +16,12 @@ Task 1's committed entrypoint/runtime repair remains valid. The legacy Task 2
 steps below describe the current v1/v2 single-JSON transfer and must not be used
 for the real 5.16 GB SQLite migration.
 
+**Phase 2 checkpoint (2026-07-12):** Only the transfer-v3 safety foundations
+are implemented. Both transfer-v3 commands and normal PostgreSQL runtime remain
+intentionally unavailable. The allowlist and transfer execution instructions
+in this addendum belong to later, separately reviewed phases; Phase 2 must not
+activate them.
+
 The provider plan supersedes conflicting statements below as follows:
 
 - Add exact allowlisted maintenance commands `--db-export-v3 DIR` and
@@ -52,10 +58,12 @@ The provider plan supersedes conflicting statements below as follows:
 - Use the repository's real `entrypoint.sh`; there is no
   `docker-entrypoint.sh`.
 - Before the first committed import batch, persist the reserved PostgreSQL
-  `database.import-state=importing:<manifest-digest>` marker. Normal startup
-  refuses an incomplete marker, including after SIGKILL or power loss, until
-  the disposable target is dropped/recreated. Database verification advances
-  it only to non-usable `database-verified:<digest>`.
+  `database.import-state` marker with exact value
+  `{"formatVersion":3,"state":"importing","manifestSha256":"<64-lowercase-hex>"}`.
+  Normal startup refuses an incomplete marker, including after SIGKILL or power
+  loss, until the disposable target is dropped/recreated. Database verification
+  advances it only to the non-usable exact value
+  `{"formatVersion":3,"state":"database-verified","manifestSha256":"<same-64-lowercase-hex>"}`.
 - After verified blob publication, final source stability, and sensitive-work
   cleanup, atomically publish/fsync a mode-`0600` target-config
   `.nzbdav-migration-complete.json` containing the matching redacted digests.

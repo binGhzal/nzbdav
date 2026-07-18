@@ -65,8 +65,23 @@ public sealed class ContentIndexSnapshotInterceptor : SaveChangesInterceptor
     {
         if (context is not DavDatabaseContext dbContext) return;
         if (!PendingSnapshots.TryGetValue(dbContext, out _)) return;
+        if (dbContext.Database.CurrentTransaction is not null) return;
         PendingSnapshots.Remove(dbContext);
         ContentIndexSnapshotWriterService.RequestSnapshot();
+    }
+
+    internal static void PublishCommittedSnapshot(DbContext? context)
+    {
+        if (context is not DavDatabaseContext dbContext) return;
+        if (!PendingSnapshots.TryGetValue(dbContext, out _)) return;
+        PendingSnapshots.Remove(dbContext);
+        ContentIndexSnapshotWriterService.RequestSnapshot();
+    }
+
+    internal static void DiscardPendingSnapshot(DbContext? context)
+    {
+        if (context is null) return;
+        PendingSnapshots.Remove(context);
     }
 
     private static void MarkPendingSnapshot(DbContext? dbContext)
@@ -78,6 +93,7 @@ public sealed class ContentIndexSnapshotInterceptor : SaveChangesInterceptor
     private static void ClearPendingSnapshot(DbContext? dbContext)
     {
         if (dbContext == null) return;
+        if (dbContext.Database.CurrentTransaction is not null) return;
         PendingSnapshots.Remove(dbContext);
     }
 

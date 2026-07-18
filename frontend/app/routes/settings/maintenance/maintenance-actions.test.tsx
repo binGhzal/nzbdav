@@ -53,7 +53,52 @@ describe("maintenance task actions", () => {
             expect(screen.getByText("Failed to start convert STRM files to symlinks (503).")).toBeTruthy();
         });
     });
+
+    it("restores a persisted running state without waiting for a websocket message", async () => {
+        vi.stubGlobal("WebSocket", FakeWebSocket);
+        vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+            const url = input.toString();
+            if (url.includes("/api/maintenance/status")) {
+                return Response.json({
+                    activeRun: maintenanceRun({
+                        kind: "recreate-strm-files",
+                        status: "running",
+                        message: "Creating strm file 7.",
+                        progressCurrent: 6,
+                    }),
+                    lastRun: null,
+                });
+            }
+            return new Response("unexpected request", { status: 500 });
+        }));
+
+        render(<RecreateStrmFiles />);
+
+        await waitFor(() => {
+            expect(screen.getByText(/Creating strm file 7/)).toBeTruthy();
+        });
+        expect(screen.getByRole("button", { name: "⌛ Running.." })).toHaveProperty("disabled", true);
+    });
 });
+
+function maintenanceRun(overrides: Record<string, unknown>) {
+    return {
+        id: "7344633b-faf0-4612-8644-c89958eb00f0",
+        kind: "recreate-strm-files",
+        status: "running",
+        requestedBy: "manual",
+        createdAt: "2026-07-12T08:00:00Z",
+        startedAt: "2026-07-12T08:00:00Z",
+        updatedAt: "2026-07-12T08:00:01Z",
+        completedAt: null,
+        cancellationRequestedAt: null,
+        progressCurrent: 0,
+        progressTotal: null,
+        message: null,
+        error: null,
+        ...overrides,
+    };
+}
 
 async function openLastSocket() {
     const socket = FakeWebSocket.instances.at(-1);

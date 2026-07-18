@@ -12,8 +12,12 @@ using Serilog;
 
 namespace NzbWebDAV.Services;
 
-public sealed class ArrSearchNudgeService(ConfigManager configManager) : BackgroundService
+public sealed class ArrSearchNudgeService(
+    ConfigManager configManager,
+    TimeProvider? timeProvider = null) : BackgroundService
 {
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -44,10 +48,14 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
         var options = configManager.GetArrSearchNudgeOptions();
         if (arrConfig.GetInstanceCount() == 0) return;
 
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
         await ProcessPendingApplyCommandsAsync(dbContext, arrConfig, options, ct).ConfigureAwait(false);
 
-        var activeMediaKeys = await GetActiveMediaKeysAsync(dbContext, ct).ConfigureAwait(false);
+        var activeMediaKeys = await GetActiveMediaKeysAsync(
+                dbContext,
+                _timeProvider,
+                ct)
+            .ConfigureAwait(false);
 
         foreach (var instance in ArrIntegration.GetInstances(arrConfig))
         {
@@ -159,7 +167,10 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
         }
     }
 
-    private static async Task<HashSet<string>> GetActiveMediaKeysAsync(DavDatabaseContext dbContext, CancellationToken ct)
+    internal static async Task<HashSet<string>> GetActiveMediaKeysAsync(
+        DavDatabaseContext dbContext,
+        TimeProvider timeProvider,
+        CancellationToken ct)
     {
         var queueIds = await dbContext.QueueItems
             .AsNoTracking()
@@ -167,7 +178,9 @@ public sealed class ArrSearchNudgeService(ConfigManager configManager) : Backgro
             .ToListAsync(ct)
             .ConfigureAwait(false);
         var queueIdSet = queueIds.ToHashSet();
-        var recentHistoryCutoff = DateTime.UtcNow.AddHours(-24);
+        var recentHistoryCutoff = LocalWallQueryBounds.NormalizeInclusiveLowerBound(
+            dbContext,
+            timeProvider.GetLocalNow().DateTime.AddHours(-24));
 
         return (await dbContext.ArrDownloadCorrelations
                 .AsNoTracking()

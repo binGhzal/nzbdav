@@ -18,7 +18,66 @@ public sealed class GetAndHeadHandlerPatchTests
         var body = ((MemoryStream)context.Response.Body).ToArray();
         Assert.Equal(StatusCodes.Status206PartialContent, context.Response.StatusCode);
         Assert.Equal("bytes 1008-1023/1024", context.Response.Headers.ContentRange);
+        Assert.Equal(16, context.Response.ContentLength);
         Assert.Equal(source[^16..], body);
+    }
+
+    [Fact]
+    public async Task HandleRequestPublishesKnownFullLengthBeforeOpeningReadableStream()
+    {
+        var context = CreateContext(rangeHeader: null);
+        long? contentLengthAtOpen = null;
+        var item = new FakeStoreItem(
+            "movie.mkv",
+            () => new MemoryStream(new byte[1024], writable: false),
+            fileSize: 1024,
+            onOpen: () => contentLengthAtOpen = context.Response.ContentLength);
+        var handler = new GetAndHeadHandlerPatch(new FakeStore(item));
+
+        await handler.HandleRequestAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(1024, context.Response.ContentLength);
+        Assert.Equal(1024, contentLengthAtOpen);
+        Assert.Equal(1, item.ReadableStreamOpenCount);
+    }
+
+    [Fact]
+    public async Task HandleRequestPublishesResolvedRangeBeforeOpeningReadableStream()
+    {
+        var context = CreateContext("bytes=128-255");
+        long? requestedEndAtOpen = null;
+        long? contentLengthAtOpen = null;
+        var item = new FakeStoreItem(
+            "movie.mkv",
+            () => new MemoryStream(new byte[1024], writable: false),
+            fileSize: 1024,
+            onOpen: () =>
+            {
+                requestedEndAtOpen = context.Items["RequestedRangeEnd"] as long?;
+                contentLengthAtOpen = context.Response.ContentLength;
+            });
+        var handler = new GetAndHeadHandlerPatch(new FakeStore(item));
+
+        await handler.HandleRequestAsync(context);
+
+        Assert.Equal(255, requestedEndAtOpen);
+        Assert.Equal(128, contentLengthAtOpen);
+        Assert.Equal(1, item.ReadableStreamOpenCount);
+    }
+
+    [Fact]
+    public async Task HandleRequestRejectsInvalidKnownSizeRangeWithoutOpeningReadableStream()
+    {
+        var item = new FakeStoreItem("movie.mkv", new byte[1024]);
+        var handler = new GetAndHeadHandlerPatch(new FakeStore(item));
+        var context = CreateContext("bytes=2048-");
+
+        await handler.HandleRequestAsync(context);
+
+        Assert.Equal(StatusCodes.Status416RangeNotSatisfiable, context.Response.StatusCode);
+        Assert.Equal("bytes */1024", context.Response.Headers.ContentRange);
+        Assert.Equal(0, item.ReadableStreamOpenCount);
     }
 
     [Fact]
@@ -40,7 +99,10 @@ public sealed class GetAndHeadHandlerPatchTests
     public async Task HandleRequestThrowsWhenBoundedRangeSourceEndsEarly()
     {
         var handler = new GetAndHeadHandlerPatch(new FakeStore(
-            new FakeStoreItem("movie.mkv", () => new TruncatedSeekableStream([1, 2, 3, 4], declaredLength: 8))));
+            new FakeStoreItem(
+                "movie.mkv",
+                () => new TruncatedSeekableStream([1, 2, 3, 4], declaredLength: 8),
+                fileSize: 8)));
         var context = CreateContext("bytes=0-7");
 
         var exception = await Assert.ThrowsAsync<IOException>(() =>
@@ -94,12 +156,17 @@ public sealed class GetAndHeadHandlerPatchTests
         {
         }
 
-        private FakeStoreItem(string name, Func<Stream> openStream, long fileSize)
+        public FakeStoreItem(
+            string name,
+            Func<Stream> openStream,
+            long fileSize,
+            Action? onOpen = null)
         {
             Name = name;
             UniqueKey = name;
             FileSize = fileSize;
             _openStream = openStream;
+            _onOpen = onOpen;
         }
 
         public override string Name { get; }
@@ -107,10 +174,12 @@ public sealed class GetAndHeadHandlerPatchTests
         public override long FileSize { get; }
         public override DateTime CreatedAt { get; } = DateTime.UtcNow;
         public int ReadableStreamOpenCount { get; private set; }
+        private readonly Action? _onOpen;
 
         public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
         {
             ReadableStreamOpenCount++;
+            _onOpen?.Invoke();
             return Task.FromResult(_openStream());
         }
     }

@@ -1,14 +1,14 @@
 import type express from "express";
-import { isAuthenticated } from "~/auth/authentication.server";
+import { AUTH_MODE, isAuthenticated } from "~/auth/authentication.server";
 
-// Paths that do not require authentication. Every other path is protected.
-const PUBLIC_PATHS = [
-  "/__manifest",
+const ALWAYS_PUBLIC_PATHS = ["/__manifest"];
+const LOCAL_PUBLIC_PATHS = [
   "/login",
   "/login.data",
   "/onboarding",
   "/onboarding.data",
 ];
+const LOCAL_ONLY_PATHS = [...LOCAL_PUBLIC_PATHS, "/logout"];
 
 // URL_BASE is read at runtime — the Express server mounts middleware under this prefix,
 // so within this middleware `req.path` is already stripped. But `res.redirect("/login")`
@@ -29,13 +29,21 @@ export async function authMiddleware(
   res: express.Response,
   next: express.NextFunction,
 ): Promise<void> {
-  // Allow explicitly public paths
   const pathname = decodeURIComponent(req.path);
-  if (PUBLIC_PATHS.includes(pathname)) return next();
+  if (AUTH_MODE === "authentik-proxy" && LOCAL_ONLY_PATHS.includes(pathname)) {
+    res.sendStatus(404);
+    return;
+  }
+  if (ALWAYS_PUBLIC_PATHS.includes(pathname)) return next();
+  if (AUTH_MODE === "local" && LOCAL_PUBLIC_PATHS.includes(pathname)) return next();
 
   // Allow authenticated sessions
   if (await isAuthenticated(req)) return next();
 
-  // Redirect everything else to the login page
+  if (AUTH_MODE === "authentik-proxy") {
+    res.sendStatus(401);
+    return;
+  }
+
   res.redirect(302, `${URL_BASE}/login`);
 }

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Api.Controllers.TestUsenetConnection;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Config;
 using NzbWebDAV.Exceptions;
 using UsenetSharp.Models;
 
@@ -8,7 +9,7 @@ namespace NzbWebDAV.Api.Controllers.TestUsenetPipelining;
 
 [ApiController]
 [Route("api/test-usenet-pipelining")]
-public class TestUsenetPipeliningController() : BaseApiController
+public class TestUsenetPipeliningController(ConfigManager? configManager = null) : BaseApiController
 {
     // A small probe is enough to tell whether the server tolerates pipelined STAT. We send a
     // handful of commands at once; servers that don't support pipelining stall, drop the
@@ -21,7 +22,10 @@ public class TestUsenetPipeliningController() : BaseApiController
         try
         {
             connection = await UsenetStreamingClient
-                .CreateNewConnection(request.ToConnectionDetails(), HttpContext.RequestAborted)
+                .CreateNewConnection(
+                    request.ToConnectionDetails(
+                        TestUsenetConnectionController.ResolvePassword(request, configManager)),
+                    HttpContext.RequestAborted)
                 .ConfigureAwait(false);
         }
         catch (CouldNotConnectToUsenetException)

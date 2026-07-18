@@ -8,31 +8,36 @@ using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
-using System.Runtime;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Hosting;
 
 namespace NzbWebDAV.Queue;
 
-public class QueueManager : IDisposable
+public class QueueManager : IHostedService, IDisposable
 {
     private const int DownloadWorkerRetryMaxAttempts = int.MaxValue;
+    private const string DownloadWorkerSetupError = "Download worker setup failed.";
 
     private readonly Dictionary<Guid, InProgressQueueItem> _inProgressQueueItems = new();
+    private readonly HashSet<InProgressQueueItem> _trackedInProgressQueueItems =
+        new(ReferenceEqualityComparer.Instance);
 
     private readonly UsenetStreamingClient _usenetClient;
-    private readonly CancellationTokenSource? _cancellationTokenSource;
+    private CancellationTokenSource? _cancellationTokenSource;
+    private Task? _processingLoopTask;
     private readonly SemaphoreSlim _queueLock = new(1, 1);
     private readonly ConfigManager _configManager;
     private readonly QueueWorkLaneCoordinator _queueWorkLaneCoordinator;
     private readonly WebsocketManager _websocketManager;
     private readonly ArrDownloadReportService _arrDownloadReportService;
+    private readonly HistoryVisibilityNotifier _historyVisibilityNotifier;
     private readonly IWorkerJobCoordinator _workerJobCoordinator;
     private readonly WorkerLeaseOptions _workerLeaseOptions;
     private readonly Lock _inProgressQueueItemsLock = new();
-    private long _lastMemoryCompactionTicks;
-
+    private readonly Lock _lifecycleLock = new();
     private CancellationTokenSource _sleepingQueueToken = new();
     private readonly Lock _sleepingQueueLock = new();
+    private bool _disposed;
 
     public QueueManager(
         UsenetStreamingClient usenetClient,
@@ -41,7 +46,8 @@ public class QueueManager : IDisposable
         WebsocketManager websocketManager,
         ArrDownloadReportService arrDownloadReportService,
         IWorkerJobCoordinator? workerJobCoordinator = null,
-        IOptions<WorkerLeaseOptions>? workerLeaseOptions = null
+        IOptions<WorkerLeaseOptions>? workerLeaseOptions = null,
+        HistoryVisibilityNotifier? historyVisibilityNotifier = null
     )
     {
         _usenetClient = usenetClient;
@@ -49,14 +55,60 @@ public class QueueManager : IDisposable
         _queueWorkLaneCoordinator = queueWorkLaneCoordinator;
         _websocketManager = websocketManager;
         _arrDownloadReportService = arrDownloadReportService;
+        _historyVisibilityNotifier = historyVisibilityNotifier
+            ?? new HistoryVisibilityNotifier(configManager, websocketManager);
         _workerLeaseOptions = WorkerLeaseOptions.Validate(
             workerLeaseOptions?.Value ?? new WorkerLeaseOptions());
         _workerJobCoordinator = workerJobCoordinator ?? new DatabaseWorkerJobCoordinator(
             new ConfigWorkerLaneCapacityPolicy(configManager),
             Options.Create(_workerLeaseOptions));
-        _cancellationTokenSource = CancellationTokenSource
-            .CreateLinkedTokenSource(SigtermUtil.GetCancellationToken());
-        _ = ProcessQueueAsync(_cancellationTokenSource.Token);
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        lock (_lifecycleLock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_processingLoopTask is { IsCompleted: false }) return Task.CompletedTask;
+
+            _cancellationTokenSource?.Dispose();
+            _cancellationTokenSource = CancellationTokenSource
+                .CreateLinkedTokenSource(SigtermUtil.GetCancellationToken());
+            _processingLoopTask = ProcessQueueAsync(_cancellationTokenSource.Token);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        CancellationTokenSource? lifecycleCts;
+        Task? processingLoop;
+        lock (_lifecycleLock)
+        {
+            lifecycleCts = _cancellationTokenSource;
+            processingLoop = _processingLoopTask;
+            lifecycleCts?.Cancel();
+        }
+
+        if (processingLoop is not null)
+            await processingLoop.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        Task[] activeWorkers;
+        lock (_inProgressQueueItemsLock)
+            activeWorkers = _trackedInProgressQueueItems
+                .Select(x => x.ProcessingTask)
+                .ToArray();
+        if (activeWorkers.Length > 0)
+            await Task.WhenAll(activeWorkers).WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        lock (_lifecycleLock)
+        {
+            if (!ReferenceEquals(_cancellationTokenSource, lifecycleCts)) return;
+            _processingLoopTask = null;
+            _cancellationTokenSource = null;
+            lifecycleCts?.Dispose();
+        }
     }
 
     public (QueueItem? queueItem, int? progress) GetInProgressQueueItem()
@@ -127,7 +179,7 @@ public class QueueManager : IDisposable
             await dbClient.RemoveQueueItemsAsync(queueItemIds, ct).ConfigureAwait(false);
 
             foreach (var inProgressQueueItem in inProgressQueueItems)
-                inProgressQueueItem.CancellationTokenSource.Cancel();
+                CancelUnlessDisposed(inProgressQueueItem.CancellationTokenSource);
         }
         finally
         {
@@ -198,6 +250,13 @@ public class QueueManager : IDisposable
     private async Task<bool> TryStartNextQueueItemAsync(CancellationToken ct)
     {
         await _queueLock.WaitAsync(ct).ConfigureAwait(false);
+        WorkerLeaseIdentity? ownedLease = null;
+        DavDatabaseContext? dbContext = null;
+        Stream? queueNzbStream = null;
+        ArticleCachingNntpClient? cachingUsenetClient = null;
+        CancellationTokenSource? queueItemCancellationTokenSource = null;
+        var failureDisposition = PreHandoffLeaseDisposition.Retry;
+        var handedOff = false;
         try
         {
             var laneSnapshot = GetLaneSnapshot();
@@ -220,45 +279,181 @@ public class QueueManager : IDisposable
                 return false;
 
             var workerLease = lease[0];
-            var dbContext = new DavDatabaseContext();
-            var dbClient = new DavDatabaseClient(dbContext);
-            var topItem = await dbClient.GetQueueItemForWorkerAsync(workerLease.TargetId, ct)
-                .ConfigureAwait(false);
-            if (topItem.queueItem is null)
+            ownedLease = workerLease.Identity;
+            InProgressQueueItem? existingLocalWorker;
+            lock (_inProgressQueueItemsLock)
+                _inProgressQueueItems.TryGetValue(workerLease.TargetId, out existingLocalWorker);
+            if (existingLocalWorker is not null)
             {
-                var completed = await _workerJobCoordinator.CompleteAsync(
-                    workerLease.Identity, null, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
-                if (!completed)
-                    Log.Warning("Lost download worker lease {WorkerJobId} before orphan cleanup.",
-                        workerLease.Identity.JobId);
-                await dbContext.DisposeAsync().ConfigureAwait(false);
+                CancelUnlessDisposed(existingLocalWorker.CancellationTokenSource);
+                await AcknowledgePreHandoffFailureAsync(
+                        workerLease.Identity,
+                        PreHandoffLeaseDisposition.Release)
+                    .ConfigureAwait(false);
+                ownedLease = null;
                 return false;
             }
 
-            var cachingUsenetClient = new ArticleCachingNntpClient(
+            dbContext = DavDatabaseContextRuntimeFactory.Create();
+            var dbClient = new DavDatabaseClient(dbContext);
+            var topItem = await dbClient.GetQueueItemForWorkerAsync(workerLease.TargetId, ct)
+                .ConfigureAwait(false);
+            queueNzbStream = topItem.queueNzbStream;
+            if (topItem.queueItem is null)
+            {
+                await AcknowledgePreHandoffFailureAsync(
+                        workerLease.Identity,
+                        PreHandoffLeaseDisposition.Complete)
+                    .ConfigureAwait(false);
+                ownedLease = null;
+                return false;
+            }
+
+            cachingUsenetClient = new ArticleCachingNntpClient(
                 _usenetClient,
                 maxCacheBytes: _configManager.GetArticleCacheMaxBytesPerQueueWorker(),
                 sharedMaxCacheBytes: _configManager.GetArticleCacheMaxBytes());
-            var queueItemCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var inProgressQueueItem = BeginProcessingQueueItem(
+            queueItemCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            BeginProcessingQueueItem(
                 dbContext,
                 dbClient,
                 cachingUsenetClient,
                 topItem.queueItem,
-                topItem.queueNzbStream,
+                queueNzbStream,
                 workerLease.Identity,
                 queueItemCancellationTokenSource);
-
-            lock (_inProgressQueueItemsLock)
-            {
-                _inProgressQueueItems[topItem.queueItem.Id] = inProgressQueueItem;
-            }
+            handedOff = true;
 
             return true;
         }
+        catch (Exception)
+        {
+            if (ownedLease.HasValue)
+            {
+                await AcknowledgePreHandoffFailureAsync(
+                        ownedLease.Value,
+                        ct.IsCancellationRequested
+                            ? PreHandoffLeaseDisposition.Release
+                            : failureDisposition)
+                    .ConfigureAwait(false);
+            }
+            throw;
+        }
         finally
         {
+            if (!handedOff)
+            {
+                await DisposePreHandoffResourcesAsync(
+                        queueItemCancellationTokenSource,
+                        queueNzbStream,
+                        cachingUsenetClient,
+                        dbContext)
+                    .ConfigureAwait(false);
+            }
             _queueLock.Release();
+        }
+    }
+
+    private async Task<bool> AcknowledgePreHandoffFailureAsync(
+        WorkerLeaseIdentity lease,
+        PreHandoffLeaseDisposition disposition)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var nextAttemptAt = now.AddMinutes(1);
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            try
+            {
+                var acknowledged = disposition switch
+                {
+                    PreHandoffLeaseDisposition.Complete => await _workerJobCoordinator.CompleteAsync(
+                            lease, null, now, CancellationToken.None)
+                        .ConfigureAwait(false),
+                    PreHandoffLeaseDisposition.Release => await _workerJobCoordinator.ReleaseAsync(
+                            lease, now, CancellationToken.None)
+                        .ConfigureAwait(false),
+                    PreHandoffLeaseDisposition.Retry => await _workerJobCoordinator.FailAsync(
+                            lease,
+                            WorkerJob.FailureClass.Retryable,
+                            DownloadWorkerSetupError,
+                            nextAttemptAt,
+                            DownloadWorkerRetryMaxAttempts,
+                            now,
+                            CancellationToken.None)
+                        .ConfigureAwait(false),
+                    _ => throw new ArgumentOutOfRangeException(nameof(disposition), disposition, null)
+                };
+                if (!acknowledged)
+                {
+                    Log.Warning(
+                        "Lost download worker lease {WorkerJobId} during pre-handoff reconciliation.",
+                        lease.JobId);
+                }
+                return acknowledged;
+            }
+            catch (Exception exception) when (attempt == 1)
+            {
+                Log.Warning(
+                    exception,
+                    "Download worker pre-handoff acknowledgement failed for {WorkerJobId}; reconciling once.",
+                    lease.JobId);
+            }
+            catch (Exception exception)
+            {
+                Log.Error(
+                    exception,
+                    "Could not reconcile download worker lease {WorkerJobId} after setup failure.",
+                    lease.JobId);
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    private static async Task DisposePreHandoffResourcesAsync(
+        CancellationTokenSource? cancellationTokenSource,
+        Stream? nzbStream,
+        ArticleCachingNntpClient? usenetClient,
+        DavDatabaseContext? dbContext)
+    {
+        try
+        {
+            cancellationTokenSource?.Dispose();
+        }
+        catch (Exception exception)
+        {
+            Log.Warning(exception, "Failed to dispose a pre-handoff queue cancellation token.");
+        }
+
+        try
+        {
+            if (nzbStream is not null)
+                await nzbStream.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            Log.Warning(exception, "Failed to dispose a pre-handoff queue NZB stream.");
+        }
+
+        try
+        {
+            if (usenetClient is not null)
+                await usenetClient.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            Log.Warning(exception, "Failed to dispose a pre-handoff queue Usenet client.");
+        }
+
+        try
+        {
+            if (dbContext is not null)
+                await dbContext.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            Log.Warning(exception, "Failed to dispose a pre-handoff queue database context.");
         }
     }
 
@@ -291,7 +486,13 @@ public class QueueManager : IDisposable
             if (progress is 100 or 200) _websocketManager.SendMessage(WebsocketTopic.QueueItemProgress, message);
             else debounce(() => _websocketManager.SendMessage(WebsocketTopic.QueueItemProgress, message));
         });
-        inProgressQueueItem.ProcessingTask = RunQueueItemAsync(inProgressQueueItem, dbClient, progressHook);
+        lock (_inProgressQueueItemsLock)
+        {
+            _inProgressQueueItems[queueItem.Id] = inProgressQueueItem;
+            _trackedInProgressQueueItems.Add(inProgressQueueItem);
+            inProgressQueueItem.ProcessingTask =
+                RunQueueItemAsync(inProgressQueueItem, dbClient, progressHook);
+        }
         return inProgressQueueItem;
     }
 
@@ -306,55 +507,132 @@ public class QueueManager : IDisposable
         var renewalTask = RenewLeaseAsync(inProgressQueueItem, renewalStop.Token);
         try
         {
-            var outcome = await new QueueItemProcessor(
-                inProgressQueueItem.QueueItem,
-                inProgressQueueItem.NzbStream,
-                dbClient,
-                inProgressQueueItem.UsenetClient,
-                _configManager,
-                _websocketManager,
-                _arrDownloadReportService,
-                progressHook,
-                inProgressQueueItem.CancellationTokenSource.Token,
-                stage => inProgressQueueItem.Stage = stage
-            ).ProcessAsync().ConfigureAwait(false);
-            if (!await UpdateDownloadWorkerJobAsync(_workerJobCoordinator, inProgressQueueItem, outcome)
+            QueueItemProcessor.ProcessingOutcome outcome;
+            try
+            {
+                outcome = await new QueueItemProcessor(
+                    inProgressQueueItem.QueueItem,
+                    inProgressQueueItem.NzbStream,
+                    dbClient,
+                    inProgressQueueItem.UsenetClient,
+                    _configManager,
+                    _websocketManager,
+                    _arrDownloadReportService,
+                    progressHook,
+                    inProgressQueueItem.CancellationTokenSource.Token,
+                    stage => inProgressQueueItem.Stage = stage,
+                    _historyVisibilityNotifier,
+                    workerLease: inProgressQueueItem.WorkerLease,
+                    completionContextFactory: DavDatabaseContextRuntimeFactory.Create
+                ).ProcessAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception.GetBaseException().IsCancellationException())
+            {
+                outcome = QueueItemProcessor.ProcessingOutcome.Cancelled;
+            }
+            catch (Exception exception)
+            {
+                Log.Error(
+                    exception,
+                    "Unexpected download worker failure for queue item {QueueItemId}; scheduling retry.",
+                    inProgressQueueItem.QueueItem.Id);
+                outcome = QueueItemProcessor.ProcessingOutcome.RetryScheduled;
+            }
+
+            if (!await ReconcileDownloadWorkerJobAsync(inProgressQueueItem, outcome)
                     .ConfigureAwait(false))
                 Log.Warning("Lost download worker lease {WorkerJobId} before terminal update.",
                     inProgressQueueItem.WorkerLease.JobId);
         }
         finally
         {
-            await renewalStop.CancelAsync().ConfigureAwait(false);
-            await renewalTask.ConfigureAwait(false);
-            lock (_inProgressQueueItemsLock)
+            try
             {
-                _inProgressQueueItems.Remove(inProgressQueueItem.QueueItem.Id);
+                await renewalStop.CancelAsync().ConfigureAwait(false);
+                await renewalTask.ConfigureAwait(false);
             }
-
-            await inProgressQueueItem.DisposeAsync().ConfigureAwait(false);
-            TryCompactManagedHeapAfterLargeQueueItem();
-            AwakenQueue();
+            catch (Exception exception)
+            {
+                Log.Warning(
+                    exception,
+                    "Download worker lease renewal shutdown failed for {WorkerJobId}.",
+                    inProgressQueueItem.WorkerLease.JobId);
+            }
+            await DisposeAndUntrackQueueItemAsync(inProgressQueueItem)
+                .ConfigureAwait(false);
         }
     }
 
-    private void TryCompactManagedHeapAfterLargeQueueItem()
+    private async Task<bool> ReconcileDownloadWorkerJobAsync(
+        InProgressQueueItem inProgressQueueItem,
+        QueueItemProcessor.ProcessingOutcome outcome)
     {
-        var memoryInfo = GC.GetGCMemoryInfo();
-        if (memoryInfo.HighMemoryLoadThresholdBytes <= 0) return;
-        var pressure = memoryInfo.MemoryLoadBytes / (double)memoryInfo.HighMemoryLoadThresholdBytes;
-        if (pressure < 0.85) return;
+        var now = DateTimeOffset.UtcNow;
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            try
+            {
+                return await UpdateDownloadWorkerJobCoreAsync(
+                        _workerJobCoordinator,
+                        inProgressQueueItem,
+                        outcome,
+                        now)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (attempt == 1)
+            {
+                Log.Warning(
+                    exception,
+                    "Download worker terminal update failed for {WorkerJobId}; reconciling once.",
+                    inProgressQueueItem.WorkerLease.JobId);
+            }
+            catch (Exception exception)
+            {
+                Log.Error(
+                    exception,
+                    "Download worker terminal reconciliation failed for {WorkerJobId}.",
+                    inProgressQueueItem.WorkerLease.JobId);
+                return false;
+            }
+        }
 
-        var nowTicks = DateTimeOffset.UtcNow.Ticks;
-        var lastTicks = Interlocked.Read(ref _lastMemoryCompactionTicks);
-        if (lastTicks != 0 && nowTicks - lastTicks < TimeSpan.FromMinutes(2).Ticks) return;
-        if (Interlocked.CompareExchange(ref _lastMemoryCompactionTicks, nowTicks, lastTicks) != lastTicks) return;
+        return false;
+    }
 
-        Log.Information(
-            "Compacting managed heap after queue item completion under high memory pressure ({Pressure:P0}).",
-            pressure);
-        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
-        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+    private async Task DisposeAndUntrackQueueItemAsync(
+        InProgressQueueItem inProgressQueueItem)
+    {
+        try
+        {
+            await inProgressQueueItem.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            Log.Warning(
+                exception,
+                "Download worker resource cleanup failed for queue item {QueueItemId}.",
+                inProgressQueueItem.QueueItem.Id);
+        }
+        finally
+        {
+            try
+            {
+                lock (_inProgressQueueItemsLock)
+                {
+                    if (_inProgressQueueItems.TryGetValue(
+                            inProgressQueueItem.QueueItem.Id,
+                            out var trackedQueueItem)
+                        && ReferenceEquals(trackedQueueItem, inProgressQueueItem))
+                        _inProgressQueueItems.Remove(inProgressQueueItem.QueueItem.Id);
+                }
+                AwakenQueue();
+            }
+            finally
+            {
+                lock (_inProgressQueueItemsLock)
+                    _trackedInProgressQueueItems.Remove(inProgressQueueItem);
+            }
+        }
     }
 
     private async Task RenewLeaseAsync(InProgressQueueItem item, CancellationToken ct)
@@ -390,6 +668,22 @@ public class QueueManager : IDisposable
     )
     {
         var now = DateTimeOffset.UtcNow;
+        return await UpdateDownloadWorkerJobCoreAsync(
+                workerJobCoordinator,
+                inProgressQueueItem,
+                outcome,
+                now)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<bool> UpdateDownloadWorkerJobCoreAsync
+    (
+        IWorkerJobCoordinator workerJobCoordinator,
+        InProgressQueueItem inProgressQueueItem,
+        QueueItemProcessor.ProcessingOutcome outcome,
+        DateTimeOffset now
+    )
+    {
         if (outcome == QueueItemProcessor.ProcessingOutcome.Completed)
         {
             return await workerJobCoordinator.CompleteAsync(
@@ -400,7 +694,7 @@ public class QueueManager : IDisposable
         {
             var nextAttemptAt = inProgressQueueItem.QueueItem.PauseUntil.HasValue
                 ? new DateTimeOffset(inProgressQueueItem.QueueItem.PauseUntil.Value)
-                : DateTimeOffset.UtcNow.AddMinutes(1);
+                : now.AddMinutes(1);
             return await workerJobCoordinator.FailAsync(
                     inProgressQueueItem.WorkerLease,
                     WorkerJob.FailureClass.Retryable,
@@ -433,16 +727,42 @@ public class QueueManager : IDisposable
 
     public void Dispose()
     {
-        _cancellationTokenSource?.Cancel();
-        _cancellationTokenSource?.Dispose();
+        lock (_lifecycleLock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _cancellationTokenSource?.Cancel();
+            _cancellationTokenSource?.Dispose();
+            _cancellationTokenSource = null;
+        }
         lock (_inProgressQueueItemsLock)
         {
-            foreach (var inProgressQueueItem in _inProgressQueueItems.Values)
-                inProgressQueueItem.CancellationTokenSource.Cancel();
+            foreach (var inProgressQueueItem in _trackedInProgressQueueItems)
+                CancelUnlessDisposed(inProgressQueueItem.CancellationTokenSource);
         }
 
         _queueLock.Dispose();
         _sleepingQueueToken.Dispose();
+    }
+
+    private static void CancelUnlessDisposed(CancellationTokenSource cancellationTokenSource)
+    {
+        try
+        {
+            cancellationTokenSource.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // A worker may have completed and disposed its token while a
+            // concurrent manager teardown was taking its final snapshot.
+        }
+    }
+
+    private enum PreHandoffLeaseDisposition
+    {
+        Complete,
+        Release,
+        Retry
     }
 
     private class InProgressQueueItem : IAsyncDisposable
@@ -465,11 +785,46 @@ public class QueueManager : IDisposable
 
         public async ValueTask DisposeAsync()
         {
-            CancellationTokenSource.Dispose();
-            if (NzbStream is not null)
-                await NzbStream.DisposeAsync().ConfigureAwait(false);
-            await UsenetClient.DisposeAsync().ConfigureAwait(false);
-            await DbContext.DisposeAsync().ConfigureAwait(false);
+            List<Exception>? failures = null;
+            try
+            {
+                CancellationTokenSource.Dispose();
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(exception);
+            }
+
+            try
+            {
+                if (NzbStream is not null)
+                    await NzbStream.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(exception);
+            }
+
+            try
+            {
+                await UsenetClient.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(exception);
+            }
+
+            try
+            {
+                await DbContext.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(exception);
+            }
+
+            if (failures is not null)
+                throw new AggregateException("One or more queue worker resources failed to dispose.", failures);
         }
     }
 }

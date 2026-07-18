@@ -6,6 +6,7 @@ public class TestArrConnectionRequest
 {
     public string Host { get; init; }
     public string ApiKey { get; init; }
+    public string? Type { get; init; }
 
     public TestArrConnectionRequest(HttpContext context)
     {
@@ -14,5 +15,7 @@ public class TestArrConnectionRequest
 
         ApiKey = context.Request.Form["apiKey"].FirstOrDefault()
                  ?? throw new BadHttpRequestException("Arr apiKey is required");
+
+        Type = context.Request.Form["type"].FirstOrDefault();
     }
 }

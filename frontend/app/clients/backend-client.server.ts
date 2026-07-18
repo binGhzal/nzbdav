@@ -452,6 +452,7 @@ export type QueueSlot = {
     mb: string,
     mbleft: string,
     arr_priority?: ArrPriorityInfo | null,
+    can_manage?: boolean,
 }
 
 export type ArrPriorityInfo = {
@@ -568,6 +569,8 @@ export type FullStatusResponse = {
     max_total_streaming_connections: number,
     active_streams: number,
     rclone_invalidations: RcloneInvalidationStatus,
+    database: DatabaseStatus,
+    critical_path: CriticalPathStatus,
     cache: CacheStatus,
     mount: MountDiagnosticStatus,
     provider_diagnostics: ProviderDiagnosticStatus[],
@@ -576,6 +579,7 @@ export type FullStatusResponse = {
     arr_prioritization: ArrPrioritizationStatus,
     arr_search_nudge: ArrSearchNudgeStatus,
     arr_download_report: ArrDownloadReportStatus,
+    arr_import_commands: ArrImportCommandStatus,
     total_streams_opened: number,
     managed_memory_bytes: number,
     working_set_bytes: number,
@@ -585,12 +589,63 @@ export type FullStatusResponse = {
     threadpool_pending_work_items: number,
 }
 
+export type CriticalPathStageStatus = {
+    count: number,
+    failures: number,
+    latency_samples: number,
+    p95_ms: number,
+    p99_ms: number,
+}
+
+export type CriticalPathStatus = {
+    add_file_blob_write: CriticalPathStageStatus,
+    add_file_nzb_scan: CriticalPathStageStatus,
+    add_file_atomic_commit: CriticalPathStageStatus,
+    queue_parse: CriticalPathStageStatus,
+    queue_first_segment_discovery: CriticalPathStageStatus,
+    queue_par2_discovery: CriticalPathStageStatus,
+    queue_processors: CriticalPathStageStatus,
+    queue_completion: CriticalPathStageStatus,
+}
+
+export type DatabaseStatus = {
+    provider: string,
+    database_bytes: number,
+    wal_bytes: number,
+    shared_memory_bytes: number,
+    page_size_bytes: number,
+    page_count: number,
+    freelist_pages: number,
+    freelist_bytes: number,
+    checkpoint_busy: number,
+    wal_frames: number,
+    checkpointed_frames: number,
+    checkpoint_backlog_bytes: number,
+    busy_retries: number,
+    lease_retries: number,
+    query_samples: number,
+    query_p95_ms: number,
+    query_p99_ms: number,
+    transaction_samples: number,
+    transaction_p95_ms: number,
+    transaction_p99_ms: number,
+    captured_at: string,
+}
+
 export type RcloneInvalidationStatus = {
     pending: number,
     ready: number,
     failed: number,
     max_attempts: number,
     last_error: string | null,
+    oldest_pending_age_seconds: number | null,
+    visibility_fence_required: boolean,
+    whole_cache_visibility_fence_pending: boolean,
+    remote_control_enabled: boolean,
+    host_configured: boolean,
+    last_attempt_at: string | null,
+    last_successful_configured_call_at: string | null,
+    runtime_last_error: string | null,
 }
 
 export type CacheStatus = {
@@ -697,6 +752,19 @@ export type ArrSearchNudgeStatus = {
 
 export type ArrDownloadReportStatus = {
     lifecycle_states: Array<{ state: string, count: number }>,
+}
+
+export type ArrImportCommandStatus = {
+    pending: number,
+    waiting_for_invalidation: number,
+    executing: number,
+    retry: number,
+    dispatched: number,
+    no_route: number,
+    quarantined: number,
+    oldest_active_age_seconds: number | null,
+    last_error: string | null,
+    last_quarantine_reason: string | null,
 }
 
 export type RepairRunSummaryStatus = {

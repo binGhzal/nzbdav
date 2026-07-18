@@ -6,5 +6,5 @@ namespace NzbWebDAV.Clients.RadarrSonarr.RadarrModels;
 public class RadarrQueueRecord: ArrQueueRecord
 {
     [JsonPropertyName("movieId")]
-    public int MovieId { get; set; }
+    public int? MovieId { get; set; }
 }

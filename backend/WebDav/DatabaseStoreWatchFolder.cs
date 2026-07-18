@@ -18,7 +18,8 @@ public class DatabaseStoreWatchFolder(
     QueueManager queueManager,
     WebsocketManager websocketManager,
     ArrDownloadReportService arrDownloadReportService,
-    ArrOperationsService arrOperationsService
+    ArrOperationsService arrOperationsService,
+    NzbBlobIngestCoordinator nzbBlobIngestCoordinator
 ) : BaseStoreReadonlyCollection
 {
     public override string Name => davDirectory.Name;
@@ -31,7 +32,7 @@ public class DatabaseStoreWatchFolder(
         if (!categories.Contains(request.Name)) return null;
         return new DatabaseStoreCategoryWatchFolder(
             request.Name, dbClient, configManager, queueManager, websocketManager, arrDownloadReportService,
-            arrOperationsService);
+            arrOperationsService, nzbBlobIngestCoordinator);
     }
 
     protected override async Task<IStoreItem[]> GetAllItemsAsync(CancellationToken cancellationToken)
@@ -40,7 +41,7 @@ public class DatabaseStoreWatchFolder(
         return categories
             .Select(c => new DatabaseStoreCategoryWatchFolder(
                 c, dbClient, configManager, queueManager, websocketManager, arrDownloadReportService,
-                arrOperationsService))
+                arrOperationsService, nzbBlobIngestCoordinator))
             .Select(IStoreItem (x) => x)
             .ToArray();
     }

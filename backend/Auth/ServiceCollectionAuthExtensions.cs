@@ -17,11 +17,8 @@ public static class ServiceCollectionAuthExtensions
         ConfigManager configManager
     )
     {
-        // no-op when webdav auth is disabled
-        if (WebApplicationAuthExtensions.IsWebdavAuthDisabled())
-            return services;
+        WebApplicationAuthExtensions.EnsureWebdavAuthenticationRequired();
 
-        // otherwise configure basic auth
         services
             .AddDataProtection()
             .PersistKeysToFileSystem(new DirectoryInfo(Path.Join(DavDatabaseContext.ConfigPath, "data-protection")));

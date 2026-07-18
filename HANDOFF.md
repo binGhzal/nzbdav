@@ -4,8 +4,8 @@
 
 | Field | Value |
 | --- | --- |
-| Content verification cutoff (pre-publication) | 2026-07-16T23:43:08+04:00 |
-| Handoff status | READY |
+| Content verification cutoff | 2026-07-17T19:59:38+04:00 |
+| Handoff status | V1 BACKEND IMPLEMENTATION READY; RELEASE NO-GO |
 | Repository | `nzbdav` |
 | Current branch | `codex/single-host-role-separation-design` |
 | Initial documentation baseline HEAD | `8c06d9caacd8c0d2ab5d69f47e3b230b75b16704`, HEAD immediately before authorized publication |
@@ -14,10 +14,10 @@
 | Default remote branch | `origin/main` |
 | Base and merge base | `origin/main` at merge base `86af7b816c496aea2654c438be7fa553b98bb91c` |
 | Initial publication relation | Direct child of the initial documentation baseline; 30 ahead, 0 behind `origin/main` immediately after publication |
-| Worktree | Dirty. Pre-documentation snapshot had 156 tracked modifications, 282 untracked files, and 0 staged files. Immediately after the documentation commit, expect 156 tracked modifications, 280 untracked files, and 0 staged files. |
-| Durability boundary | Canonical documentation is committed. Current Phase 4 implementation remains preserved-worktree-only and is absent from the documentation baseline commit. |
-| Canonical active plan | [Phase 4 implementation plan](docs/superpowers/plans/2026-07-14-nzbdav-transfer-v3-phase-4.md) |
-| Governing design | [Phase 4 design](docs/superpowers/specs/2026-07-14-nzbdav-transfer-v3-phase-4-design.md) |
+| Worktree | Dirty and shared. Current snapshot: 189 tracked modifications, 145 untracked files, and 0 staged files. Current authorized worktree changes include the V1 documentation pivot, Task 1 timeout/cancellation/cleanup repairs, and Task 2A session/Authen­tik/container-contract hardening; preserve every unexplained difference. |
+| Durability boundary | The initial handoff publication commit is `HEAD` and remains the immutable anchor. Current V1 documentation and implementation remain worktree-only until a separate commit is authorized. Private Phase 4 implementation remains preserved-worktree-only. |
+| Canonical active plan | [V1 backend release implementation plan](docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md) |
+| Governing design | [V1 backend release design](docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md) |
 | Related pull request or issue | No pull request found for this branch by an authenticated read-only `gh pr view` query on 2026-07-16; no linked issue was identified from repository evidence |
 | Reconstructed-objective confidence | High |
 
@@ -25,17 +25,34 @@
 2026-07-11 role-separation handoff was materially stale and has been replaced,
 not supplemented with another competing addendum.
 
-**STRONG INFERENCE:** Transfer-v3 Phase 4 is the active mission because its plan,
-design, implementation, and tests converge on Task 8, while the older
-role-separation plan is historical.
+**VERIFIED DECISION:** The active mission is the clean-install-only V1 backend
+release. V1 supports Docker, SQLite, one control owner, and `role=all` only.
+PostgreSQL, Transfer-v3 Phase 4, split roles, pre-V1 upgrades, and in-place
+downgrade are post-V1. Full rebrand work remains blocked until the backend
+freeze and release-candidate gates pass. After those gates, every user-facing
+frontend/rebrand change must be designed and approved first in the existing
+[Pinrail Figma file](https://www.figma.com/design/WxDUx3FJ9iINrtXn2GmkZC/Pinrail-%E2%80%94-Product-Design---Wireframes?m=auto&t=YBuWaX8ZhLg6aYZd-6); code-first visual implementation and substitute design
+tools are forbidden unless the user explicitly approves them.
+
+**VERIFIED DECISION:** `AUTH_MODE=authentik-proxy` means Authentik's full Proxy
+Provider topology. The Authentik outpost is the browser-facing reverse proxy and
+directly proxies to the internal nzbdav frontend. Separate Nginx/Traefik
+forward-auth mode is not supported by the V1 contract.
+
+**VERIFIED REVIEW CONFLICT:** Transfer-v3 Task 8's executable pure gates are
+green, and two reviewers found no finding, but a separate security/concurrency
+review identified pre-budget unbounded client-side PostgreSQL catalog
+materialization in `PostgreSqlPhysicalCatalogContract`. Because the green
+reviews did not address that path, Task 8 is not sealed; the whole Phase 4 plan
+is deferred post-V1.
 
 ## Resume in 60 seconds
 
 1. Work from repository root, represented as `.`.
 2. Read [`AGENTS.md`](AGENTS.md), this handoff, the
-   [active plan](docs/superpowers/plans/2026-07-14-nzbdav-transfer-v3-phase-4.md),
+   [active plan](docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md),
    and the
-   [design](docs/superpowers/specs/2026-07-14-nzbdav-transfer-v3-phase-4-design.md).
+   [design](docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md).
 3. Verify initial publication ancestry and compare live state with this snapshot:
 
    `git branch --show-current`
@@ -50,73 +67,74 @@ role-separation plan is historical.
 
    Expected branch is the metadata value and the initial publication commit
    must be an ancestor of `HEAD`. Do not discard any worktree difference.
-4. Confirm the preserved implementation exists:
+4. Confirm the active V1 documents exist. If either is absent, stop rather than
+   continuing the historical Phase 4 plan:
 
-   `test -f backend/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionValidator.cs && test -f backend.Tests/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionTests.cs`
-
-   If this fails, this is a docs-only checkout, not the preserved implementation
-   worktree. Stop rather than recreating or guessing at missing implementation.
-5. Reproduce the narrow baseline:
-
-   `dotnet test backend.Tests/backend.Tests.csproj --configuration Release --no-restore --filter '(FullyQualifiedName~TransferV3PostgreSqlAdmissionLockSetTests|FullyQualifiedName~TransferV3PostgreSqlAdmissionTests)&Category!=TransferV3Phase4PostgreSqlCompletion' --logger 'console;verbosity=minimal'`
-
-   Current expected result is 24 passed, 2 failed, 0 skipped. The two failing
-   tests are named under Known failures.
-6. Continue Task 8, `Exact advisory/table locks and atomic fresh-target
-   admission`. Do not start Task 9.
-7. First edit:
-   `TransferV3PostgreSqlAdmissionValidator.ValidateFreshAndMarkImportingAsync`
-   in `backend/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionValidator.cs`
-   and
-   `TransferV3PostgreSqlAdmissionTests.CanonicalSpanCodecWritesExactFreshAndImportingBytesAndRejectsMutations`
-   in `backend.Tests/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionTests.cs`.
-   Join the raw CAS receiver/member expression into the exact reviewed source
-   shape, and swap the expected/actual operands in the two canonical-length
-   assertions. Change no runtime semantics.
-8. Immediate acceptance criterion: the narrow gate exits 0 with 26 passed,
-   0 failed, 0 skipped, and the clean test build has no `xUnit2000` diagnostics.
+   `test -f docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md && test -f docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md`
+5. Continue Task 2, `Secure sessions, proxying, errors, and logs`. Do not begin
+   readiness, lifecycle, rclone, frontend rebrand, or release-candidate work
+   first.
+6. Task 2A is complete. First exact next action: inventory every frontend API,
+   WebDAV, content, SAB, WebSocket, and health call plus every matching backend
+   route before defining the Task 2B proxy allowlist. Do not edit
+   `frontend/server/app.ts` until the route/method inventory is complete and any
+   genuine product-access choice has been presented to the user.
+7. Build the Task 2B RED matrix beside `frontend/server/*.test.ts`: anonymous,
+   local-authenticated, trusted Authentik, untrusted source, wrong application,
+   encoded/double-encoded separator, prefix-confusion, conflicting API-key, and
+   oversized-header cases.
+8. Preserve independently API-key-authenticated WebDAV/SAB clients while
+   proving browser UI-admin routes require the selected frontend principal and
+   client-supplied internal keys are stripped before server-side injection.
+9. Immediate acceptance criterion: the exact proxy authorization/header matrix
+   is green; then continue public-error and log sanitization.
 
 ## Mission and definition of done
 
 ### Verified requirements
 
-**VERIFIED FACT:** Phase 4 must import one typed, sealed Phase 3 snapshot into a
-newly migrated, exact bootstrap-only PostgreSQL 16.14 target, independently
-verify all 27 logical tables and a private blob stage, and atomically stop at
-canonical `database-verified(A)`.
+**VERIFIED FACT:** V1 must ship one exact Docker artifact that starts from empty
+owned roots, migrates SQLite, runs exactly one control owner with `role=all`,
+and completes the six end-user journeys in the governing V1 design.
 
-**VERIFIED FACT:** The complete phase is done only when:
+**VERIFIED FACT:** V1 is done only when:
 
-- source representability and bootstrap proof complete before target mutation;
-- one private diagnostics-disabled Npgsql 10.0.3 data source owns all target
-  connections;
-- target admission, table import, private blob construction, independent
-  verification, commit reconciliation, and terminal cleanup follow the approved
-  design;
-- exact owned managed memory never exceeds 32 MiB, including the fixed 8 MiB
-  runtime reserve;
-- only uniquely owned synthetic fixtures are used;
-- the isolated helper and owned PostgreSQL 16.14 completion harness prove
-  success, failure, contention, crash durability, reconciliation, and redaction;
-- PostgreSQL remains disabled and no runtime/public path reaches Phase 4;
-- Task 21 completes isolation checks, documentation, full regressions, and
-  independent review.
+- deterministic backend tests have zero failure, crash, ad hoc exclusion, or
+  unexplained skip;
+- cleanup, visibility, queue, repair, streaming, shutdown, and restart
+  contracts pass disposable fault injection;
+- authentication requires a stable session key and explicit cookie-security
+  policy;
+- proxy, public error, log, and provider-response abuse tests leak no canary;
+- liveness and core readiness are distinct and recover correctly;
+- safe rclone update verifies live runtime and mount/read postconditions before
+  recording state;
+- the exact amd64/arm64 candidate digest passes two clean-install acceptance
+  runs, one bounded soak, and independent review;
+- evidence includes source revision, image digest, SBOM, provenance, test
+  counts, clean-install limitation, recovery contract, and residual risk;
+- PostgreSQL, Phase 4, split roles, upgrades, and in-place downgrade remain
+  unreachable and unsupported;
+- the user receives the complete backend pass report before full rebrand work
+  begins.
 
 ### Scope
 
-Private Phase 4 code, tests, contracts, task evidence, and documentation.
+V1 backend correctness, security, lifecycle, SQLite resilience, operational
+scripts, behavioral end-to-end journeys, container packaging, provenance,
+release evidence, and documentation.
 
 ### Non-goals
 
-Runtime PostgreSQL enablement, cutover, deployment, backup/restore, runtime blob
-publication, ARR/Plex work, grab-to-Plex timing, n8n, UI/rebrand work, and
-production resource access.
+PostgreSQL, Transfer-v3 Phase 4 completion, split roles, multi-owner/multi-host
+operation, pre-V1 upgrades, in-place downgrade, alternative packaging, full
+visual rebrand before backend freeze, and destructive/stress use of production.
 
 ### Inferred requirements
 
-**STRONG INFERENCE:** A fresh agent should finish Task 8 before widening scope
-because all current failures are localized there and Tasks 9-21 depend on its
-sealed admission contract.
+**STRONG INFERENCE:** A fresh agent must restore trustworthy backend test
+execution before widening scope. Existing green gates cannot compensate for a
+crashed security fixture or unclassified cleanup/visibility failures.
 
 ## Source-of-truth order
 
@@ -124,15 +142,16 @@ Trust sources in this order when they conflict:
 
 1. [`AGENTS.md`](AGENTS.md), for repository operating constraints and the
    active-work pointer.
-2. [Phase 4 design](docs/superpowers/specs/2026-07-14-nzbdav-transfer-v3-phase-4-design.md),
+2. [V1 backend release design](docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md),
    for approved architecture and invariants.
-3. [Phase 4 plan](docs/superpowers/plans/2026-07-14-nzbdav-transfer-v3-phase-4.md),
+3. [V1 backend release plan](docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md),
    for task order, exact interfaces, status, commands, and acceptance criteria.
-4. Current preserved-worktree source plus focused tests, for behavior actually
-   present. These implementation files are not part of the documentation
-   publication commit.
+4. Current preserved-worktree source plus executable tests, for behavior
+   actually present. Current V1 and private Phase 4 implementation files are
+   not part of the initial handoff publication commit.
 5. This handoff, for the verified live snapshot, failures, and next action.
-6. Older plans and the branch commit history, as historical rationale only.
+6. The deferred Phase 4 plan/design, older plans, and branch commit history, as
+   historical or post-V1 rationale only.
 
 When plan/design and code disagree, stop. Reconcile documentation or obtain a
 decision before implementing.
@@ -190,19 +209,45 @@ implementation file was edited, removed, staged, or cleaned by this pass.
 
 ## Current state summary
 
-Task 8 is implemented but not sealed. The backend production project builds
-cleanly. Supporting digest, codec, raw-store, session, server, and environment
-contracts pass. The exact Task 8 gate, pure Transfer-v3 regression, and full
-no-PostgreSQL backend suite all fail only the same two structural admission
-tests. A clean test build and scoped formatter gate also fail on two
-`xUnit2000` diagnostics. Therefore Task 8 remains `IN PROGRESS`.
+The V1 boundary and implementation sequence are frozen. The current release is
+NO-GO. Release builds, disposable SQLite migration, frontend build gates,
+5/5 Playwright tests, 108/108 Python tests, npm and NuGet vulnerability scans,
+Docker image build, and entrypoint shell/container smoke are green in the dirty
+worktree.
 
-No live PostgreSQL, SQLite database, blob tree, service, container, production
-host, ARR, Plex, or mount was accessed.
+Task 1 backend truth is green in the current dirty worktree:
+
+- the complete hermetic Release backend assembly passed 2,824 with 84
+  deliberate PostgreSQL-only skips and zero failures or exclusions;
+- the focused Usenet controller gate passed 4/4 and proves stalled-greeting
+  timeout, request cancellation, and partial-connection disposal;
+- the affected Usenet/cleanup/invalidation regression passed 85 with one
+  deliberate PostgreSQL-only skip;
+- the timing-sensitive subset passed ten consecutive audited iterations at
+  59 passed and one deliberate PostgreSQL-only skip per iteration;
+- production and test Release builds passed with warnings as errors, and scoped
+  format plus whitespace verification passed.
+
+The release remains NO-GO. Session defaults, full-proxy authentication and route
+abuse boundaries, readiness, public errors, detached repair lifecycle, safe
+rclone update, and immutable release provenance remain V1 blockers.
+
+One read-only production documentation search occurred after explicit user
+authorization. No production database, blob tree, service, container, ARR,
+Plex, mount, configuration, or credential was mutated or stress-tested.
 
 ## Completed work
 
-### Tasks 0-7
+### V1 Tasks 0-1
+
+**VERIFIED FACT:** V1 Task 0 froze the clean-install Docker/SQLite/one-owner
+boundary. V1 Task 1 restored deterministic backend test truth, reconciled the
+whole-cache sentinel contract without an unsupported production semantic
+change, proved transactional cleanup rollback after deletion begins, exercised
+the active rclone path, and repaired NNTP greeting cancellation by disposing the
+underlying UsenetSharp client at the cancellation boundary.
+
+### Deferred Transfer-v3 Phase 4 Tasks 0-7
 
 **VERIFIED FACT:** Tasks 0-7 are `COMPLETE` in the reconciled plan. Current
 2026-07-16 pure regression ran 1,372 Transfer-v3 tests. Its 1,370 passes cover
@@ -288,32 +333,42 @@ deliberate no-connection skips.
 
 ## Work in progress
 
-### Task 8
+### V1 Task 1, deterministic backend test truth
 
 What exists:
 
-- all planned production symbols and expanded memory-accounting repair;
-- lock-set, admission, digest, codec, store, session, server, and environment
-  tests;
-- frozen pre-task hash snapshot.
+- exact reproduction of the Usenet testhost stack overflow;
+- exact reproduction of the three cleanup/visibility failures;
+- source tracing through cleanup, snapshot interceptor, database context,
+  rclone invalidation service, and rclone client;
+- a complete six-seat V1 council and approved backend release design/plan.
 
-What remains:
+What remains, in order:
 
-1. repair the raw CAS invocation's exact source shape;
-2. swap two xUnit assertion operands;
-3. rerun all pure gates;
-4. obtain two fresh independent read-only reviews;
-5. record final evidence in the canonical plan and handoff;
-6. update plan/handoff to `COMPLETE` only after evidence is green. Local SDD
-   reports may be retained when present but are not completion dependencies.
+1. separate the Usenet test's non-disposable collecting sink from logger
+   ownership and rerun the isolated class;
+2. prove whether the whole-cache sentinel intentionally subsumes narrower
+   invalidations or whether production violates a consumer contract;
+3. repair the correct test or runtime contract through red-green TDD;
+4. rerun the complete backend suite without an excluded class;
+5. repeat affected concurrency gates ten times;
+6. record exact results in the active V1 plan and this handoff.
 
-Safety: partial code is private, unregistered, has no production call site, and
-PostgreSQL remains disabled. The current tree is safe from runtime exposure but
-not ready to seal or advance.
+### Deferred Transfer-v3 Phase 4
+
+Tasks 8-21 are deferred post-V1. Task 8's focused and pure executable gates are
+green, but review remains conflicting because only the P1 review examined the
+pre-budget catalog materialization path. Do not edit Phase 4, start Task 9, or
+represent Task 8 as complete during V1 work.
+
+Safety: private Phase 4 code remains unregistered with no production call site;
+PostgreSQL remains disabled.
 
 ## Not started
 
-Tasks 9-21 are `NOT STARTED`:
+V1 Tasks 2-10 are `NOT STARTED`; V1 Task 11 rebrand is `BLOCKED` pending the
+backend freeze and release-candidate evidence. Historical Phase 4 Tasks 9-21
+remain `NOT STARTED` and post-V1:
 
 - Task 9: one-deadline MVCC-safe commit reconciliation;
 - Task 10: async parser observer;
@@ -329,8 +384,7 @@ Tasks 9-21 are `NOT STARTED`:
 - Task 20: owned PostgreSQL completion/crash/contention/log proof;
 - Task 21: isolation, documentation, full regression, and final reviews.
 
-Planned symbols for these tasks are absent. Do not interpret their detailed plan
-text as implemented behavior.
+Do not interpret either plan's future task text as implemented behavior.
 
 ## Changed-file ledger
 
@@ -338,15 +392,22 @@ text as implemented behavior.
 
 | Path | Pre-edit Git state | Role in the work | Verified current behavior | Remaining work | Evidence | Risk or caution |
 | --- | --- | --- | --- | --- | --- | --- |
-| `AGENTS.md` | Absent | Hermes project context | Points to handoff, plan, design, and stable safety constraints | Remove active pointer only after Phase 4 completion | Path/link audit | Tracked by the authorized documentation publication commit |
-| `HANDOFF.md` | Clean tracked file, stale content | Sole canonical handoff | Reconstructed current Task 8 state and exact continuation | Maintain each session | Final consistency audit | Do not add another competing handoff |
+| `AGENTS.md` | Tracked, modified by this V1 pivot | Hermes project context | Points to the V1 handoff, plan, design, scope, and stable safety constraints | Remove active pointer only after V1 completion | Path/link audit | Initial version is in the handoff publication commit; current pivot is worktree-only |
+| `HANDOFF.md` | Tracked, modified by this V1 pivot | Sole canonical handoff | Records the V1 boundary, council, blockers, current evidence, and exact continuation | Maintain each session | Final consistency audit | Do not add another competing handoff |
 | `CONTRIBUTING.md` | Clean tracked file | Developer setup/verification | Declares .NET 10, Node 24/npm 11, `npm ci`, current local/CI gates | Keep synchronized with CI | Source review | Frontend cannot run under current Node 22/npm 10 |
-| `docs/superpowers/plans/2026-07-14-nzbdav-transfer-v3-phase-4.md` | Pre-existing untracked file | Canonical active plan | Explicit task statuses, expanded Task 8 accounting scope, failures, next gate | Task 8 repair/review | Current source/tests | Tracked by the authorized documentation publication commit; planned behavior remains private and non-shipped |
-| `docs/superpowers/specs/2026-07-14-nzbdav-transfer-v3-phase-4-design.md` | Pre-existing untracked file | Governing design | Records same-budget admission and exact canonical-buffer lifecycle | Task 20 measurement remains future | Source/design comparison | Tracked by the authorized documentation publication commit; do not broaden approved boundary |
+| `docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md` | Created by this V1 pivot | Canonical active plan | Orders deterministic backend, security, readiness, lifecycle, rclone, resilience, behavioral E2E, artifact, and RC gates | Start Task 1 after Task 0 docs verification | Six-seat council plus current executable evidence | Worktree-only until a commit is authorized |
+| `docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md` | Created by this V1 pivot | Governing V1 design | Freezes Docker/SQLite/one-owner/clean-install boundary and release definition of done | Implement active plan | Six-seat council plus current executable evidence | Worktree-only until a commit is authorized |
+| `docs/superpowers/plans/2026-07-14-nzbdav-transfer-v3-phase-4.md` | Tracked, modified by this V1 pivot | Deferred post-V1 plan | Preserves Tasks 0-7 and unsealed Task 8 evidence without governing continuation | Resolve catalog-memory finding post-V1 | Current source/tests and conflicting reviews | Planned behavior remains private and non-shipped |
+| `docs/superpowers/specs/2026-07-14-nzbdav-transfer-v3-phase-4-design.md` | Tracked, unchanged by this V1 pivot | Deferred Phase 4 design | Preserves the private PostgreSQL design and memory contract | Post-V1 only | Source/design comparison | Do not broaden runtime reachability |
 | `.superpowers/sdd/progress.md` | Pre-existing, locally excluded | Supplemental local execution ledger | Points to Phase 4 and records Task 8 failures/accounting repair | Optional local update after repair | Local file review | Deliberately noncanonical and not committed; no continuation step depends on it |
 | `.superpowers/sdd/phase4/task-8/task-8-brief.md` | Pre-existing, locally excluded | Supplemental task-scoped brief | Reconciled with six-argument admission and current gates | Optional local update after repair | Local file review | Deliberately noncanonical and not committed; no continuation step depends on it |
 
-### Active Task 8 implementation, all pre-existing before this pass
+### Historical Task 8 implementation ledger, now deferred post-V1
+
+The table below preserves the initial handoff's file-by-file Task 8 snapshot.
+Its former structural failures were repaired and its pure gates are green, but
+the later catalog-materialization P1 review prevents sealing. Current V1 work
+must not edit these paths.
 
 | Path | Pre-edit Git state | Role in the work | Verified current behavior | Remaining work | Evidence | Risk or caution |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -537,6 +598,18 @@ container.
 | 2026-07-16T23:37:59+04:00 | `! rg -n 'OPEN UNKNOWN\|future authorized commit\|Original Task 8 pre-edit hashes were not captured\|Task 8 report/after-snapshot' AGENTS.md CONTRIBUTING.md HANDOFF.md docs/superpowers/plans/2026-07-14-nzbdav-transfer-v3-phase-4.md docs/superpowers/specs/2026-07-14-nzbdav-transfer-v3-phase-4-design.md && rg -Fq 'No handoff or documentation question remains open.' HANDOFF.md` | `.` | FAIL | 1 | Whole-file scan matched its own newly appended verification row | Replace with timestamp-row-aware scan |
 | 2026-07-16T23:38:50+04:00 | `ruby -e 'pattern = /OPEN UNKNOWN\|future authorized commit\|Original Task 8 pre-edit hashes were not captured\|Task 8 report\\/after-snapshot/; findings = []; ARGV.each do \|file\|; File.readlines(file).each_with_index do \|line, index\|; next if file == "HANDOFF.md" && line.start_with?("\| 2026-"); findings << "#{file}:#{index + 1}:#{line}" if line.match?(pattern); end; end; abort(findings.join) unless findings.empty?; abort("resolution statement missing") unless File.read("HANDOFF.md").include?("No handoff or documentation question remains open.")' AGENTS.md CONTRIBUTING.md HANDOFF.md docs/superpowers/plans/2026-07-14-nzbdav-transfer-v3-phase-4.md docs/superpowers/specs/2026-07-14-nzbdav-transfer-v3-phase-4-design.md` | `.` | BLOCKED | unavailable | Orchestrator returned no conclusive child exit code | Repeated with literal-marker iteration |
 | 2026-07-16T23:43:08+04:00 | `ruby -e 'bad = ["OPEN UNKNOWN", "future authorized commit", "Original Task 8 pre-edit hashes were not captured", "Task 8 report/after-snapshot"]; ARGV.each do \|file\|; File.foreach(file).with_index(1) do \|line, index\|; next if file == "HANDOFF.md" && line.start_with?("\| 2026-"); marker = bad.find { \|value\| line.include?(value) }; abort("#{file}:#{index}:#{marker}") if marker; end; end; abort("resolution statement missing") unless File.read("HANDOFF.md").include?("No handoff or documentation question remains open.")' AGENTS.md CONTRIBUTING.md HANDOFF.md docs/superpowers/plans/2026-07-14-nzbdav-transfer-v3-phase-4.md docs/superpowers/specs/2026-07-14-nzbdav-transfer-v3-phase-4-design.md` | `.` | PASS | 0 | No unresolved handoff marker remains outside historical verification rows | Handoff questions closed |
+| 2026-07-17 | Focused Task 8 admission/lock-set gate | `.` | PASS | 0 | 26 passed, 0 failed, 0 skipped | Executable gate is green; review conflict still prevents sealing |
+| 2026-07-17 | Affected Task 8 contracts and pure Transfer-v3 regression | `.` | PASS | 0 | 390 passed with 12 deliberate no-connection skips; pure Transfer-v3 1,372 passed | Deferred post-V1 after independent P1 catalog-memory review |
+| 2026-07-17 | Backend and test Release builds, `-warnaserror`, plus scoped formatter and `git diff --check` | `.` | PASS | 0 | Zero warnings/errors and no scoped formatting/whitespace drift | Rerun after every V1 repair |
+| 2026-07-17 | Broad backend suite excluding `TestUsenetConnectionControllerTests` and live Phase 4 completion | `.` | FAIL | 1 | 2,815 passed, 84 skipped, 3 cleanup/visibility assertions failed | V1 Task 1B |
+| 2026-07-17 | `dotnet test ... --filter 'FullyQualifiedName~TestUsenetConnectionControllerTests'` | `.` | CRASH | 1 | Testhost stack overflow recursively alternates `LoggerScope.Dispose` and `Logger.Dispose` | V1 Task 1A first edit |
+| 2026-07-17 | Frontend typecheck, unit, client build, server build, and Playwright | `frontend` | PASS | 0 | Build gates green; Playwright 5/5 in 9.5 seconds | Expand behavioral E2E only after backend freeze |
+| 2026-07-17 | `npm audit --audit-level=moderate` | `frontend` | PASS | 0 | `found 0 vulnerabilities` | Rerun on exact candidate |
+| 2026-07-17 | `dotnet list backend.Tests/backend.Tests.csproj package --vulnerable --include-transitive` | `.` | PASS | 0 | No vulnerable packages from current sources | Rerun on exact candidate |
+| 2026-07-17 | `python3 -m unittest discover -s tests -p 'test_*.py'` | `.` | PASS | 0 | 108 tests passed | Current tests preserve unsafe rclone unchanged-skip behavior; Task 5 must change contract and tests |
+| 2026-07-17 | `docker build --tag nzbdav:entrypoint-smoke .` | `.` | PASS | 0 | Local smoke image built successfully | Final evidence must use immutable multi-arch digest |
+| 2026-07-17 | `bash tests/test_entrypoint_contract.sh && bash tests/test_entrypoint_container.sh` | `.` | PASS | 0 | Shell and container smoke passed | Expand readiness, child-death, migration-failure, and SIGTERM cases |
+| 2026-07-17 | Six-seat V1 council | `.` | NO-GO | not applicable | Six fresh architecture, SRE, security, product, scope, and adversarial seats accepted the frozen topology and unanimously rejected current release fitness | Implement active V1 plan |
 
 The .NET commands refreshed only ordinary ignored build/test outputs. The final
 Git-visible set comparison found no generated path attributable to verification,
@@ -544,136 +617,182 @@ so nothing was cleaned. Documentation checks generated no files.
 
 ## Known failures and blockers
 
-### 1. Exact Task 8 structural gate
+### Resolved by V1 Task 1: deterministic backend test truth
 
-- Symptom: 2 failed, 24 passed.
-- Failing tests:
-  - `CanonicalFreshToImportingCasIsFullyChargedAndOccursOnlyAfterEveryPreflight`
-  - `EveryOperationalFailureIsSanitizedAtThePostgreSqlCommandBoundary`
-- Reproduction: exact focused Task 8 command in Resume in 60 seconds.
-- Cause ownership: introduced by current Task 8 admission formatting. The call
-  expression is split as `TransferV3ImportStateStore` followed by member access
-  on the next line; the reviewed source contract requires the exact combined
-  expression.
-- Predates documentation pass: yes.
-- Evidence needed: 26/26 focused green.
-- Next diagnostic/action: inspect the Roslyn expression in
-  `ValidateFreshAndMarkImportingAsync`, make the smallest source-shape repair,
-  rerun focused tests.
+- The Usenet crash was a test-harness ownership defect: `LoggerScope` owned a
+  logger that in turn owned the same scope as its sink. A separate
+  non-disposable collecting sink removed recursive disposal while preserving
+  the password/provider-response redaction assertion.
+- Cleanup tests were stale under their explicitly disabled path-level-rclone
+  topology. Source and 38/38 invalidation tests prove the durable whole-cache
+  sentinel intentionally supersedes narrower rows. The affected tests now
+  require the one deterministic sentinel, no redundant path rows, and a
+  positive retained revision; no production cleanup code changed.
+- Verified result: 2,820 passed, 84 deliberate PostgreSQL-only skips, 0 failed;
+  affected classes passed ten consecutive runs, and the clean test build has
+  zero warnings or errors.
 
-### 2. Clean test build and formatter
+### 1. Safe rclone update can return false success
 
-- Symptom: two `xUnit2000` errors/warnings.
-- Location: canonical-length assertions in
-  `CanonicalSpanCodecWritesExactFreshAndImportingBytesAndRejectsMutations`.
-- Reproduction: clean test build in the verification ledger.
-- Cause ownership: current Task 8 test code passes variable lengths as expected
-  and constants as actual.
-- Predates documentation pass: yes.
-- Evidence needed: clean `--no-incremental -warnaserror` test build and scoped
-  formatter exit 0.
-- Next action: swap the two assertion operands. Do not suppress the analyzer.
+- Unchanged fingerprint exits without checking live container or mount state.
+- Changed state is recorded immediately after `compose up` without readiness or
+  traversal proof.
+- Current 108/108 Python result confirms the old unsafe contract is encoded in
+  tests; green count does not close the defect.
+- Next action: V1 Task 5 after backend freeze prerequisites.
 
-### 3. Live PostgreSQL behavior
+### 4. Session startup is hardened; proxy boundary remains release-blocking
 
-Not a Task 8 blocker. It is an explicit Task 20 dependency.
+- Task 2A removed the ephemeral session-key fallback, made secure cookies the
+  default, added one-step key rotation, and documented both supported modes in
+  `.env.example`.
+- Local login/onboarding/logout are unavailable in Authentik mode; absent or
+  invalid outpost identity fails closed without a local fallback.
+- The rebuilt container contract proves missing-key failure and explicit-key
+  success, but the current CI workflow does not yet invoke that container smoke.
+- Proxy route/header boundaries still need the Task 2B executable abuse matrix.
+- Verified topology decision: use the same frontend hostname/listener with a
+  dedicated mount-relative `/protocol` prefix for independently authenticated
+  SAB, ARR, and WebDAV clients. UI/admin, `/view`, and `/ws` remain outside
+  `/protocol`; backend 8080 remains private.
+- Verified public API-key scope: `/protocol` permits the complete SAB dispatcher,
+  read-only ARR validation/search-nudge/correlation reports, and `POST` event
+  ingestion for the three supported ARR kinds. ARR mutations and every other
+  admin route remain UI-principal-only.
+- Verified WebDAV scope: read/list methods on exact namespaces, `PUT` only
+  under `/protocol/nzbs/<category>/...`, and `DELETE` only under
+  `/protocol/nzbs`, `/protocol/content`, and
+  `/protocol/completed-symlinks`. Unsupported mutation/protocol methods fail
+  before proxying; any widening requires disposable client evidence and renewed
+  approval.
+- V1 WebDAV authentication is fail-closed. `DISABLE_WEBDAV_AUTH=true` now fails
+  startup, NWebDav always requires authentication, focused tests pass `8/8`,
+  and Release build/format gates are green. Combined backend regression remains
+  pending after the key-parser slice.
+- Verified V1 import/media scope: hard symlink-only imports. Remove STRM/both
+  settings and generation/recreation/conversion surfaces. Plex/ARR use mounted
+  `/completed-symlinks` → `/.ids`; AIOStreams uses authenticated WebDAV; Dav
+  Explore `/view` remains frontend-principal-only. No `/protocol/view` route is
+  public.
+- Exact key-carrier compatibility remains open; production proxy edits are
+  blocked until that contract is explicit.
+- The adjacent ARR helper defect is GREEN locally, pending independent review.
+  `/api/arr/validation` now returns only derived configured-app/search-mode/
+  duplicate-policy fields and the helper no longer calls internal-only
+  `/api/get-config`. Focused service `1/1`, Python `7/7`, ARR service `27/27`,
+  all Python `110/110`, complete backend Release `2,825` passed with `84`
+  expected PostgreSQL skips, and build/format/compile/docs/diff gates exited
+  zero. Do not call it sealed before reading the reviewer report.
+- Product decision verified on 2026-07-17: V1 defaults to `AUTH_MODE=local` and
+  supports explicit `AUTH_MODE=authentik-proxy` using the official
+  Sonarr-style Authentik Proxy Provider pattern. Authentik mode disables local
+  login and never falls back to it.
+- Local mode requires an exact 64-hex `SESSION_KEY`; optional
+  `SESSION_KEY_PREVIOUS` provides one-step rotation. Authentik mode requires
+  trusted outpost source CIDRs and expected application metadata, and the app
+  port must not be exposed as a browser-auth bypass.
+- Next action: resolve Task 2B's remaining key-carrier contract, finish the
+  independent council synthesis, then write the RED route/method/credential
+  matrix before any production proxy edit.
 
-Exact real-server granted lock rows, locking-reader contention, drift with zero
-mutation, two-importer arbitration, crash durability, and reconciliation have
-not run because Task 20 is `NOT STARTED`. This is planned implementation work,
-not an unresolved handoff decision. Use only the future exclusively owned Task
-20 runner. Never point current tests at an existing server.
+### 5. Liveness, public errors, and repair lifecycle
+
+- `/health` has no substantive registered checks.
+- base/SAB controllers and middleware can expose raw exception details.
+- missing-file repair scheduling uses detached persistence-affecting work.
+- Next actions: V1 Tasks 2-4 in order.
+
+### 6. Immutable release provenance is absent
+
+Existing evidence belongs to a 321-path dirty worktree, not one publishable
+revision and image digest. Final multi-arch build, SBOM, provenance, and
+acceptance must bind one immutable candidate.
+
+### 7. Transfer-v3 Phase 4 review conflict
+
+Task 8's executable gates are green, but `PostgreSqlPhysicalCatalogContract`
+can materialize unbounded catalog rows and function bodies before the explicit
+Phase 4 budget leases begin. Reviews that approved sealing did not analyze this
+path. Phase 4 is private and post-V1; do not run live PostgreSQL or edit it in
+the V1 plan.
 
 ## Environment and prerequisites
 
 | Tool | Current | Required/relevant |
 | --- | --- | --- |
 | macOS | 27.0, arm64 | Current host for pure gates |
-| .NET SDK | 10.0.301 | Exact Phase 4 SDK gate |
-| .NET/ASP.NET runtime | 10.0.9 | Exact runtime gate |
-| Npgsql | 10.0.3 exact package range | Exact client gate |
+| .NET SDK | 10.0.301 | V1 backend build/test gate |
+| .NET/ASP.NET runtime | 10.0.9 | V1 runtime gate |
+| Npgsql | 10.0.3 exact package range | Private post-V1 code only; no V1 runtime path |
 | EF Core | 10.0.9 | Existing model/migrations only |
 | xUnit | 2.9.2 | Current tests |
-| Python | 3.14.6 | Future runner/tooling |
-| Docker | 29.4.0 | Task 20/CI only, not used in this pass |
+| Python | 3.14.6 | V1 operational scripts/tests |
+| Docker | 29.4.0 | V1 image and entrypoint gates; current local image/smoke passed |
 | Node | 22.22.3 | Does not satisfy declared Node 24 |
 | npm | 10.9.8 | Does not satisfy declared npm 11 |
 
 Relevant environment variable names:
 
+- `SESSION_KEY`
+- `SESSION_KEY_PREVIOUS`, optional one-step local-session rotation key
+- `AUTH_MODE`, `local` by default or explicit `authentik-proxy`
+- `AUTHENTIK_TRUSTED_PROXY_CIDRS`
+- `AUTHENTIK_APP_SLUG`
+- `SECURE_COOKIES`
+- `ALLOW_INSECURE_COOKIES`, explicit development-only opt-in
+- `FRONTEND_BACKEND_API_KEY`
 - `NZBDAV_TEST_POSTGRES_CONNECTION_STRING`
 - `NZBDAV_REQUIRE_POSTGRES_TESTS`
 - `NZBDAV_REQUIRE_TRANSFER_V3_PHASE4_POSTGRES_TESTS`, planned Task 20
 - `NZBDAV_LEGACY_TIMESTAMP_TIMEZONE`
 - `TZ`
 
-Never record their secret values. Task 8 pure gates require none.
+Never record their secret values. V1 tests use synthetic canaries and disposable
+fixtures only.
 
 ## Exact next actions
 
-1. **Task 8, reproduce red.** Run:
-
-   `dotnet test backend.Tests/backend.Tests.csproj --configuration Release --no-restore --filter '(FullyQualifiedName~TransferV3PostgreSqlAdmissionLockSetTests|FullyQualifiedName~TransferV3PostgreSqlAdmissionTests)&Category!=TransferV3Phase4PostgreSqlCompletion' --logger 'console;verbosity=minimal'`
-
-   Expected: 24 passed, the two named failures, 0 skipped. Stop if the failure
-   set differs.
-2. **Task 8, make both minimal repairs.** In
-   `backend/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionValidator.cs`,
-   symbol `ValidateFreshAndMarkImportingAsync`, join
-   `TransferV3ImportStateStore.TryTransitionCanonicalFreshToImportingInPostgreSqlTransactionAsync`
-   into the exact combined member-access shape. In
-   `backend.Tests/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionTests.cs`,
-   symbol
-   `CanonicalSpanCodecWritesExactFreshAndImportingBytesAndRejectsMutations`,
-   swap expected/actual in the two length assertions. Preserve runtime behavior
-   and add no analyzer suppression. Rerun the exact command in action 1.
-   Acceptance: exit 0, 26 passed, 0 failed, 0 skipped.
-3. **Task 8, affected regression.** Run:
-
-   `dotnet test backend.Tests/backend.Tests.csproj --configuration Release --no-restore --filter '(FullyQualifiedName~TransferV3Phase4DigestTests|FullyQualifiedName~TransferV3ImportStateCodecTests|FullyQualifiedName~TransferV3ImportStateStorePostgreSqlContractTests|FullyQualifiedName~TransferV3PostgreSqlServerContractTests|FullyQualifiedName~TransferV3PostgreSqlSessionTests|FullyQualifiedName~PostgreSqlEnvironmentContractTests)&Category!=TransferV3Phase4PostgreSqlCompletion' --logger 'console;verbosity=minimal'`
-
-   Acceptance: exit 0, 390 passed, 12 deliberate no-connection skips, 0 failed.
-4. **Task 8, build/regression/format.** Run, in this order:
-
-   `dotnet build backend/NzbWebDAV.csproj --configuration Release --no-restore -warnaserror`
-
-   `dotnet build backend.Tests/backend.Tests.csproj --configuration Release --no-restore --no-incremental -warnaserror`
-
-   `dotnet test backend.Tests/backend.Tests.csproj --configuration Release --no-restore --filter 'FullyQualifiedName~TransferV3&FullyQualifiedName!~TransferV3ImportStateStorePostgreSqlTests&Category!=TransferV3Phase4PostgreSqlCompletion' --logger 'console;verbosity=minimal'`
-
-   `dotnet format backend.Tests/backend.Tests.csproj --no-restore --verify-no-changes --include backend/Database/Transfer/Phase4/TransferV3Phase4Budgets.cs backend/Database/Transfer/TransferV3ImportStateCodec.cs backend/Database/Transfer/TransferV3ImportStateStore.cs backend/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionLockSet.cs backend/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionValidator.cs backend/Database/Transfer/Phase4/TransferV3PostgreSqlSession.cs backend/Database/Transfer/Phase4/TransferV3PostgreSqlServerContract.cs backend/Database/PostgreSqlEnvironmentContract.cs backend.Tests/Database/Transfer/Phase4/TransferV3Phase4DigestTests.cs backend.Tests/Database/Transfer/TransferV3ImportStateCodecTests.cs backend.Tests/Database/Transfer/Phase4/TransferV3ImportStateStorePostgreSqlContractTests.cs backend.Tests/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionLockSetTests.cs backend.Tests/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionTests.cs`
-
-   `git diff --check`
-
-   Acceptance: all exit 0; both builds have zero warnings/errors; pure
-   Transfer-v3 reports 1,372 passed, 0 failed, 0 skipped.
-5. **Task 8, review.** Obtain one concurrency/lifecycle/security review and one
-   test-fidelity/accounting review over:
-
-   `git diff -- backend/Database/Transfer/Phase4/TransferV3Phase4Budgets.cs backend/Database/Transfer/TransferV3ImportStateCodec.cs backend/Database/Transfer/TransferV3ImportStateStore.cs backend/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionLockSet.cs backend/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionValidator.cs backend/Database/Transfer/Phase4/TransferV3PostgreSqlSession.cs backend/Database/Transfer/Phase4/TransferV3PostgreSqlServerContract.cs backend/Database/PostgreSqlEnvironmentContract.cs backend.Tests/Database/Transfer/Phase4/TransferV3Phase4DigestTests.cs backend.Tests/Database/Transfer/TransferV3ImportStateCodecTests.cs backend.Tests/Database/Transfer/Phase4/TransferV3ImportStateStorePostgreSqlContractTests.cs backend.Tests/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionLockSetTests.cs backend.Tests/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionTests.cs`
-
-   Acceptance: no P0/P1 findings; any repair is followed by actions 1, 3, and 4.
-6. **Task 8, seal.** Record the two review outcomes and final gate results under
-   Task 8 in the canonical plan and in this handoff's verification ledger;
-   update Task 8 to `COMPLETE` in both canonical documents and change the first
-   next action to Task 9. Optional local SDD reports may be updated when
-   present, but must not govern completion. Verify with:
-
-   `sed -n '/^### Task 8:/,/^### Task 9:/p' docs/superpowers/plans/2026-07-14-nzbdav-transfer-v3-phase-4.md | rg -Fq '**Status:** COMPLETE' && rg -Fq 'Task 8 is complete' HANDOFF.md`
-
-   Acceptance: exit 0 and the handoff's first action names Task 9. Do not start
-   Task 9 or commit unless separately authorized.
+1. **Resolve API-key carriers.** Confirm `x-api-key` plus lowercase `apikey`
+   query/form support and fail-closed duplicate/conflict behavior; do not treat
+   unsupported camel-case `apiKey` as an established contract.
+2. **Finish independent review.** Read every completed Task 2B council report,
+   bind it to the recorded file hashes, and synthesize consensus/conflicts. Do
+   not treat pending or truncated reports as approvals.
+3. **Freeze the matrix.** Enumerate exact UI-admin, `/protocol` SAB/ARR, WebDAV,
+   signed-media, health, and `/ws` path/method/credential classes. Include
+   `URL_BASE`, encoded/double-encoded paths, conflicting/oversized headers,
+   WebDAV `Destination`, and zero-upstream-call negatives.
+4. **Write RED tests before production code.** Use a pure classifier plus a
+   disposable capture backend; add a disposable ASP.NET/client integration gate
+   for normalization and protocol behavior. Do not use placeholders or weaken
+   existing frontend behavior.
+5. **Implement the symlink-only removal slice.** RED-first removal of STRM
+   settings, generation, maintenance, seed, UI, and docs, while preserving ARR,
+   rclone, DFS, cleanup, and organized-link symlink regressions.
+6. **Seal the ARR helper review.** Read the pending independent report, resolve
+   any material finding, and rerun its focused and affected gates before marking
+   the slice complete.
+7. **Only after RED is reviewed, implement minimal GREEN.** Then run frontend
+   unit/type/build/E2E, backend focused/full Release gates, container smoke,
+   documentation validation, independent security review, and `git diff --check`.
 
 ## Do not redo
 
-- Do not reopen SQLite-versus-PostgreSQL selection. SQLite remains production
-  default; PostgreSQL promotion gates are explicit.
+- Do not reopen the V1 topology or upgrade policy. V1 is clean-install-only,
+  Docker/SQLite/one-owner/`role=all`; PostgreSQL and upgrades are post-V1.
+- Do not start the full rebrand before the backend freeze, RC gates, and user
+  review of the pass report.
+- Do not treat the 108 passing Python tests as proof that safe-rclone is safe;
+  current tests encode the false-success behavior.
+- Do not weaken cleanup assertions until whole-cache supersession and consumer
+  semantics are executable facts.
 - Do not replace `EXCLUSIVE MODE NOWAIT` with `SHARE ROW EXCLUSIVE`.
 - Do not change Task 8 to repeatable-read or serializable.
 - Do not recreate digest strings or state objects in admission.
 - Do not create a second managed budget.
 - Do not duplicate direct `ConfigItems` SQL in the validator.
-- Do not add a Task 8 live PostgreSQL test or external connection dependency.
+- Do not add a Task 8 live PostgreSQL test or external connection dependency
+  during V1.
 - Do not rerun Tasks 0-7 implementation. Their current pure code passed.
 - Do not create another handoff or active plan.
 - Do not stage/delete artifacts, Finder files, caches, or unexplained untracked
@@ -682,20 +801,28 @@ Never record their secret values. Task 8 pure gates require none.
 
 ## Deferred or out of scope
 
-- All real PostgreSQL completion and crash proof, Task 20.
-- Runtime enablement, blob publication, cutover, deployment, and migration
-  completion marker.
-- Backup/restore.
-- ARR/Plex and grab-to-Plex performance.
+- All Transfer-v3 Phase 4 work, including Task 8's catalog-memory repair and
+  Tasks 9-21.
+- PostgreSQL runtime, split roles, multi-owner/multi-host operation, and
+  migration/cutover.
+- Pre-V1 upgrade support and in-place downgrade.
+- Full visual rebrand until the backend freeze and RC pass report.
+- General ARR/Plex expansion and grab-to-Plex performance beyond the six V1
+  behavioral journeys.
 - n8n.
-- UI/rebrand and product design.
-- Production media-stack changes.
+- Destructive, repair, migration, or stress use of production.
 - Native FUSE promotion.
-- Old role-separation backlog unless separately reactivated after Phase 4.
+- Alternative packaging and orchestration.
 
 ## Open questions
 
-No handoff or documentation question remains open.
+The V1 topology, `/protocol` same-host ingress, scoped public API-key authority,
+path-scoped semantic WebDAV writes, hard symlink-only imports, and authenticated
+UI-only `/view` are fixed. One Task 2B policy question remains open and blocks
+production proxy edits: exact accepted public key carriers and conflict
+behavior.
+
+Full rebrand remains deferred until the backend passes.
 
 - The two pre-Task-8 shared-test hashes are recovered from the Task 5
   after-snapshot: server-contract tests are
@@ -704,32 +831,32 @@ No handoff or documentation question remains open.
   `2a37668b805c48ed79caf0aaa958d8c0615d16ee198fd15ae05b7799888894b1`.
   Task 6 and Task 7 reports explicitly record no unrelated-file changes, and
   their scopes exclude both files.
-- Task 20 PostgreSQL results are planned future implementation evidence, not an
-  unresolved handoff decision. Do not use an existing server.
+- Phase 4 PostgreSQL results are post-V1 implementation evidence, not an
+  unresolved V1 decision. Do not use an existing server.
 - Local `.superpowers/sdd/**` evidence remains deliberately excluded,
   supplemental, and noncanonical. Canonical continuation depends only on
-  committed `AGENTS.md`, `HANDOFF.md`, the Phase 4 plan, and the Phase 4 design.
-- Executable Phase 4 portability is deliberately outside this docs-only
-  publication. Continue only in the preserved worktree unless a separate
-  implementation commit is explicitly authorized.
+  `AGENTS.md`, `HANDOFF.md`, the active V1 plan, and the V1 design.
+- Current V1 documentation and executable implementation are worktree-only.
+  Continue only in the preserved worktree unless a separate commit is
+  explicitly authorized.
 
 ## Recovery and rollback
 
-The current partial state is private and unregistered. Recovery means preserving
-it, not resetting it.
+The current V1 state is worktree-only. Recovery means preserving it, not
+resetting it.
 
 - Verify the handoff publication commit is an ancestor of `HEAD`, then compare
   branch and status with this handoff.
-- Use the canonical changed-file ledger and Task 8 exact review command to
+- Use the active V1 plan, current dirty diff, and exact Task 1 filters to
   identify scope. Local snapshot files are optional corroboration only.
 - Inspect only scoped diffs/source. Untracked files have no Git base, so never
   assume they are disposable.
-- If an edit fails, reverse only that exact edit with another reviewed
-  `apply_patch`. Do not use reset, restore, checkout, clean, stash, or deletion.
+- If an edit fails, re-read and repair only that exact edit. Do not use reset,
+  restore, checkout, clean, stash, or deletion.
 - If a gate produces a different failure set, stop, update this handoff, and
   diagnose before further edits.
-- No database rollback exists or is needed because this pass and current Task 8
-  pure tests touched no database.
+- Current V1 tests use disposable fixtures only. No production rollback or data
+  repair has been attempted.
 
 ## Handoff maintenance protocol
 
@@ -742,7 +869,7 @@ Every future working session must:
 5. change the first exact next action before ending;
 6. keep `AGENTS.md` pointer concise;
 7. keep one canonical handoff and one canonical active plan;
-8. remove or archive the active-work pointer only when Phase 4 is fully complete.
+8. remove or archive the active-work pointer only when V1 is fully complete.
 9. preserve the immutable initial baseline/publication fields. Before any later
    handoff revision, refresh the content-verification timestamp, current
    branch/worktree facts, ahead/behind counts, and continuation state; require

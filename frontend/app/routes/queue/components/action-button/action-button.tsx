@@ -24,7 +24,7 @@ export function ActionButton({ type, text, ariaLabel, disabled, selected, onClic
             type="button"
             className={classes}
             disabled={disabled}
-            aria-label={text ? undefined : ariaLabel ?? getDefaultAriaLabel(type)}
+            aria-label={ariaLabel ?? (text ? undefined : getDefaultAriaLabel(type))}
             aria-pressed={selected || undefined}
             onClick={onClick}>
             {type === "delete" && <TrashIcon />}

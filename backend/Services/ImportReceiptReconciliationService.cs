@@ -29,7 +29,7 @@ public sealed class ImportReceiptReconciliationService : BackgroundService
 
     public async Task RunOnceAsync(DateTimeOffset now, CancellationToken ct)
     {
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
         var candidates = await dbContext.ImportReceipts
             .Where(x => x.State == ImportReceiptState.UnlinkClaimed)
             .Where(x => x.UpdatedAt <= now - ClaimGracePeriod)

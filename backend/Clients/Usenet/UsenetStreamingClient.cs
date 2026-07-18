@@ -186,8 +186,16 @@ public class UsenetStreamingClient : WrappingNntpClient, IProviderPoolSnapshotSo
         var useSsl = connectionDetails.GetEffectiveUseSsl();
         var user = connectionDetails.User;
         var pass = connectionDetails.Pass;
-        await connection.ConnectAsync(host, port, useSsl, ct).ConfigureAwait(false);
-        await connection.AuthenticateAsync(user, pass, ct).ConfigureAwait(false);
-        return connection;
+        try
+        {
+            await connection.ConnectAsync(host, port, useSsl, ct).ConfigureAwait(false);
+            await connection.AuthenticateAsync(user, pass, ct).ConfigureAwait(false);
+            return connection;
+        }
+        catch
+        {
+            connection.Dispose();
+            throw;
+        }
     }
 }

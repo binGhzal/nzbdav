@@ -31,6 +31,7 @@ public sealed class GetWebdavItemControllerTests
         Assert.Equal(
             GetWebdavItemController.ResponseCopyBufferSize,
             source.MaxRequestedReadSize);
+        Assert.Equal(source.Length, context.Response.ContentLength);
         Assert.Equal(source.Length, context.Response.Body.Length);
     }
 
@@ -38,7 +39,8 @@ public sealed class GetWebdavItemControllerTests
     public async Task HandleRequestReturnsRangeNotSatisfiableWhenRangeStartsPastEnd()
     {
         var source = new TrackingReadStream(length: 1024);
-        var controller = CreateController(source);
+        var item = new FakeStoreItem("movie.mkv", source);
+        var controller = CreateController(item);
         var context = CreateContext(".ids/movie.mkv", rangeHeader: "bytes=2048-");
         controller.ControllerContext = new ControllerContext
         {
@@ -51,6 +53,25 @@ public sealed class GetWebdavItemControllerTests
         Assert.Equal("bytes */1024", context.Response.Headers.ContentRange);
         Assert.Equal(0, context.Response.Body.Length);
         Assert.Equal(0, source.MaxRequestedReadSize);
+        Assert.Equal(0, item.ReadableStreamOpenCount);
+    }
+
+    [Fact]
+    public async Task HandleRequestPublishesResolvedRangeBeforeOpeningReadableStream()
+    {
+        var context = CreateContext(".ids/movie.mkv", rangeHeader: "bytes=128-255");
+        long? requestedEndAtOpen = null;
+        var item = new FakeStoreItem(
+            "movie.mkv",
+            new TrackingReadStream(length: 1024),
+            onOpen: () => requestedEndAtOpen = context.Items["RequestedRangeEnd"] as long?);
+        var controller = CreateController(item);
+        controller.ControllerContext = new ControllerContext { HttpContext = context };
+
+        await controller.HandleRequest();
+
+        Assert.Equal(255, requestedEndAtOpen);
+        Assert.Equal(1, item.ReadableStreamOpenCount);
     }
 
     [Fact]
@@ -68,6 +89,7 @@ public sealed class GetWebdavItemControllerTests
 
         Assert.Equal(StatusCodes.Status206PartialContent, context.Response.StatusCode);
         Assert.Equal("bytes 512-1023/1024", context.Response.Headers.ContentRange);
+        Assert.Equal(512, context.Response.ContentLength);
         Assert.Equal(512, context.Response.Body.Length);
     }
 
@@ -159,7 +181,12 @@ public sealed class GetWebdavItemControllerTests
 
     private static GetWebdavItemController CreateController(Stream source)
     {
-        var store = new FakeStore(new FakeStoreItem("movie.mkv", source));
+        return CreateController(new FakeStoreItem("movie.mkv", source));
+    }
+
+    private static GetWebdavItemController CreateController(FakeStoreItem item)
+    {
+        var store = new FakeStore(item);
         var configManager = new ConfigManager();
         configManager.UpdateValues([
             new ConfigItem { ConfigName = "api.strm-key", ConfigValue = "test-strm-key" }
@@ -202,17 +229,19 @@ public sealed class GetWebdavItemControllerTests
     private sealed class FakeStoreItem : BaseStoreReadonlyItem
     {
         private readonly Stream? _stream;
+        private readonly Action? _onOpen;
         public override string Name { get; }
         public override string UniqueKey { get; }
         public override long FileSize { get; }
         public override DateTime CreatedAt { get; } = DateTime.UtcNow;
         public int ReadableStreamOpenCount { get; private set; }
 
-        public FakeStoreItem(string name, Stream stream)
+        public FakeStoreItem(string name, Stream stream, Action? onOpen = null)
         {
             Name = name;
             UniqueKey = name;
             _stream = stream;
+            _onOpen = onOpen;
             FileSize = stream.Length;
         }
 
@@ -226,6 +255,7 @@ public sealed class GetWebdavItemControllerTests
         public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
         {
             ReadableStreamOpenCount++;
+            _onOpen?.Invoke();
             if (_stream is null)
                 throw new InvalidOperationException("HEAD requests should not open the readable stream.");
             return Task.FromResult(_stream);

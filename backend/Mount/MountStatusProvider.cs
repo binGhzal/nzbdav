@@ -8,9 +8,9 @@ public sealed class MountStatusProvider
     private string _type = "rclone";
     private string _directory = "/mnt/nzbdav";
     private bool _enabled;
-    private bool _ready = true;
-    private string _state = "external";
-    private string? _message = "rclone mount is managed outside NZBDav";
+    private bool _ready;
+    private string _state = "external-unverified";
+    private string? _message = "rclone mount is managed outside NZBDav and has not been verified";
     private long _fuseErrors;
     private int _activeOperations;
     private int _waitingOperations;
@@ -40,8 +40,8 @@ public sealed class MountStatusProvider
 
     public void SetExternal(string type, string directory, string? message = null)
     {
-        Set(type, directory, enabled: false, ready: true, state: "external",
-            message ?? $"{type} mount is managed outside NZBDav");
+        Set(type, directory, enabled: false, ready: false, state: "external-unverified",
+            message ?? $"{type} mount is managed outside NZBDav and has not been verified");
     }
 
     public void SetDisabled(string type, string directory, string? message = null)

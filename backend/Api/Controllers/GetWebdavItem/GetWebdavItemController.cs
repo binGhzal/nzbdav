@@ -47,20 +47,54 @@ public class GetWebdavItemController(IStore store, ConfigManager configManager) 
         if (Path.GetExtension(item.Name).ToLower() == ".par2" && configManager.IsPreviewPar2FilesEnabled())
             return await GetPar2PreviewStream(item).ConfigureAwait(false);
 
+        ResolvedHttpRange? resolvedRange = null;
+        long? knownFileSize = null;
+
+        // Resolve against BaseStoreItem metadata before opening an expensive
+        // Usenet stream. The stream constructor consumes RequestedRangeEnd to
+        // bound initial prefetch, so publishing it after open is too late.
+        if (item is BaseStoreItem knownSizeItem)
+        {
+            knownFileSize = knownSizeItem.FileSize;
+            if (request.Range is not null)
+            {
+                if (!request.Range.TryResolve(knownFileSize.Value, out var range))
+                {
+                    Response.Headers["Content-Range"] = $"bytes */{knownFileSize.Value}";
+                    Response.StatusCode = StatusCodes.Status416RangeNotSatisfiable;
+                    return Stream.Null;
+                }
+
+                resolvedRange = range;
+                HttpContext.Items["RequestedRangeEnd"] = range.End;
+                Response.ContentLength = range.Length;
+            }
+            else
+            {
+                Response.ContentLength = knownFileSize.Value;
+            }
+        }
+
         // get the file stream and set the file-size in header
         var stream = await item.GetReadableStreamAsync(HttpContext.RequestAborted).ConfigureAwait(false);
-        var fileSize = stream.Length;
+        var fileSize = knownFileSize ?? stream.Length;
 
         if (request.Range is not null)
         {
-            if (!request.Range.TryResolve(fileSize, out var range))
+            if (resolvedRange is null)
             {
-                await stream.DisposeAsync().ConfigureAwait(false);
-                Response.Headers["Content-Range"] = $"bytes */{fileSize}";
-                Response.StatusCode = StatusCodes.Status416RangeNotSatisfiable;
-                return Stream.Null;
+                if (!request.Range.TryResolve(fileSize, out var fallbackRange))
+                {
+                    await stream.DisposeAsync().ConfigureAwait(false);
+                    Response.Headers["Content-Range"] = $"bytes */{fileSize}";
+                    Response.StatusCode = StatusCodes.Status416RangeNotSatisfiable;
+                    return Stream.Null;
+                }
+
+                resolvedRange = fallbackRange;
             }
 
+            var range = resolvedRange.Value;
             HttpContext.Items["RequestedRangeEnd"] = range.End;
 
             // seek
@@ -69,12 +103,12 @@ public class GetWebdavItemController(IStore store, ConfigManager configManager) 
 
             // set response headers
             Response.Headers["Content-Range"] = $"bytes {range.Start}-{range.End}/{fileSize}";
-            if (isHeadRequest) Response.Headers["Content-Length"] = range.Length.ToString();
+            Response.ContentLength = range.Length;
             Response.StatusCode = 206;
         }
         else
         {
-            if (isHeadRequest) Response.Headers["Content-Length"] = fileSize.ToString();
+            Response.ContentLength = fileSize;
         }
 
         return stream;

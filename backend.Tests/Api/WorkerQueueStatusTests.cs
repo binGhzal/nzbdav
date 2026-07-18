@@ -142,6 +142,32 @@ public sealed class WorkerQueueStatusTests
         Assert.Equal(1, status.RepairActive);
     }
 
+    [Fact]
+    public void FromStatsUsesDurableReadinessInsteadOfDisplayedWaitingForDownloadLaneState()
+    {
+        var stats = new DavDatabaseClient.WorkerJobQueueStats(
+            Download: BuildStats(WorkerJob.JobKind.Download, pending: 0, retry: 0, leased: 1, quarantined: 0),
+            Verify: BuildStats(WorkerJob.JobKind.Verify, pending: 0, retry: 0, leased: 0, quarantined: 0),
+            Repair: BuildStats(WorkerJob.JobKind.Repair, pending: 0, retry: 0, leased: 0, quarantined: 0));
+
+        var status = WorkerQueueStatus.FromStats(
+            downloadActive: 1,
+            downloadWaiting: 7,
+            inlineVerifyActive: 0,
+            inlineVerifyWaiting: 0,
+            maxDownloadWorkers: 1,
+            maxVerifyWorkers: 1,
+            maxRepairWorkers: 1,
+            downloadsPaused: false,
+            healthWorkers: new HealthCheckService.WorkerSnapshot(VerifyActive: 0, RepairActive: 0),
+            healthQueue: new DavDatabaseClient.HealthWorkerQueueStats(VerifyReady: 0, RepairActionNeeded: 0),
+            durableJobs: stats);
+
+        Assert.Equal(7, status.DownloadWaiting);
+        Assert.Equal(0, status.DownloadReady);
+        Assert.Equal("active", status.DownloadState);
+    }
+
     private static DavDatabaseClient.WorkerJobKindStats BuildStats
     (
         WorkerJob.JobKind kind,

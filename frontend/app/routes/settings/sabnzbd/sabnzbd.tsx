@@ -13,6 +13,8 @@ type SabnzbdSettingsProps = {
 
 export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSettingsProps) {
 
+    const apiKeyIsRedacted = config["api.key"] === "__NZBDAV_REDACTED__";
+
     const onRefreshApiKey = useCallback(() => {
         setNewConfig({ ...config, "api.key": generateNewApiKey() })
     }, [setNewConfig, config]);
@@ -29,14 +31,16 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                         type="text"
                         id="api-key-input"
                         aria-describedby="api-key-help"
-                        value={config["api.key"]}
+                        value={apiKeyIsRedacted ? "Configured" : config["api.key"]}
                         readOnly />
                     <Button variant="primary" onClick={onRefreshApiKey}>
-                        Refresh
+                        Rotate
                     </Button>
                 </InputGroup>
                 <Form.Text id="api-key-help" muted>
-                    Use this API key when configuring your download client in Radarr or Sonarr.
+                    {apiKeyIsRedacted
+                        ? "The saved key is hidden. Rotate it to create and reveal a replacement before updating Radarr or Sonarr."
+                        : "Use this API key when configuring your download client in Radarr or Sonarr."}
                 </Form.Text>
             </Form.Group>
             <hr />

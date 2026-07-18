@@ -38,13 +38,13 @@ public class TestUsenetConnectionRequest
             : useSslValue;
     }
 
-    public UsenetProviderConfig.ConnectionDetails ToConnectionDetails()
+    public UsenetProviderConfig.ConnectionDetails ToConnectionDetails(string? resolvedPassword = null)
     {
         return new UsenetProviderConfig.ConnectionDetails
         {
             Host = Host,
             User = User,
-            Pass = Pass,
+            Pass = resolvedPassword ?? Pass,
             Port = Port,
             UseSsl = UseSsl,
             MaxConnections = 1,

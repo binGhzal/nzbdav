@@ -46,14 +46,32 @@ public class BaseNntpClient : NntpClient
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(ConnectTimeout);
+        using var cancellationRegistration = timeoutCts.Token.Register(
+            static state =>
+            {
+                try
+                {
+                    ((UsenetClient)state!).Dispose();
+                }
+                catch
+                {
+                    // The awaited connect remains authoritative. Its exception is mapped below
+                    // without allowing a cancellation callback failure to escape a timer thread.
+                }
+            },
+            _client);
         try
         {
             await _client.ConnectAsync(host, port, useSsl, timeoutCts.Token);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception e) when (timeoutCts.IsCancellationRequested)
         {
+            if (cancellationToken.IsCancellationRequested)
+                throw new OperationCanceledException("Usenet connection was cancelled.", e, cancellationToken);
+
             throw new CouldNotConnectToUsenetException(
-                $"Connection to {host}:{port} timed out after {ConnectTimeout.TotalSeconds:F0}s.");
+                $"Connection to {host}:{port} timed out after {ConnectTimeout.TotalSeconds:F0}s.",
+                e);
         }
         catch (Exception e) when (!e.IsCancellationException())
         {

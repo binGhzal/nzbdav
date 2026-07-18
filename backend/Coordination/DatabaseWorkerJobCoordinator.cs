@@ -13,6 +13,8 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
     private const long PostgreSqlLaneLockNamespace = 0x4E5A424400000000;
     private const int MaxJsonUtf8Bytes = 16 * 1024;
     private const int MaxErrorLength = 1024;
+    private const string MissingDownloadTargetError =
+        "Download worker target no longer exists and has no matching history item.";
     private readonly Func<DavDatabaseContext> _contextFactory;
     private readonly DavDatabaseContext? _sharedContext;
     private readonly IWorkerLaneCapacityPolicy _capacityPolicy;
@@ -21,7 +23,7 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
     public DatabaseWorkerJobCoordinator(
         IWorkerLaneCapacityPolicy capacityPolicy,
         IOptions<WorkerLeaseOptions> options)
-        : this(() => new DavDatabaseContext(), null, capacityPolicy, options.Value)
+        : this(DavDatabaseContextRuntimeFactory.Create, null, capacityPolicy, options.Value)
     {
     }
 
@@ -134,7 +136,18 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
                     .SetProperty(job => job.LastHeartbeatAt, (DateTimeOffset?)null)
                     .SetProperty(job => job.Attempts, job => job.Attempts > 0 ? job.Attempts - 1 : 0), ct)
                 .ConfigureAwait(false);
-            return changed == 1;
+            if (changed == 1) return true;
+
+            return await db.WorkerJobs.AsNoTracking().AnyAsync(job =>
+                job.Id == lease.JobId
+                && job.LeaseGeneration == lease.Generation
+                && job.Status == WorkerJob.JobStatus.Pending
+                && job.LeaseOwner == null
+                && job.LeaseToken == null
+                && job.LeaseExpiresAt == null
+                && job.LastHeartbeatAt == null
+                && job.UpdatedAt == now
+                && job.AvailableAt == now, ct).ConfigureAwait(false);
         }, ct);
 
     public Task<bool> FailAsync(
@@ -187,7 +200,18 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
                     .SetProperty(job => job.FailureKind, failureKind)
                     .SetProperty(job => job.LastError, boundedError), ct)
                 .ConfigureAwait(false);
-            return changed == 1;
+            if (changed == 1) return true;
+
+            return await db.WorkerJobs.AsNoTracking().AnyAsync(job =>
+                job.Id == lease.JobId
+                && job.LeaseGeneration == lease.Generation
+                && job.LeaseOwner == null
+                && job.LeaseToken == null
+                && (job.Status == WorkerJob.JobStatus.Retry
+                    || job.Status == WorkerJob.JobStatus.Quarantined)
+                && job.FailureKind == failureKind
+                && job.LastError == boundedError
+                && job.AvailableAt == nextAttemptAt, ct).ConfigureAwait(false);
         }, ct);
     }
 
@@ -218,8 +242,16 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
         DateTimeOffset now,
         CancellationToken ct)
     {
+        // PostgreSQL establishes a SERIALIZABLE snapshot on the advisory-lock SELECT.
+        // If that lock waits, the snapshot is already stale when claiming begins. Under
+        // READ COMMITTED each statement observes commits made before the lane lock was
+        // acquired; the lane lock plus the conditional updates below remain the atomic
+        // claim/fencing boundary. SQLite retains its existing serializable write path.
+        var isolationLevel = db.Database.IsNpgsql()
+            ? IsolationLevel.ReadCommitted
+            : IsolationLevel.Serializable;
         await using var transaction = await db.Database
-            .BeginTransactionAsync(IsolationLevel.Serializable, ct)
+            .BeginTransactionAsync(isolationLevel, ct)
             .ConfigureAwait(false);
 
         if (db.Database.IsNpgsql())
@@ -230,7 +262,8 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
         }
 
         await db.WorkerJobs
-            .Where(job => job.Status == WorkerJob.JobStatus.Leased
+            .Where(job => job.Kind == kind
+                          && job.Status == WorkerJob.JobStatus.Leased
                           && job.LeaseExpiresAt <= now
                           && job.CancelRequestedAt != null)
             .ExecuteUpdateAsync(setters => setters
@@ -241,6 +274,8 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
                 .SetProperty(job => job.FailureKind, WorkerJob.FailureClass.Cancelled)
                 .SetProperty(job => job.LastError, "Cancellation request expired before acknowledgement."), ct)
             .ConfigureAwait(false);
+
+        await ReconcileOrphanedDownloadJobsAsync(db, kind, now, ct).ConfigureAwait(false);
 
         var configuredMaximum = Math.Max(0, _capacityPolicy.GetMaximum(kind));
         var activeCount = await db.WorkerJobs.AsNoTracking()
@@ -255,13 +290,15 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
             return [];
         }
 
-        var candidateIds = await db.WorkerJobs.AsNoTracking()
+        var candidateQuery = db.WorkerJobs.AsNoTracking()
             .Where(job => job.Kind == kind
                           && job.CancelRequestedAt == null
                           && job.AvailableAt <= now
                           && (job.Status == WorkerJob.JobStatus.Pending
                               || job.Status == WorkerJob.JobStatus.Retry
-                              || job.Status == WorkerJob.JobStatus.Leased && job.LeaseExpiresAt <= now))
+                              || job.Status == WorkerJob.JobStatus.Leased && job.LeaseExpiresAt <= now));
+        candidateQuery = ApplyDownloadQueueReadiness(candidateQuery, db, kind, now);
+        var candidateIds = await candidateQuery
             .OrderByDescending(job => job.Priority)
             .ThenBy(job => job.AvailableAt)
             .ThenBy(job => job.CreatedAt)
@@ -274,14 +311,16 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
         foreach (var candidateId in candidateIds)
         {
             var token = Guid.NewGuid();
-            var changed = await db.WorkerJobs
+            var claimQuery = db.WorkerJobs
                 .Where(job => job.Id == candidateId
                               && job.Kind == kind
                               && job.CancelRequestedAt == null
                               && job.AvailableAt <= now
                               && (job.Status == WorkerJob.JobStatus.Pending
                                   || job.Status == WorkerJob.JobStatus.Retry
-                                  || job.Status == WorkerJob.JobStatus.Leased && job.LeaseExpiresAt <= now))
+                                  || job.Status == WorkerJob.JobStatus.Leased && job.LeaseExpiresAt <= now));
+            claimQuery = ApplyDownloadQueueReadiness(claimQuery, db, kind, now);
+            var changed = await claimQuery
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(job => job.Status, WorkerJob.JobStatus.Leased)
                     .SetProperty(job => job.LeaseOwner, owner)
@@ -328,6 +367,62 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
         return leases;
     }
 
+    private static async Task ReconcileOrphanedDownloadJobsAsync(
+        DavDatabaseContext db,
+        WorkerJob.JobKind kind,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        if (kind != WorkerJob.JobKind.Download) return;
+
+        var orphaned = db.WorkerJobs
+            .Where(job => job.Kind == WorkerJob.JobKind.Download
+                          && (job.Status == WorkerJob.JobStatus.Pending
+                              || job.Status == WorkerJob.JobStatus.Retry
+                              || job.Status == WorkerJob.JobStatus.Leased)
+                          && !db.QueueItems.Any(queueItem => queueItem.Id == job.TargetId));
+
+        await orphaned
+            .Where(job => db.HistoryItems.Any(historyItem => historyItem.Id == job.TargetId))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(job => job.Status, WorkerJob.JobStatus.Completed)
+                .SetProperty(job => job.UpdatedAt, now)
+                .SetProperty(job => job.CompletedAt, now)
+                .SetProperty(job => job.LeaseExpiresAt, (DateTimeOffset?)null)
+                .SetProperty(job => job.FailureKind, (WorkerJob.FailureClass?)null)
+                .SetProperty(job => job.LastError, (string?)null), ct)
+            .ConfigureAwait(false);
+
+        await orphaned
+            .Where(job => !db.HistoryItems.Any(historyItem => historyItem.Id == job.TargetId))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(job => job.Status, WorkerJob.JobStatus.Cancelled)
+                .SetProperty(job => job.UpdatedAt, now)
+                .SetProperty(job => job.CompletedAt, now)
+                .SetProperty(job => job.LeaseExpiresAt, (DateTimeOffset?)null)
+                .SetProperty(job => job.FailureKind, WorkerJob.FailureClass.Cancelled)
+                .SetProperty(job => job.LastError, MissingDownloadTargetError), ct)
+            .ConfigureAwait(false);
+    }
+
+    private static IQueryable<WorkerJob> ApplyDownloadQueueReadiness(
+        IQueryable<WorkerJob> jobs,
+        DavDatabaseContext db,
+        WorkerJob.JobKind kind,
+        DateTimeOffset now)
+    {
+        if (kind != WorkerJob.JobKind.Download) return jobs;
+
+        var localNow = LocalWallQueryBounds.NormalizeInclusiveUpperBound(
+            db,
+            now.LocalDateTime);
+        return jobs.Where(job =>
+            db.QueueItems.Any(queueItem =>
+                queueItem.Id == job.TargetId
+                && queueItem.Priority != QueueItem.PriorityOption.Paused
+                && (queueItem.PauseUntil == null || queueItem.PauseUntil <= localNow)));
+    }
+
     private static IQueryable<WorkerJob> AuthenticatedLease(
         DavDatabaseContext db,
         WorkerLeaseIdentity lease) => db.WorkerJobs.Where(job =>
@@ -370,6 +465,7 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
             catch (Exception exception) when (
                 attempt < maxAttempts && IsRetryablePostgreSqlTransactionFailure(exception))
             {
+                DatabaseTelemetry.Shared.RecordLeaseRetry();
                 _sharedContext?.ChangeTracker.Clear();
                 await Task.Delay(TimeSpan.FromMilliseconds(20 * attempt), ct).ConfigureAwait(false);
             }

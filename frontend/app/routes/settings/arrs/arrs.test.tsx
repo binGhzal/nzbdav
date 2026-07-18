@@ -44,4 +44,50 @@ describe("ArrsSettings", () => {
             expect(screen.getByRole("alert").textContent).toContain("Radarr connection failed: server error");
         });
     });
+
+    it("submits the application type with the saved API-key marker", async () => {
+        let submittedType: FormDataEntryValue | null = null;
+        let submittedApiKey: FormDataEntryValue | null = null;
+        const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+            const form = init.body as FormData;
+            submittedType = form.get("type");
+            submittedApiKey = form.get("apiKey");
+            return Response.json({ status: true, connected: true });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+        const config = {
+            "arr.instances": serializeArrConfig({
+                RadarrInstances: [{
+                    Host: "http://radarr:7878",
+                    ApiKey: "__NZBDAV_REDACTED__",
+                }],
+                SonarrInstances: [],
+                LidarrInstances: [],
+                QueueRules: [],
+                Prioritization: {
+                    Enabled: false,
+                    Mode: "report",
+                    RecomputeIntervalSeconds: 300,
+                    MaxAutomaticPriority: 1,
+                },
+                SearchNudge: {
+                    Enabled: false,
+                    Mode: "report",
+                    IntervalSeconds: 1800,
+                    CooldownSeconds: 21600,
+                    MaxCommandsPerHour: 20,
+                    SonarrBatchSize: 10,
+                    RadarrBatchSize: 5,
+                    ConcurrentCommandsPerInstance: 1,
+                },
+            }),
+        };
+
+        render(<ArrsSettings config={config} setNewConfig={vi.fn()} />);
+        fireEvent.click(screen.getByRole("button", { name: "Test Conn" }));
+
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+        expect(submittedType).toBe("radarr");
+        expect(submittedApiKey).toBe("__NZBDAV_REDACTED__");
+    });
 });

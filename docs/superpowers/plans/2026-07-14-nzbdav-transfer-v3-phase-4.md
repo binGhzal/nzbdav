@@ -2,7 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Last reconciled:** 2026-07-16T23:33:21+04:00
+**Last reconciled:** 2026-07-17T17:33:43+04:00
+
+> **DEFERRED POST-V1:** This is no longer the active implementation plan. The
+> active plan is
+> [`2026-07-17-nzbdav-v1-backend-release-plan.md`](2026-07-17-nzbdav-v1-backend-release-plan.md).
+> V1 is clean-install-only, Docker/SQLite/one-owner/`role=all`. Do not continue
+> Task 8 or start Task 9 during V1 work.
 
 **Canonical handoff:** [`HANDOFF.md`](../../../HANDOFF.md)
 
@@ -27,26 +33,30 @@ resource access.
 - `backend/Database/Transfer/Contracts/transfer-v3-postgresql-target-contract.json`
 - `backend/Database/PostgreSqlCatalogs/postgresql-native-head-catalog.txt`
 
-**Current status summary:** Tasks 0-7 are `COMPLETE` with current pure regression
-coverage. Task 8 is `IN PROGRESS`. Its supporting contracts pass, but the exact
-Task 8 gate has two failures and the clean test build has two `xUnit2000` errors.
-Tasks 9-21 are `NOT STARTED`. No task is blocked. Task 20 deliberately owns all
-live PostgreSQL completion proof.
+**Current status summary:** Tasks 0-7 remain `COMPLETE`. Task 8's former two
+source/test defects are repaired; its focused gate is 26/26, affected contracts
+are 390 passed with 12 deliberate no-connection skips, pure Transfer-v3 is
+1,372/1,372, builds/formatter/whitespace are green. Task 8 is nevertheless
+`DEFERRED POST-V1`, not sealed: independent review found potentially unbounded
+client-side PostgreSQL catalog materialization before the explicit Phase 4
+managed-budget leases begin. Other reviewers that approved sealing did not
+address that path. Tasks 9-21 remain `NOT STARTED` and the whole plan is paused.
 
-**Explicit first unfinished task:** Task 8. Repair the two exact source/test
-defects recorded under Task 8, rerun every listed pure gate, obtain two fresh
-read-only reviews, then record the evidence in this plan and `HANDOFF.md`. Do
-not start Task 9 before Task 8 is sealed.
+**Explicit continuation:** Do not continue this plan during V1. Resume only
+after V1 and begin by bounding/charging catalog capture before materialization,
+adding executable cardinality/row-size tests, rerunning every Task 8 gate, and
+obtaining fresh reviews that explicitly analyze
+`PostgreSqlPhysicalCatalogContract`.
 
 ## Reconciled task status
 
 | Task | Status | Current evidence or next gate |
 | --- | --- | --- |
 | 0-7 | COMPLETE | 2026-07-16 pure Transfer-v3 run exercised their current code; only the two Task 8 admission assertions failed. Canonical evidence is summarized here and in `HANDOFF.md`; local SDD records are optional. |
-| 8 | IN PROGRESS | 24/26 exact Task 8 tests passed; affected supporting contracts passed 390 with 12 deliberate no-connection skips; two structural failures and two `xUnit2000` errors remain. |
-| 9-19 | NOT STARTED | Planned production symbols are absent. Execute in numeric order after Task 8. |
-| 20 | NOT STARTED | Owns the isolated PostgreSQL 16.14 completion/crash/contention proof and runner. |
-| 21 | NOT STARTED | Owns final isolation, documentation, full regression, and independent review. |
+| 8 | DEFERRED POST-V1 | Pure gates are green, but review found pre-budget unbounded catalog materialization in `PostgreSqlPhysicalCatalogContract`; do not seal until bounded/charged and explicitly re-reviewed. |
+| 9-19 | NOT STARTED; PLAN DEFERRED | Planned production symbols are absent. Do not execute during V1. |
+| 20 | NOT STARTED; PLAN DEFERRED | Owns the future isolated PostgreSQL 16.14 completion/crash/contention proof and runner. |
+| 21 | NOT STARTED; PLAN DEFERRED | Owns future final isolation, documentation, full regression, and independent review. |
 
 Explicit status labels govern continuation. Checkboxes under completed tasks are
 retained as the original acceptance specification and historical execution
@@ -1137,17 +1147,18 @@ internal static Task<TransferV3ImportState> ReadForShareInPostgreSqlTransactionA
 
 ### Task 8: Exact advisory/table locks and atomic fresh-target admission
 
-**Status:** IN PROGRESS
+**Status:** DEFERRED POST-V1
 
 **Objective:** Acquire the shared advisory fence and exact 29 schema-qualified
 `EXCLUSIVE MODE NOWAIT` locks, revalidate the target in one `READ COMMITTED`
 transaction, and fully charged transition `fresh -> importing(A)` without
 commit.
 
-**Dependency and ordering:** Tasks 0-7 are complete. Task 9 may not start until
-this task has a green exact gate, clean Release builds and formatting, two fresh
-read-only reviews, and the resulting evidence recorded in this plan and
-`HANDOFF.md`. Local reports and snapshots are optional corroboration.
+**Dependency and ordering:** Tasks 0-7 are complete. The whole Phase 4 plan is
+deferred until after V1. Task 9 may not start until the catalog-memory finding
+below is repaired, every Task 8 gate is rerun, two fresh reviews explicitly
+analyze `PostgreSqlPhysicalCatalogContract`, and the resulting evidence is
+recorded here and in `HANDOFF.md`.
 
 **Preconditions:** The same live managed budget owns the digest; caller supplies
 the validated session and exact active read-committed transaction; Task 20 owns
@@ -1249,16 +1260,25 @@ internal static Task<int>
 - [x] Validate that the digest belongs to the same live managed budget before borrowing the connection or doing provider work.
 - [x] Reserve exact 35-byte and 123-byte `Copy` leases before either array allocation, acknowledge exact element storage, build canonical bytes through span seams, erase both arrays, null both references, and release leases in reverse order.
 - [x] Add the specialized borrowed-buffer PostgreSQL CAS seam; preserve Task 7's state-object API and require exactly one changed row without committing in the validator.
-- [ ] Repair `TransferV3PostgreSqlAdmissionValidator.ValidateFreshAndMarkImportingAsync` so the raw CAS invocation has the exact reviewed expression shape required by both structural tests. Current symptom: `CanonicalFreshToImportingCasIsFullyChargedAndOccursOnlyAfterEveryPreflight` and `EveryOperationalFailureIsSanitizedAtThePostgreSqlCommandBoundary` fail because the receiver/member access is split by trivia.
-- [ ] Swap expected/actual arguments in the two canonical-length assertions at `backend.Tests/Database/Transfer/Phase4/TransferV3PostgreSqlAdmissionTests.cs:131` and `:132`; current clean test build fails with `xUnit2000` twice.
-- [ ] Rerun the exact two-fixture pure filter. Expected: 26 passed, 0 failed, 0 skipped. Leave real integration tests for Task 20.
-- [ ] Run the affected-contract filter for digest, codec, raw store, server, session, and environment. Current result: 390 passed and 12 deliberate no-connection skips; retain that result after repair.
-- [ ] Run both Release builds with `-warnaserror`, the pure Transfer-v3 regression, scoped `dotnet format --verify-no-changes`, and `git diff --check`. Expected: all green; pure regression 1,372 passed, 0 failed, 0 skipped.
-- [ ] Obtain two fresh independent read-only reviews, record their findings and
-  final gate results in this task and `HANDOFF.md`, then update this status.
-  Verify no sensitive value is sent before descriptor/session preflight
-  completes. Local `.superpowers/sdd/**` artifacts may be updated when present,
-  but are supplemental and never a completion dependency.
+- [x] Repair `TransferV3PostgreSqlAdmissionValidator.ValidateFreshAndMarkImportingAsync` so the raw CAS invocation has the exact reviewed expression shape required by both structural tests.
+- [x] Swap expected/actual arguments in the two canonical-length assertions in `TransferV3PostgreSqlAdmissionTests` and retain a clean analyzer gate.
+- [x] Rerun the exact two-fixture pure filter: 26 passed, 0 failed, 0 skipped. Real integration remains post-V1.
+- [x] Run the affected-contract filter: 390 passed and 12 deliberate no-connection skips.
+- [x] Run both Release builds with `-warnaserror`, the pure Transfer-v3 regression, scoped `dotnet format --verify-no-changes`, and `git diff --check`: all green; pure regression 1,372 passed.
+- [ ] Bound and charge physical catalog capture before any unbounded allocation.
+  Current implementation creates one growing `List<string>` at
+  `PostgreSqlPhysicalCatalogContract.cs:183`, includes complete `pg_proc.prosrc`
+  at `:458-475`, adds each provider-returned string without cardinality or row
+  length limits at `:636-658`, and sorts/joins the complete inventory at `:627`.
+  Admission invokes this before its explicit canonical-state leases. Add exact
+  maximum cardinality and UTF-8 row/inventory bounds, reserve/charge before
+  materialization, and fail sanitized before exceeding the Phase 4 managed
+  budget.
+- [ ] Add executable oversized-row, excessive-cardinality, function-body, sort,
+  and failure-redaction tests for the bounded catalog path.
+- [ ] Obtain two fresh independent reviews that explicitly analyze the complete
+  catalog path, budget ownership, and every allocation before sealing. Earlier
+  green reviews that omitted this path do not satisfy the gate.
 
 **Exact remaining verification commands, in order:**
 
@@ -1286,18 +1306,20 @@ Expected: both builds, the formatter, and whitespace gate exit 0; pure
 Transfer-v3 reports 1,372 passed, 0 failed, 0 skipped. None of these commands
 may use a live PostgreSQL resource.
 
-**Current evidence, 2026-07-16:** Backend Release build passed with zero
-warnings/errors. Affected contracts passed 390 with 12 deliberate no-connection
-skips. Exact Task 8 failed 2 of 26. Pure Transfer-v3 failed the same 2 of
-1,372. Full no-PostgreSQL backend failed only those same 2 of 2,831, with
-2,745 passed and 84 deliberate skips. Clean test build failed the two
-`xUnit2000` diagnostics. Scoped formatter verification exited 2 on the same
-diagnostics. No live database or container was used.
+**Current evidence, 2026-07-17:** Backend and clean test Release builds pass with
+zero warnings/errors. Affected contracts passed 390 with 12 deliberate
+no-connection skips. Exact Task 8 passed 26/26. Pure Transfer-v3 passed
+1,372/1,372. Scoped formatter verification and `git diff --check` pass. No live
+PostgreSQL resource was used. Independent reviews conflict: multiple scoped
+reviews found no P0/P1, while one security/concurrency review found the
+pre-budget catalog materialization above. Later seal recommendations did not
+address that path and therefore do not rebut it.
 
-**Expected result and acceptance:** The exact remaining commands above all exit
-0; 26/26 focused and 1,372/1,372 pure Transfer-v3 tests pass; both reviews have
-no P0/P1; their findings and final results are recorded in this task and
-`HANDOFF.md` before status becomes `COMPLETE`.
+**Expected result and acceptance:** Post-V1 catalog-bound RED tests first prove
+the current failure, then all catalog and existing Task 8 commands exit 0;
+26/26 focused and 1,372/1,372 pure Transfer-v3 remain green; two fresh reviews
+explicitly analyze the full catalog path and return no P0/P1; findings and final
+results are recorded here and in `HANDOFF.md` before status becomes `COMPLETE`.
 
 **Documentation impact:** This private API is not shipped or user-facing.
 Update the design, this plan, and canonical handoff. Local task brief/progress
@@ -1305,8 +1327,9 @@ files may be updated when present but are supplemental. Do not advertise
 PostgreSQL availability in README or setup documentation.
 
 **Recovery and risk:** Preserve every pre-existing untracked and modified file.
-The repair is source/test-only and must not alter SQL, ordering, allocation,
-ownership, lifecycle, or public runtime registration. If a verification command
+Do not edit this task during V1. The later repair must retain transaction,
+timeout, lock, cancellation, redaction, and nonregistration contracts while
+making every catalog allocation bounded and charged. If a verification command
 surprises, stop and update the handoff before changing code.
 
 ### Task 9: One-deadline MVCC-safe commit reconciliation fence

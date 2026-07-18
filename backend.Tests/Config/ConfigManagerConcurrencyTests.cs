@@ -1,5 +1,9 @@
+using System.Reflection;
+using backend.Tests.Services;
+using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Database.Transfer;
 using NzbWebDAV.Models;
 
 namespace NzbWebDAV.Tests.Config;
@@ -952,13 +956,64 @@ public class ConfigManagerConcurrencyTests
         Assert.Null(configManager.GetRclonePass());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UpdateValues_RejectsEntireReservedBatchBeforeCacheOrEventMutation(bool mixedBatch)
+    {
+        var configManager = CreateConfigManager(("rclone.host", "http://rclone:5572"));
+        var eventCount = 0;
+        configManager.OnConfigChanged += (_, _) => eventCount++;
+        var values = new List<ConfigItem>
+        {
+            new()
+            {
+                ConfigName = TransferV3ReservedConfigPolicy.ImportStateKey,
+                ConfigValue = "attacker-controlled"
+            }
+        };
+        if (mixedBatch)
+        {
+            values.Add(new ConfigItem
+            {
+                ConfigName = "rclone.host",
+                ConfigValue = "http://rclone:5573"
+            });
+        }
+
+        var error = Assert.Throws<InvalidOperationException>(() => configManager.UpdateValues(values));
+
+        Assert.Equal(TransferV3ReservedConfigPolicy.ReservedConfigMessage, error.Message);
+        Assert.Equal("http://rclone:5572", configManager.GetRcloneHost());
+        Assert.Equal(0, eventCount);
+        Assert.DoesNotContain(
+            TransferV3ReservedConfigPolicy.ImportStateKey,
+            ReadCachedConfig(configManager).Keys);
+    }
+
     private static ConfigManager CreateConfigManager(params (string Name, string Value)[] values)
     {
-        var configManager = new ConfigManager();
+        var configManager = new ConfigManager(NeutralRuntimePressureSource.Instance);
         configManager.UpdateValues(values
             .Select(x => new ConfigItem { ConfigName = x.Name, ConfigValue = x.Value })
             .ToList());
         return configManager;
+    }
+
+    private static IReadOnlyDictionary<string, string> ReadCachedConfig(ConfigManager configManager)
+    {
+        var field = typeof(ConfigManager).GetField("_config", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        return Assert.IsType<Dictionary<string, string>>(field.GetValue(configManager));
+    }
+
+    private sealed class NeutralRuntimePressureSource : IRuntimePressureSource
+    {
+        public static NeutralRuntimePressureSource Instance { get; } = new();
+
+        public double GetMemoryPressureMultiplier() => 1.0;
+
+        public double GetThreadPoolPressureMultiplier() => 1.0;
     }
 
     private static string CreateProviderConfig(params int[] maxConnections)
@@ -1035,4 +1090,50 @@ public class ConfigManagerConcurrencyTests
         field.SetValue(configManager, value);
     }
 
+}
+
+[Collection(nameof(ContentIndexDatabaseCollection))]
+public sealed class ConfigManagerReservedLoadTests
+{
+    private readonly ContentIndexDatabaseFixture _fixture;
+
+    public ConfigManagerReservedLoadTests(ContentIndexDatabaseFixture fixture)
+    {
+        _fixture = fixture;
+    }
+
+    [Fact]
+    public async Task LoadConfig_NeverCachesReservedImportState()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"DELETE FROM ConfigItems WHERE ConfigName = {TransferV3ReservedConfigPolicy.ImportStateKey}");
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"INSERT INTO ConfigItems (ConfigName, ConfigValue) VALUES ({TransferV3ReservedConfigPolicy.ImportStateKey}, {TransferV3ImportStateCodec.FreshCanonicalJson})");
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+             INSERT INTO ConfigItems (ConfigName, ConfigValue) VALUES ({LoadProbeKey}, {"loaded"})
+             ON CONFLICT(ConfigName) DO UPDATE SET ConfigValue = excluded.ConfigValue
+             """);
+
+        try
+        {
+            var configManager = new ConfigManager();
+
+            await configManager.LoadConfig();
+
+            var field = typeof(ConfigManager).GetField("_config", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(field);
+            var cached = Assert.IsType<Dictionary<string, string>>(field.GetValue(configManager));
+            Assert.DoesNotContain(TransferV3ReservedConfigPolicy.ImportStateKey, cached.Keys);
+            Assert.Equal("loaded", cached[LoadProbeKey]);
+        }
+        finally
+        {
+            await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                $"DELETE FROM ConfigItems WHERE ConfigName IN ({TransferV3ReservedConfigPolicy.ImportStateKey}, {LoadProbeKey})");
+        }
+    }
+
+    private const string LoadProbeKey = "transfer-v3-load-probe";
 }

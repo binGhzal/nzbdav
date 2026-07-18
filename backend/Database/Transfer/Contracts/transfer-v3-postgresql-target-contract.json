@@ -1,0 +1,2477 @@
+{
+  "formatVersion": 3,
+  "tables": [
+    {
+      "ordinal": 0,
+      "name": "Accounts",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Type",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 1,
+          "name": "Username",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(255)",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 2,
+          "name": "PasswordHash",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 3,
+          "name": "RandomSalt",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "Type",
+        "Username"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 1,
+      "name": "ConfigItems",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "ConfigName",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 1,
+          "name": "ConfigValue",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "ConfigName"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": true
+    },
+    {
+      "ordinal": 2,
+      "name": "HistoryItems",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "CreatedAt",
+          "sourceKind": "localWallTimestamp",
+          "postgreSqlType": "timestamp without time zone",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "timestamp"
+        },
+        {
+          "ordinal": 2,
+          "name": "FileName",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 3,
+          "name": "JobName",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 4,
+          "name": "Category",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 5,
+          "name": "DownloadStatus",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 6,
+          "name": "TotalSegmentBytes",
+          "sourceKind": "int64",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 7,
+          "name": "DownloadTimeSeconds",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 8,
+          "name": "FailMessage",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 9,
+          "name": "DownloadDirId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 10,
+          "name": "NzbBlobId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "uuid"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 3,
+      "name": "QueueItems",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "Category",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 2,
+          "name": "CreatedAt",
+          "sourceKind": "localWallTimestamp",
+          "postgreSqlType": "timestamp without time zone",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "timestamp"
+        },
+        {
+          "ordinal": 3,
+          "name": "FileName",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 4,
+          "name": "JobName",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 5,
+          "name": "NzbFileSize",
+          "sourceKind": "int64",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 6,
+          "name": "PauseUntil",
+          "sourceKind": "localWallTimestamp",
+          "postgreSqlType": "timestamp without time zone",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "timestamp"
+        },
+        {
+          "ordinal": 7,
+          "name": "PostProcessing",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 8,
+          "name": "Priority",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 9,
+          "name": "TotalSegmentBytes",
+          "sourceKind": "int64",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 10,
+          "name": "ArchivePassword",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 4,
+      "name": "RepairRuns",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "Status",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 2,
+          "name": "Stage",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(64)",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 3,
+          "name": "StartedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 4,
+          "name": "UpdatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 5,
+          "name": "CompletedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 6,
+          "name": "CancelledAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 7,
+          "name": "NextDueAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 8,
+          "name": "Total",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 9,
+          "name": "Checked",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 10,
+          "name": "Missing",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 11,
+          "name": "ProviderErrors",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 12,
+          "name": "Unknown",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 13,
+          "name": "Repaired",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 14,
+          "name": "Deleted",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 15,
+          "name": "ActionNeeded",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 16,
+          "name": "BrokenFiles",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 17,
+          "name": "Message",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(1024)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 5,
+      "name": "DavItems",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "CreatedAt",
+          "sourceKind": "localWallTimestamp",
+          "postgreSqlType": "timestamp without time zone",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "timestamp"
+        },
+        {
+          "ordinal": 2,
+          "name": "FileBlobId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 3,
+          "name": "FileSize",
+          "sourceKind": "int64",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 4,
+          "name": "HistoryItemId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 5,
+          "name": "IdPrefix",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 6,
+          "name": "LastHealthCheck",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 7,
+          "name": "Name",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(255)",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 8,
+          "name": "NextHealthCheck",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 9,
+          "name": "ParentId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 10,
+          "name": "Path",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 11,
+          "name": "ReleaseDate",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 12,
+          "name": "SubType",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 13,
+          "name": "Type",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 14,
+          "name": "NzbBlobId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "uuid"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": true,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 6,
+      "name": "ArrImportCommands",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "HistoryItemId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 2,
+          "name": "Category",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(255)",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 3,
+          "name": "RequiredInvalidationPathsJson",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 4,
+          "name": "Status",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 5,
+          "name": "Attempts",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 6,
+          "name": "CreatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 7,
+          "name": "UpdatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 8,
+          "name": "NextAttemptAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 9,
+          "name": "LastAttemptAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 10,
+          "name": "LeaseExpiresAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 11,
+          "name": "LeaseToken",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 12,
+          "name": "VisibleAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 13,
+          "name": "CompletedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 14,
+          "name": "ResultsJson",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 15,
+          "name": "LastError",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(2048)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 7,
+      "name": "QueueNzbContents",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "NzbContents",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 8,
+      "name": "QueuePriorityHints",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "QueueItemId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "Score",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 2,
+          "name": "EffectivePriority",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 3,
+          "name": "ApplyToScheduling",
+          "sourceKind": "boolean",
+          "postgreSqlType": "boolean",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "boolean"
+        },
+        {
+          "ordinal": 4,
+          "name": "ReasonsJson",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 5,
+          "name": "Source",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(64)",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 6,
+          "name": "ComputedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 7,
+          "name": "ExpiresAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 8,
+          "name": "StaleReason",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(1024)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "QueueItemId"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 9,
+      "name": "RepairEntryHealth",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "RepairRunId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 2,
+          "name": "DavItemId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 3,
+          "name": "Path",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 4,
+          "name": "State",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 5,
+          "name": "Message",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(1024)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 6,
+          "name": "CreatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 7,
+          "name": "UpdatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 10,
+      "name": "RepairBrokenFiles",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "RepairRunId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 2,
+          "name": "DavItemId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 3,
+          "name": "Path",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 4,
+          "name": "Reason",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(1024)",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 5,
+          "name": "CreatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 6,
+          "name": "Cleared",
+          "sourceKind": "boolean",
+          "postgreSqlType": "boolean",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "boolean"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 11,
+      "name": "DavNzbFiles",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "SegmentIds",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 12,
+      "name": "DavRarFiles",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "RarParts",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 13,
+      "name": "DavMultipartFiles",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "Metadata",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 14,
+      "name": "HealthCheckResults",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "CreatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 2,
+          "name": "DavItemId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 3,
+          "name": "Path",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 4,
+          "name": "Result",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 5,
+          "name": "RepairStatus",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 6,
+          "name": "Message",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 15,
+      "name": "ArrDownloadCorrelations",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "QueueItemId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 2,
+          "name": "HistoryItemId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 3,
+          "name": "ArrApp",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(32)",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 4,
+          "name": "InstanceKey",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(512)",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 5,
+          "name": "InstanceHost",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(1024)",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 6,
+          "name": "DownloadId",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(255)",
+          "collation": "C",
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 7,
+          "name": "QueueRecordId",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 8,
+          "name": "MediaKey",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(255)",
+          "collation": "C",
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 9,
+          "name": "MovieId",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 10,
+          "name": "SeriesId",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 11,
+          "name": "EpisodeId",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 12,
+          "name": "SeasonNumber",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 13,
+          "name": "ArtistId",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 14,
+          "name": "AlbumId",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 15,
+          "name": "EpisodeIdsJson",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 16,
+          "name": "ReleaseTitle",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(1024)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 17,
+          "name": "Category",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(255)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 18,
+          "name": "Indexer",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(255)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 19,
+          "name": "DownloadClient",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(255)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 20,
+          "name": "Quality",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(255)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 21,
+          "name": "CustomFormatsJson",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 22,
+          "name": "Status",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(64)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 23,
+          "name": "TrackedDownloadStatus",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(64)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 24,
+          "name": "TrackedDownloadState",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(64)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 25,
+          "name": "IsUpgrade",
+          "sourceKind": "boolean",
+          "postgreSqlType": "boolean",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "boolean"
+        },
+        {
+          "ordinal": 26,
+          "name": "IsDuplicate",
+          "sourceKind": "boolean",
+          "postgreSqlType": "boolean",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "boolean"
+        },
+        {
+          "ordinal": 27,
+          "name": "CreatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 28,
+          "name": "UpdatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 29,
+          "name": "LastSeenAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 30,
+          "name": "Source",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(32)",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 31,
+          "name": "ManualLock",
+          "sourceKind": "boolean",
+          "postgreSqlType": "boolean",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "boolean"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 16,
+      "name": "ArrDownloadLifecycleEvents",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "QueueItemId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 2,
+          "name": "HistoryItemId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 3,
+          "name": "ArrApp",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(32)",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 4,
+          "name": "InstanceKey",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(512)",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 5,
+          "name": "DownloadId",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(255)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 6,
+          "name": "MediaKey",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(255)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 7,
+          "name": "State",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(64)",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 8,
+          "name": "StateReason",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(1024)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 9,
+          "name": "CreatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 17,
+      "name": "ArrSearchNudgeCommands",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "ArrApp",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(32)",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 2,
+          "name": "InstanceKey",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(512)",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 3,
+          "name": "InstanceHost",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(1024)",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 4,
+          "name": "CommandName",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(128)",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 5,
+          "name": "CommandId",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 6,
+          "name": "TargetsJson",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 7,
+          "name": "Mode",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(32)",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 8,
+          "name": "Status",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(32)",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 9,
+          "name": "CooldownKey",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(512)",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 10,
+          "name": "Score",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 11,
+          "name": "ReasonsJson",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 12,
+          "name": "Error",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(1024)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 13,
+          "name": "CreatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 14,
+          "name": "CompletedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 15,
+          "name": "NextAllowedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 18,
+      "name": "ImportReceipts",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "DavItemId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 2,
+          "name": "HistoryItemId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 3,
+          "name": "State",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 4,
+          "name": "CreatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 5,
+          "name": "UpdatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 6,
+          "name": "ImportedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 7,
+          "name": "RemovedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 8,
+          "name": "Detail",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(1024)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 19,
+      "name": "WorkerJobs",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "Kind",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 2,
+          "name": "Status",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 3,
+          "name": "TargetId",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 4,
+          "name": "Priority",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 5,
+          "name": "Attempts",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 6,
+          "name": "CreatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 7,
+          "name": "UpdatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 8,
+          "name": "AvailableAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 9,
+          "name": "LeaseExpiresAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 10,
+          "name": "CompletedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 11,
+          "name": "LeaseOwner",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(255)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 12,
+          "name": "LastError",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(1024)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 13,
+          "name": "PayloadJson",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 14,
+          "name": "CancelRequestedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 15,
+          "name": "FailureKind",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 16,
+          "name": "LastHeartbeatAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 17,
+          "name": "LeaseGeneration",
+          "sourceKind": "int64",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 18,
+          "name": "LeaseToken",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 19,
+          "name": "ProgressJson",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(16384)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 20,
+          "name": "ProgressUpdatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 21,
+          "name": "ResultJson",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(16384)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 22,
+          "name": "StartedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 20,
+      "name": "MaintenanceRuns",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "Kind",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 2,
+          "name": "Status",
+          "sourceKind": "enumInt32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 3,
+          "name": "ActiveSlot",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 4,
+          "name": "RequestedBy",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(32)",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 5,
+          "name": "CreatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 6,
+          "name": "StartedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 7,
+          "name": "UpdatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 8,
+          "name": "CompletedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 9,
+          "name": "CancellationRequestedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 10,
+          "name": "ProgressCurrent",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 11,
+          "name": "ProgressTotal",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 12,
+          "name": "Message",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(2048)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 13,
+          "name": "Error",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(4096)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 21,
+      "name": "BlobCleanupItems",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 22,
+      "name": "HistoryCleanupItems",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "DeleteMountedFiles",
+          "sourceKind": "boolean",
+          "postgreSqlType": "boolean",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "boolean"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 23,
+      "name": "DavCleanupItems",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 24,
+      "name": "NzbNames",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "FileName",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "text"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 25,
+      "name": "NzbBlobCleanupItems",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    },
+    {
+      "ordinal": 26,
+      "name": "RcloneInvalidationItems",
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "Id",
+          "sourceKind": "uuid",
+          "postgreSqlType": "uuid",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "uuid"
+        },
+        {
+          "ordinal": 1,
+          "name": "Path",
+          "sourceKind": "text",
+          "postgreSqlType": "text",
+          "collation": "C",
+          "nullable": false,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 2,
+          "name": "CreatedAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 3,
+          "name": "NextAttemptAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 4,
+          "name": "LastAttemptAt",
+          "sourceKind": "instant",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "bigint"
+        },
+        {
+          "ordinal": 5,
+          "name": "Attempts",
+          "sourceKind": "int32",
+          "postgreSqlType": "integer",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "integer"
+        },
+        {
+          "ordinal": 6,
+          "name": "LastError",
+          "sourceKind": "text",
+          "postgreSqlType": "character varying(1024)",
+          "collation": null,
+          "nullable": true,
+          "binaryCopyType": "text"
+        },
+        {
+          "ordinal": 7,
+          "name": "Revision",
+          "sourceKind": "int64",
+          "postgreSqlType": "bigint",
+          "collation": null,
+          "nullable": false,
+          "binaryCopyType": "bigint"
+        }
+      ],
+      "keyColumns": [
+        "Id"
+      ],
+      "preserveBootstrapRoots": false,
+      "filtersReservedImportState": false
+    }
+  ],
+  "derivedHealthCheckStats": {
+    "ordinal": 27,
+    "name": "HealthCheckStats",
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "DateStartInclusive",
+        "sourceKind": "instant",
+        "postgreSqlType": "bigint",
+        "collation": null,
+        "nullable": false,
+        "binaryCopyType": "bigint"
+      },
+      {
+        "ordinal": 1,
+        "name": "DateEndExclusive",
+        "sourceKind": "instant",
+        "postgreSqlType": "bigint",
+        "collation": null,
+        "nullable": false,
+        "binaryCopyType": "bigint"
+      },
+      {
+        "ordinal": 2,
+        "name": "Result",
+        "sourceKind": "enumInt32",
+        "postgreSqlType": "integer",
+        "collation": null,
+        "nullable": false,
+        "binaryCopyType": "integer"
+      },
+      {
+        "ordinal": 3,
+        "name": "RepairStatus",
+        "sourceKind": "enumInt32",
+        "postgreSqlType": "integer",
+        "collation": null,
+        "nullable": false,
+        "binaryCopyType": "integer"
+      },
+      {
+        "ordinal": 4,
+        "name": "Count",
+        "sourceKind": "int32",
+        "postgreSqlType": "integer",
+        "collation": null,
+        "nullable": false,
+        "binaryCopyType": "integer"
+      }
+    ],
+    "keyColumns": [
+      "DateStartInclusive",
+      "DateEndExclusive",
+      "Result",
+      "RepairStatus"
+    ],
+    "preserveBootstrapRoots": false,
+    "filtersReservedImportState": false
+  }
+}

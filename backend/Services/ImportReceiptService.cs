@@ -138,7 +138,8 @@ public sealed class ImportReceiptService(DavDatabaseContext dbContext)
         CancellationToken ct)
     {
         var activeStates = Enum.GetValues<ImportReceiptState>()
-            .Where(x => x != ImportReceiptState.Removed)
+            .Where(x => x is not ImportReceiptState.Removed
+                and not ImportReceiptState.VerificationQuarantined)
             .ToArray();
         return await TransitionHistoryAsync(
                 historyItemId,
@@ -168,7 +169,9 @@ public sealed class ImportReceiptService(DavDatabaseContext dbContext)
         ValidateTrackedReceipts(trackedReceipts);
 
         var changed = await dbContext.ImportReceipts
-            .Where(x => ids.Contains(x.HistoryItemId) && x.State != ImportReceiptState.Removed)
+            .Where(x => ids.Contains(x.HistoryItemId)
+                        && x.State != ImportReceiptState.Removed
+                        && x.State != ImportReceiptState.VerificationQuarantined)
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(x => x.State, ImportReceiptState.Removed)
                 .SetProperty(x => x.UpdatedAt, now)
@@ -187,6 +190,9 @@ public sealed class ImportReceiptService(DavDatabaseContext dbContext)
         {
             if (entry.State == EntityState.Added)
             {
+                if (entry.Entity.State is ImportReceiptState.Removed
+                    or ImportReceiptState.VerificationQuarantined)
+                    continue;
                 entry.Entity.State = ImportReceiptState.Removed;
                 entry.Entity.UpdatedAt = now;
                 entry.Entity.RemovedAt = now;
@@ -221,6 +227,36 @@ public sealed class ImportReceiptService(DavDatabaseContext dbContext)
             now,
             detail,
             ct);
+    }
+
+    public async Task<IReadOnlyList<ImportReceiptResult>> MarkVerificationQuarantineAsync(
+        Guid historyItemId,
+        DateTimeOffset now,
+        string detail,
+        CancellationToken ct)
+    {
+        DetachTrackedReceipts(historyItemId);
+        await dbContext.ImportReceipts
+            .Where(x => x.HistoryItemId == historyItemId && x.State != ImportReceiptState.Removed)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.State, ImportReceiptState.VerificationQuarantined)
+                .SetProperty(x => x.UpdatedAt, now)
+                .SetProperty(x => x.Detail, detail), ct)
+            .ConfigureAwait(false);
+
+        var durableReceipts = await dbContext.ImportReceipts
+            .AsNoTracking()
+            .Where(x => x.HistoryItemId == historyItemId)
+            .OrderBy(x => x.Id)
+            .Select(x => new { x.Id, x.State })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        return durableReceipts
+            .Select(x => new ImportReceiptResult(
+                x.Id,
+                x.State,
+                x.State == ImportReceiptState.VerificationQuarantined))
+            .ToList();
     }
 
     private Task<int> ClaimAvailableAsync(ImportClaimRequest request, CancellationToken ct)

@@ -2,12 +2,182 @@ using System.Text.Json.Serialization;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
+using NzbWebDAV.Clients.Rclone;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Mount;
 using NzbWebDAV.Services;
 using NzbWebDAV.Streams.Caching;
+using NzbWebDAV.Telemetry;
 
 namespace NzbWebDAV.Api.SabControllers;
+
+public sealed class DatabaseStatus
+{
+    [JsonPropertyName("provider")]
+    public required string Provider { get; init; }
+
+    [JsonPropertyName("database_bytes")]
+    public long DatabaseBytes { get; init; }
+
+    [JsonPropertyName("wal_bytes")]
+    public long WalBytes { get; init; }
+
+    [JsonPropertyName("shared_memory_bytes")]
+    public long SharedMemoryBytes { get; init; }
+
+    [JsonPropertyName("page_size_bytes")]
+    public long PageSizeBytes { get; init; }
+
+    [JsonPropertyName("page_count")]
+    public long PageCount { get; init; }
+
+    [JsonPropertyName("freelist_pages")]
+    public long FreelistPages { get; init; }
+
+    [JsonPropertyName("freelist_bytes")]
+    public long FreelistBytes { get; init; }
+
+    [JsonPropertyName("checkpoint_busy")]
+    public long CheckpointBusy { get; init; }
+
+    [JsonPropertyName("wal_frames")]
+    public long WalFrames { get; init; }
+
+    [JsonPropertyName("checkpointed_frames")]
+    public long CheckpointedFrames { get; init; }
+
+    [JsonPropertyName("checkpoint_backlog_bytes")]
+    public long CheckpointBacklogBytes { get; init; }
+
+    [JsonPropertyName("busy_retries")]
+    public long BusyRetries { get; init; }
+
+    [JsonPropertyName("lease_retries")]
+    public long LeaseRetries { get; init; }
+
+    [JsonPropertyName("query_samples")]
+    public long QuerySamples { get; init; }
+
+    [JsonPropertyName("query_p95_ms")]
+    public double QueryP95Milliseconds { get; init; }
+
+    [JsonPropertyName("query_p99_ms")]
+    public double QueryP99Milliseconds { get; init; }
+
+    [JsonPropertyName("transaction_samples")]
+    public long TransactionSamples { get; init; }
+
+    [JsonPropertyName("transaction_p95_ms")]
+    public double TransactionP95Milliseconds { get; init; }
+
+    [JsonPropertyName("transaction_p99_ms")]
+    public double TransactionP99Milliseconds { get; init; }
+
+    [JsonPropertyName("captured_at")]
+    public DateTimeOffset CapturedAt { get; init; }
+
+    public static DatabaseStatus FromSnapshots(
+        DatabaseStorageSnapshot storage,
+        DatabaseTelemetrySnapshot runtime)
+    {
+        return new DatabaseStatus
+        {
+            Provider = storage.Provider,
+            DatabaseBytes = storage.DatabaseBytes,
+            WalBytes = storage.WalBytes,
+            SharedMemoryBytes = storage.SharedMemoryBytes,
+            PageSizeBytes = storage.PageSizeBytes,
+            PageCount = storage.PageCount,
+            FreelistPages = storage.FreelistPages,
+            FreelistBytes = checked(storage.FreelistPages * storage.PageSizeBytes),
+            CheckpointBusy = storage.CheckpointBusy,
+            WalFrames = storage.WalFrames,
+            CheckpointedFrames = storage.CheckpointedFrames,
+            CheckpointBacklogBytes = storage.CheckpointBacklogBytes,
+            BusyRetries = runtime.BusyRetries,
+            LeaseRetries = runtime.LeaseRetries,
+            QuerySamples = runtime.Query.Count,
+            QueryP95Milliseconds = runtime.Query.P95Milliseconds,
+            QueryP99Milliseconds = runtime.Query.P99Milliseconds,
+            TransactionSamples = runtime.Transaction.Count,
+            TransactionP95Milliseconds = runtime.Transaction.P95Milliseconds,
+            TransactionP99Milliseconds = runtime.Transaction.P99Milliseconds,
+            CapturedAt = storage.CapturedAt
+        };
+    }
+}
+
+public sealed class CriticalPathStatus
+{
+    [JsonPropertyName("add_file_blob_write")]
+    public CriticalPathStageStatus AddFileBlobWrite { get; init; } = new();
+
+    [JsonPropertyName("add_file_nzb_scan")]
+    public CriticalPathStageStatus AddFileNzbScan { get; init; } = new();
+
+    [JsonPropertyName("add_file_atomic_commit")]
+    public CriticalPathStageStatus AddFileAtomicCommit { get; init; } = new();
+
+    [JsonPropertyName("queue_parse")]
+    public CriticalPathStageStatus QueueParse { get; init; } = new();
+
+    [JsonPropertyName("queue_first_segment_discovery")]
+    public CriticalPathStageStatus QueueFirstSegmentDiscovery { get; init; } = new();
+
+    [JsonPropertyName("queue_par2_discovery")]
+    public CriticalPathStageStatus QueuePar2Discovery { get; init; } = new();
+
+    [JsonPropertyName("queue_processors")]
+    public CriticalPathStageStatus QueueProcessors { get; init; } = new();
+
+    [JsonPropertyName("queue_completion")]
+    public CriticalPathStageStatus QueueCompletion { get; init; } = new();
+
+    public static CriticalPathStatus FromSnapshot(CriticalPathTelemetrySnapshot snapshot)
+    {
+        return new CriticalPathStatus
+        {
+            AddFileBlobWrite = CriticalPathStageStatus.FromSnapshot(snapshot.AddFileBlobWrite),
+            AddFileNzbScan = CriticalPathStageStatus.FromSnapshot(snapshot.AddFileNzbScan),
+            AddFileAtomicCommit = CriticalPathStageStatus.FromSnapshot(snapshot.AddFileAtomicCommit),
+            QueueParse = CriticalPathStageStatus.FromSnapshot(snapshot.QueueParse),
+            QueueFirstSegmentDiscovery = CriticalPathStageStatus.FromSnapshot(snapshot.QueueFirstSegmentDiscovery),
+            QueuePar2Discovery = CriticalPathStageStatus.FromSnapshot(snapshot.QueuePar2Discovery),
+            QueueProcessors = CriticalPathStageStatus.FromSnapshot(snapshot.QueueProcessors),
+            QueueCompletion = CriticalPathStageStatus.FromSnapshot(snapshot.QueueCompletion)
+        };
+    }
+}
+
+public sealed class CriticalPathStageStatus
+{
+    [JsonPropertyName("count")]
+    public long Count { get; init; }
+
+    [JsonPropertyName("failures")]
+    public long Failures { get; init; }
+
+    [JsonPropertyName("latency_samples")]
+    public int LatencySamples { get; init; }
+
+    [JsonPropertyName("p95_ms")]
+    public double P95Milliseconds { get; init; }
+
+    [JsonPropertyName("p99_ms")]
+    public double P99Milliseconds { get; init; }
+
+    public static CriticalPathStageStatus FromSnapshot(CriticalPathStageSnapshot snapshot)
+    {
+        return new CriticalPathStageStatus
+        {
+            Count = snapshot.Count,
+            Failures = snapshot.Failures,
+            LatencySamples = snapshot.LatencySamples,
+            P95Milliseconds = snapshot.P95Milliseconds,
+            P99Milliseconds = snapshot.P99Milliseconds
+        };
+    }
+}
 
 public sealed class RcloneInvalidationStatus
 {
@@ -26,7 +196,34 @@ public sealed class RcloneInvalidationStatus
     [JsonPropertyName("last_error")]
     public string? LastError { get; init; }
 
-    public static RcloneInvalidationStatus FromStats(DavDatabaseClient.RcloneInvalidationStats stats)
+    [JsonPropertyName("oldest_pending_age_seconds")]
+    public double? OldestPendingAgeSeconds { get; init; }
+
+    [JsonPropertyName("visibility_fence_required")]
+    public bool VisibilityFenceRequired { get; init; }
+
+    [JsonPropertyName("whole_cache_visibility_fence_pending")]
+    public bool WholeCacheVisibilityFencePending { get; init; }
+
+    [JsonPropertyName("remote_control_enabled")]
+    public bool RemoteControlEnabled { get; init; }
+
+    [JsonPropertyName("host_configured")]
+    public bool HostConfigured { get; init; }
+
+    [JsonPropertyName("last_attempt_at")]
+    public DateTimeOffset? LastAttemptAt { get; init; }
+
+    [JsonPropertyName("last_successful_configured_call_at")]
+    public DateTimeOffset? LastSuccessfulConfiguredCallAt { get; init; }
+
+    [JsonPropertyName("runtime_last_error")]
+    public string? RuntimeLastError { get; init; }
+
+    public static RcloneInvalidationStatus FromSnapshots(
+        DavDatabaseClient.RcloneInvalidationStats stats,
+        RcloneRuntimeSnapshot runtime,
+        DateTimeOffset now)
     {
         return new RcloneInvalidationStatus
         {
@@ -34,7 +231,20 @@ public sealed class RcloneInvalidationStatus
             Ready = stats.Ready,
             Failed = stats.Failed,
             MaxAttempts = stats.MaxAttempts,
-            LastError = stats.LastError
+            LastError = RcloneInvalidationService.GetStatusSafeError(stats.LastError),
+            OldestPendingAgeSeconds = stats.OldestPendingAt is null
+                ? null
+                : Math.Max(0, (now - stats.OldestPendingAt.Value).TotalSeconds),
+            VisibilityFenceRequired = runtime.VisibilityFenceRequired,
+            WholeCacheVisibilityFencePending =
+                runtime.VisibilityFenceRequired
+                && (stats.WholeCacheVisibilityFencePending
+                    || runtime.WholeCacheVisibilityFencePending),
+            RemoteControlEnabled = runtime.RemoteControlEnabled,
+            HostConfigured = runtime.HostConfigured,
+            LastAttemptAt = runtime.LastAttemptAt,
+            LastSuccessfulConfiguredCallAt = runtime.LastSuccessfulConfiguredCallAt,
+            RuntimeLastError = runtime.LastError
         };
     }
 }
@@ -366,7 +576,7 @@ public sealed class WorkerQueueStatus
     )
     {
         var effectiveDownloadActive = downloadActive;
-        var effectiveDownloadReady = Math.Max(downloadWaiting, durableJobs.Download.Ready);
+        var effectiveDownloadReady = durableJobs.Download.Ready;
         var effectiveVerifyActive = healthWorkers.VerifyActive + inlineVerifyActive;
         var effectiveVerifyReady = Math.Max(healthQueue.VerifyReady + inlineVerifyWaiting, durableJobs.Verify.Ready);
         var effectiveRepairActive = healthWorkers.RepairActive;
@@ -594,6 +804,60 @@ public sealed class ArrDownloadReportStatus
             LifecycleStates = stats.LifecycleStates
                 .Select(x => new ArrLifecycleStateStatus { State = x.State, Count = x.Count })
                 .ToList()
+        };
+    }
+}
+
+public sealed class ArrImportCommandDiagnosticStatus
+{
+    [JsonPropertyName("pending")]
+    public int Pending { get; init; }
+
+    [JsonPropertyName("waiting_for_invalidation")]
+    public int WaitingForInvalidation { get; init; }
+
+    [JsonPropertyName("executing")]
+    public int Executing { get; init; }
+
+    [JsonPropertyName("retry")]
+    public int Retry { get; init; }
+
+    [JsonPropertyName("dispatched")]
+    public int Dispatched { get; init; }
+
+    [JsonPropertyName("no_route")]
+    public int NoRoute { get; init; }
+
+    [JsonPropertyName("quarantined")]
+    public int Quarantined { get; init; }
+
+    [JsonPropertyName("oldest_active_age_seconds")]
+    public long? OldestActiveAgeSeconds { get; init; }
+
+    [JsonPropertyName("last_error")]
+    public string? LastError { get; init; }
+
+    [JsonPropertyName("last_quarantine_reason")]
+    public string? LastQuarantineReason { get; init; }
+
+    public static ArrImportCommandDiagnosticStatus FromStats(
+        DavDatabaseClient.ArrImportCommandStats stats,
+        DateTimeOffset now)
+    {
+        return new ArrImportCommandDiagnosticStatus
+        {
+            Pending = stats.Pending,
+            WaitingForInvalidation = stats.WaitingForInvalidation,
+            Executing = stats.Executing,
+            Retry = stats.Retry,
+            Dispatched = stats.Dispatched,
+            NoRoute = stats.NoRoute,
+            Quarantined = stats.Quarantined,
+            OldestActiveAgeSeconds = stats.OldestActiveAt.HasValue
+                ? Math.Max(0, (long)(now - stats.OldestActiveAt.Value).TotalSeconds)
+                : null,
+            LastError = stats.LastError,
+            LastQuarantineReason = stats.LastQuarantineReason,
         };
     }
 }

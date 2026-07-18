@@ -11,6 +11,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Coordination;
 using NzbWebDAV.Database;
+using NzbWebDAV.Database.Transfer;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Hosting;
 using NzbWebDAV.Middlewares;
@@ -33,13 +34,32 @@ class Program
 
     static async Task Main(string[] args)
     {
+        var maintenanceCommand = MaintenanceCommandLine.Parse(args);
+        if (maintenanceCommand.Kind is MaintenanceCommandKind.ExportV3Unavailable
+            or MaintenanceCommandKind.ImportV3Unavailable)
+            throw new InvalidOperationException(MaintenanceCommandLine.TransferV3UnavailableMessage);
+
+        ThrowIfPostgreSqlUnavailable();
         EnvironmentUtil.LoadDotEnvFile();
+        ThrowIfPostgreSqlUnavailable();
 
         var role = NzbdavRoleResolver.Resolve(EnvironmentUtil.GetVariable("NZBDAV_ROLE"));
         if (role != NzbdavRole.All)
         {
             throw new InvalidOperationException(
                 $"NZBDAV_ROLE '{role}' is defined but not executable until its service implementation is installed.");
+        }
+
+        SqliteRuntimeInfo? sqliteRuntime = null;
+        if (DavDatabaseContext.IsSqlite)
+        {
+            sqliteRuntime = await SqliteRuntimeGate
+                .ReadLoadedRuntimeAsync(CancellationToken.None)
+                .ConfigureAwait(false);
+            SqliteRuntimeGate.Validate(sqliteRuntime);
+            await TransferV3StartupGuard
+                .EnsureAllowedAsync(DavDatabaseContext.DatabaseFilePath, CancellationToken.None)
+                .ConfigureAwait(false);
         }
 
         ConfigureThreadPool();
@@ -59,37 +79,49 @@ class Program
             .WriteTo.Console(theme: AnsiConsoleTheme.Code)
             .CreateLogger();
 
+        if (sqliteRuntime is not null)
+        {
+            Log.Information(
+                "Validated SQLite runtime {SqliteVersion} ({SqliteSourceId}).",
+                sqliteRuntime.Version,
+                sqliteRuntime.SourceId);
+        }
+
         // Block upgrades to version 0.6.x
         BlockUpgradesToV06X();
 
         // initialize database
-        await using var databaseContext = new DavDatabaseContext();
+        await using var databaseContext = DavDatabaseContextRuntimeFactory.Create();
 
-        // run database migration, if necessary.
-        if (args.Contains("--db-migration"))
+        // Run an exact, prevalidated maintenance command when requested.
+        if (maintenanceCommand.Kind == MaintenanceCommandKind.DatabaseMigration)
         {
-            var argIndex = args.ToList().IndexOf("--db-migration");
-            var targetMigration = args.Length > argIndex + 1 ? args[argIndex + 1] : null;
-            await databaseContext.Database
-                .MigrateAsync(targetMigration, SigtermUtil.GetCancellationToken())
+            await DatabaseMigrator
+                .MigrateAsync(databaseContext, maintenanceCommand.Argument, SigtermUtil.GetCancellationToken())
                 .ConfigureAwait(false);
             await PerformDatabaseVacuumIfEnabled();
             return;
         }
 
-        if (TryGetArgumentValue(args, "--db-export-json", out var exportPath))
+        if (maintenanceCommand.Kind == MaintenanceCommandKind.ExportJson)
         {
             await DatabaseTransferService
-                .ExportJsonAsync(databaseContext, exportPath, SigtermUtil.GetCancellationToken())
+                .ExportJsonAsync(
+                    databaseContext,
+                    maintenanceCommand.Argument!,
+                    SigtermUtil.GetCancellationToken())
                 .ConfigureAwait(false);
             return;
         }
 
-        if (TryGetArgumentValue(args, "--db-import-json", out var importPath))
+        if (maintenanceCommand.Kind == MaintenanceCommandKind.ImportJson)
         {
-            var replace = args.Contains("--replace");
             var result = await DatabaseTransferService
-                .ImportJsonAsync(databaseContext, importPath, replace, SigtermUtil.GetCancellationToken())
+                .ImportJsonAsync(
+                    databaseContext,
+                    maintenanceCommand.Argument!,
+                    maintenanceCommand.Replace,
+                    SigtermUtil.GetCancellationToken())
                 .ConfigureAwait(false);
             Log.Information("Imported {ImportedRows} database rows.", result.ImportedRows);
             return;
@@ -127,15 +159,19 @@ class Program
             .AddSingleton<IWorkerLaneCapacityPolicy, ConfigWorkerLaneCapacityPolicy>()
             .AddSingleton<IWorkerJobCoordinator, DatabaseWorkerJobCoordinator>()
             .AddSingleton<ArrDownloadReportService>()
+            .AddSingleton<HistoryVisibilityNotifier>()
             .AddSingleton<ArrOperationsService>()
+            .AddSingleton<NzbBlobIngestCoordinator>()
             .AddSingleton<UsenetStreamingClient>()
             .AddSingleton<QueueManager>()
             .AddSingleton<HealthCheckService>()
+            .AddHostedService(sp => sp.GetRequiredService<QueueManager>())
             .AddHostedService<ContentIndexSnapshotWriterService>()
             .AddHostedService<ContentIndexRecoveryService>()
             .AddHostedService(sp => sp.GetRequiredService<HealthCheckService>())
             .AddHostedService<ArrMonitoringService>()
             .AddHostedService<ArrCorrelationService>()
+            .AddHostedService<ArrImportCommandService>()
             .AddHostedService<ArrPriorityService>()
             .AddHostedService<ArrSearchNudgeService>()
             .AddHostedService<BlobCleanupService>()
@@ -145,8 +181,9 @@ class Program
             .AddHostedService<RcloneInvalidationService>()
             .AddHostedService<DfsMountService>()
             .AddHostedService<UsenetFileToBlobstoreMigrationService>()
+            .AddMaintenanceLifecycle()
             .AddHostedService<RemoveOrphanedFilesSchedulerService>()
-            .AddScoped<DavDatabaseContext>()
+            .AddScoped<DavDatabaseContext>(_ => DavDatabaseContextRuntimeFactory.Create())
             .AddScoped<DavDatabaseClient>()
             .AddScoped<DatabaseStore>()
             .AddScoped<IStore, DatabaseStore>()
@@ -157,8 +194,7 @@ class Program
                 opts.Handlers["GET"] = typeof(GetAndHeadHandlerPatch);
                 opts.Handlers["HEAD"] = typeof(GetAndHeadHandlerPatch);
                 opts.Filter = opts.GetFilter();
-                opts.RequireAuthentication = !WebApplicationAuthExtensions
-                    .IsWebdavAuthDisabled();
+                opts.RequireAuthentication = true;
             });
 
         if (role == NzbdavRole.All)
@@ -180,6 +216,12 @@ class Program
         await app.RunAsync().ConfigureAwait(false);
     }
 
+    private static void ThrowIfPostgreSqlUnavailable()
+    {
+        if (DavDatabaseContext.IsPostgres)
+            throw new InvalidOperationException(MaintenanceCommandLine.PostgreSqlUnavailableMessage);
+    }
+
     private static void BlockUpgradesToV06X()
     {
         // If the database file doesn't exist.
@@ -191,7 +233,7 @@ class Program
         // If there is no pending database migration,
         // Then the user has already upgraded.
         // Do nothing.
-        using var databaseContext = new DavDatabaseContext();
+        using var databaseContext = DavDatabaseContextRuntimeFactory.Create();
         const string migration = "20260226053712_Add-NzbBlobId-And-NzbNames";
         var hasPendingMigration = databaseContext.Database.GetPendingMigrations().Contains(migration);
         if (!hasPendingMigration) return;
@@ -260,7 +302,7 @@ class Program
             }
 
             Console.Write("Performing database vacuum...");
-            await using var databaseContext = new DavDatabaseContext();
+            await using var databaseContext = DavDatabaseContextRuntimeFactory.Create();
             await databaseContext.Database.ExecuteSqlRawAsync("VACUUM;");
             Console.WriteLine("Done.");
         }
@@ -300,14 +342,4 @@ class Program
         return $"{bytes / kib / kib / kib:0.##} GiB";
     }
 
-    private static bool TryGetArgumentValue(string[] args, string name, out string value)
-    {
-        value = "";
-        var index = Array.IndexOf(args, name);
-        if (index < 0) return false;
-        if (args.Length <= index + 1 || string.IsNullOrWhiteSpace(args[index + 1]))
-            throw new ArgumentException($"{name} requires a path argument.");
-        value = args[index + 1];
-        return true;
-    }
 }

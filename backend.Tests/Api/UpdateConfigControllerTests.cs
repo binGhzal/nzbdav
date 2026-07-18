@@ -1,11 +1,14 @@
+using System.Data.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Primitives;
 using NzbWebDAV.Api.Controllers.UpdateConfig;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Database.Transfer;
 using backend.Tests.Services;
 using NzbWebDAV.Models;
 
@@ -158,9 +161,11 @@ public sealed class UpdateConfigControllerTests
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
         await SetConfigAsync(dbContext, "rclone.host", "http://rclone:5572");
+        await SetConfigAsync(dbContext, "rclone.pass", "saved-secret");
 
         var configManager = CreateLoadedConfigManager(
-            new ConfigItem { ConfigName = "rclone.host", ConfigValue = "http://rclone:5572" });
+            new ConfigItem { ConfigName = "rclone.host", ConfigValue = "http://rclone:5572" },
+            new ConfigItem { ConfigName = "rclone.pass", ConfigValue = "saved-secret" });
         var eventCount = 0;
         configManager.OnConfigChanged += (_, _) => eventCount++;
 
@@ -414,6 +419,202 @@ public sealed class UpdateConfigControllerTests
         Assert.Equal(0, eventCount);
     }
 
+    [Theory]
+    [InlineData("rclone.host", "http://other-rclone:5572")]
+    [InlineData("rclone.user", "bob")]
+    [InlineData("rclone.fs", "other:")]
+    public async Task HandleApiRequest_RejectsRcloneTopologyChangeWhenSavedPasswordWouldBeRetained(
+        string changedConfigName,
+        string changedConfigValue)
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        await SetConfigAsync(dbContext, "rclone.host", "http://rclone:5572");
+        await SetConfigAsync(dbContext, "rclone.user", "alice");
+        await SetConfigAsync(dbContext, "rclone.fs", "nzbdav:");
+        await SetConfigAsync(dbContext, "rclone.pass", "saved-secret");
+        var configManager = CreateLoadedConfigManager(
+            new ConfigItem { ConfigName = "rclone.host", ConfigValue = "http://rclone:5572" },
+            new ConfigItem { ConfigName = "rclone.user", ConfigValue = "alice" },
+            new ConfigItem { ConfigName = "rclone.fs", ConfigValue = "nzbdav:" },
+            new ConfigItem { ConfigName = "rclone.pass", ConfigValue = "saved-secret" });
+        var controller = CreateController(
+            dbContext,
+            configManager,
+            new Dictionary<string, StringValues> { [changedConfigName] = changedConfigValue });
+
+        var result = await HandleWithApiKeyAsync(controller);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(
+            "saved-secret",
+            (await dbContext.ConfigItems.SingleAsync(x => x.ConfigName == "rclone.pass")).ConfigValue);
+        Assert.Equal(
+            changedConfigName switch
+            {
+                "rclone.host" => "http://rclone:5572",
+                "rclone.user" => "alice",
+                "rclone.fs" => "nzbdav:",
+                _ => throw new InvalidOperationException()
+            },
+            (await dbContext.ConfigItems.SingleAsync(x => x.ConfigName == changedConfigName)).ConfigValue);
+    }
+
+    [Fact]
+    public async Task HandleApiRequest_RejectsRcloneTopologyChangeWithRedactedPassword()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        await SetConfigAsync(dbContext, "rclone.host", "http://rclone:5572");
+        await SetConfigAsync(dbContext, "rclone.pass", "saved-secret");
+        var controller = CreateController(
+            dbContext,
+            CreateLoadedConfigManager(
+                new ConfigItem { ConfigName = "rclone.host", ConfigValue = "http://rclone:5572" },
+                new ConfigItem { ConfigName = "rclone.pass", ConfigValue = "saved-secret" }),
+            new Dictionary<string, StringValues>
+            {
+                ["rclone.host"] = "http://other-rclone:5572",
+                ["rclone.pass"] = RedactedSecret
+            });
+
+        var result = await HandleWithApiKeyAsync(controller);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(
+            "http://rclone:5572",
+            (await dbContext.ConfigItems.SingleAsync(x => x.ConfigName == "rclone.host")).ConfigValue);
+        Assert.Equal(
+            "saved-secret",
+            (await dbContext.ConfigItems.SingleAsync(x => x.ConfigName == "rclone.pass")).ConfigValue);
+    }
+
+    [Theory]
+    [InlineData("replacement-secret")]
+    [InlineData("")]
+    public async Task HandleApiRequest_AllowsRcloneTopologyChangeWithExplicitPasswordReplacementOrClear(
+        string submittedPassword)
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        await SetConfigAsync(dbContext, "rclone.host", "http://rclone:5572");
+        await SetConfigAsync(dbContext, "rclone.pass", "saved-secret");
+        var controller = CreateController(
+            dbContext,
+            CreateLoadedConfigManager(
+                new ConfigItem { ConfigName = "rclone.host", ConfigValue = "http://rclone:5572" },
+                new ConfigItem { ConfigName = "rclone.pass", ConfigValue = "saved-secret" }),
+            new Dictionary<string, StringValues>
+            {
+                ["rclone.host"] = "http://other-rclone:5572",
+                ["rclone.pass"] = submittedPassword
+            });
+
+        var result = await HandleWithApiKeyAsync(controller);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(
+            "http://other-rclone:5572",
+            (await dbContext.ConfigItems.SingleAsync(x => x.ConfigName == "rclone.host")).ConfigValue);
+        Assert.Equal(
+            submittedPassword,
+            (await dbContext.ConfigItems.SingleAsync(x => x.ConfigName == "rclone.pass")).ConfigValue);
+    }
+
+    [Fact]
+    public async Task HandleApiRequest_UnresolvedRedactedUsenetMarkerReturnsBadRequestWithoutMutation()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var existingConfig = SerializeProviderConfig(
+            "news.example.invalid", 119, true, "user", "saved-secret");
+        var submittedConfig = SerializeProviderConfig(
+            "news.example.invalid", 119, false, "user", RedactedSecret);
+        await SetConfigAsync(dbContext, "usenet.providers", existingConfig);
+        var controller = CreateController(
+            dbContext,
+            CreateLoadedConfigManager(
+                new ConfigItem { ConfigName = "usenet.providers", ConfigValue = existingConfig }),
+            new Dictionary<string, StringValues> { ["usenet.providers"] = submittedConfig });
+
+        var result = await HandleWithApiKeyAsync(controller);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(
+            existingConfig,
+            (await dbContext.ConfigItems.SingleAsync(x => x.ConfigName == "usenet.providers")).ConfigValue);
+    }
+
+    [Fact]
+    public async Task HandleApiRequest_UnresolvedRedactedArrMarkerReturnsBadRequestWithoutMutation()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var existingConfig = CreateArrConfigJson("saved-secret", "http://radarr:7878/Radarr");
+        var submittedConfig = CreateArrConfigJson(RedactedSecret, "http://radarr:7878/radarr");
+        await SetConfigAsync(dbContext, "arr.instances", existingConfig);
+        var controller = CreateController(
+            dbContext,
+            CreateLoadedConfigManager(
+                new ConfigItem { ConfigName = "arr.instances", ConfigValue = existingConfig }),
+            new Dictionary<string, StringValues> { ["arr.instances"] = submittedConfig });
+
+        var result = await HandleWithApiKeyAsync(controller);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(
+            existingConfig,
+            (await dbContext.ConfigItems.SingleAsync(x => x.ConfigName == "arr.instances")).ConfigValue);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HandleApiRequest_RejectsAnyReservedImportStateBeforeDatabaseQuery(bool mixedRequest)
+    {
+        await using var setup = await _fixture.ResetAndCreateMigratedContextAsync();
+        await setup.Database.ExecuteSqlInterpolatedAsync(
+            $"DELETE FROM ConfigItems WHERE ConfigName = {TransferV3ReservedConfigPolicy.ImportStateKey}");
+        await setup.Database.ExecuteSqlInterpolatedAsync(
+            $"INSERT INTO ConfigItems (ConfigName, ConfigValue) VALUES ({TransferV3ReservedConfigPolicy.ImportStateKey}, {TransferV3ImportStateCodec.FreshCanonicalJson})");
+        await SetConfigAsync(setup, "rclone.host", "http://rclone:5572");
+
+        try
+        {
+            var queryGuard = new DatabaseCommandGuard();
+            var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+                .UseSqlite(setup.Database.GetConnectionString())
+                .AddInterceptors(queryGuard)
+                .Options;
+            await using var guardedContext = new DavDatabaseContext(options);
+            var configManager = CreateLoadedConfigManager(
+                new ConfigItem { ConfigName = "rclone.host", ConfigValue = "http://rclone:5572" });
+            var eventCount = 0;
+            configManager.OnConfigChanged += (_, _) => eventCount++;
+            var form = new Dictionary<string, StringValues>
+            {
+                [TransferV3ReservedConfigPolicy.ImportStateKey] = "attacker-controlled"
+            };
+            if (mixedRequest)
+                form["rclone.host"] = "http://rclone:5573";
+            var controller = CreateController(guardedContext, configManager, form);
+
+            var result = await HandleWithApiKeyAsync(controller);
+
+            Assert.IsType<BadRequestObjectResult>(result);
+            Assert.Equal(0, queryGuard.CommandCount);
+            Assert.Equal(0, eventCount);
+            setup.ChangeTracker.Clear();
+            Assert.Equal(
+                TransferV3ImportStateCodec.FreshCanonicalJson,
+                (await setup.ConfigItems.SingleAsync(x =>
+                    x.ConfigName == TransferV3ReservedConfigPolicy.ImportStateKey)).ConfigValue);
+            Assert.Equal(
+                "http://rclone:5572",
+                (await setup.ConfigItems.SingleAsync(x => x.ConfigName == "rclone.host")).ConfigValue);
+        }
+        finally
+        {
+            await setup.Database.ExecuteSqlInterpolatedAsync(
+                $"DELETE FROM ConfigItems WHERE ConfigName = {TransferV3ReservedConfigPolicy.ImportStateKey}");
+        }
+    }
+
     private static UpdateConfigController CreateController
     (
         DavDatabaseContext dbContext,
@@ -503,6 +704,31 @@ public sealed class UpdateConfigControllerTests
             new System.Text.Json.JsonSerializerOptions { WriteIndented = writeIndented });
     }
 
+    private static string SerializeProviderConfig(
+        string host,
+        int port,
+        bool useSsl,
+        string user,
+        string password)
+    {
+        return System.Text.Json.JsonSerializer.Serialize(new UsenetProviderConfig
+        {
+            Providers =
+            [
+                new UsenetProviderConfig.ConnectionDetails
+                {
+                    Type = ProviderType.Pooled,
+                    Host = host,
+                    Port = port,
+                    UseSsl = useSsl,
+                    User = user,
+                    Pass = password,
+                    MaxConnections = 10
+                }
+            ]
+        });
+    }
+
     public static string CreateArrConfigJson(string apiKey, string host = "http://radarr:7878")
     {
         return System.Text.Json.JsonSerializer.Serialize(new ArrConfig
@@ -529,6 +755,80 @@ public sealed class UpdateConfigControllerTests
         finally
         {
             Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", previousApiKey);
+        }
+    }
+
+    private sealed class DatabaseCommandGuard : DbCommandInterceptor
+    {
+        public int CommandCount { get; private set; }
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting
+        (
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result
+        )
+        {
+            CommandCount++;
+            throw new InvalidOperationException("Reserved config validation ran a database query.");
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync
+        (
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default
+        )
+        {
+            CommandCount++;
+            throw new InvalidOperationException("Reserved config validation ran a database query.");
+        }
+
+        public override InterceptionResult<int> NonQueryExecuting
+        (
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result
+        )
+        {
+            CommandCount++;
+            throw new InvalidOperationException("Reserved config validation ran a database command.");
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync
+        (
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default
+        )
+        {
+            CommandCount++;
+            throw new InvalidOperationException("Reserved config validation ran a database command.");
+        }
+
+        public override InterceptionResult<object> ScalarExecuting
+        (
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<object> result
+        )
+        {
+            CommandCount++;
+            throw new InvalidOperationException("Reserved config validation ran a database command.");
+        }
+
+        public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync
+        (
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<object> result,
+            CancellationToken cancellationToken = default
+        )
+        {
+            CommandCount++;
+            throw new InvalidOperationException("Reserved config validation ran a database command.");
         }
     }
 }

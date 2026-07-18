@@ -46,6 +46,19 @@ describe("getChangedConfig", () => {
         });
     });
 
+    test("includes a non-root rclone endpoint slash change", () => {
+        const savedConfig = {
+            "rclone.host": "http://rclone:5572/base",
+        };
+        const newConfig = {
+            "rclone.host": "http://rclone:5572/base/",
+        };
+
+        expect(getChangedConfig(savedConfig, newConfig)).toEqual({
+            "rclone.host": "http://rclone:5572/base/",
+        });
+    });
+
     test("does not block settings tab-only navigation while dirty", () => {
         expect(shouldBlockSettingsNavigation(
             true,

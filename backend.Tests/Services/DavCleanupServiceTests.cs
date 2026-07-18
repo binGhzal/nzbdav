@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using backend.Tests.Services;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -113,6 +114,43 @@ public sealed class DavCleanupServiceTests
         Assert.DoesNotContain("/content/Removed/Season 1/Episode.mkv", recoveredPaths);
     }
 
+    [Fact]
+    public async Task DeleteChildrenAndEnqueueInvalidations_RollsBackEverythingWhenSaveFails()
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var baseOptions = new DbContextOptionsBuilder<DavDatabaseContext>().UseSqlite(connection).Options;
+        var removedDirectoryId = Guid.NewGuid();
+        var child = CreateFile(Guid.NewGuid(), removedDirectoryId, "/content/Removed/Episode.mkv");
+        await using (var setup = new DavDatabaseContext(baseOptions))
+        {
+            await setup.Database.EnsureCreatedAsync();
+            setup.Items.Add(child);
+            setup.DavCleanupItems.Add(new DavCleanupItem { Id = removedDirectoryId });
+            await setup.SaveChangesAsync();
+            await setup.RcloneInvalidationItems.ExecuteDeleteAsync();
+        }
+
+        var failingOptions = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .AddInterceptors(new FailingSaveInterceptor())
+            .Options;
+        await using (var failingContext = new DavDatabaseContext(failingOptions))
+        {
+            var cleanupItems = await failingContext.DavCleanupItems.ToListAsync();
+            await Assert.ThrowsAsync<DbUpdateException>(() =>
+                DavCleanupService.DeleteChildrenAndEnqueueInvalidationsAsync(
+                    failingContext,
+                    cleanupItems,
+                    CancellationToken.None));
+        }
+
+        await using var assertionContext = new DavDatabaseContext(baseOptions);
+        Assert.NotNull(await assertionContext.Items.SingleOrDefaultAsync(x => x.Id == child.Id));
+        Assert.NotNull(await assertionContext.DavCleanupItems.SingleOrDefaultAsync(x => x.Id == removedDirectoryId));
+        Assert.Empty(await assertionContext.RcloneInvalidationItems.ToListAsync());
+    }
+
     private async Task WaitForCleanupQueueToDrainAsync(CancellationToken ct)
     {
         while (true)
@@ -154,5 +192,15 @@ public sealed class DavCleanupServiceTests
             SubType = DavItem.ItemSubType.NzbFile,
             Path = path
         };
+    }
+
+    private sealed class FailingSaveInterceptor : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<InterceptionResult<int>>(
+                new DbUpdateException("forced DAV cleanup save failure"));
     }
 }

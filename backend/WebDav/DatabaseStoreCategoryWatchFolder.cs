@@ -21,9 +21,13 @@ public class DatabaseStoreCategoryWatchFolder(
     QueueManager queueManager,
     WebsocketManager websocketManager,
     ArrDownloadReportService arrDownloadReportService,
-    ArrOperationsService arrOperationsService
+    ArrOperationsService arrOperationsService,
+    NzbBlobIngestCoordinator nzbBlobIngestCoordinator,
+    TimeProvider? timeProvider = null
 ) : BaseStoreReadonlyCollection
 {
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
     public override string Name => category;
     public override string UniqueKey => $"nzbs_category_{category}";
     public override DateTime CreatedAt => DateTime.Now;
@@ -54,24 +58,34 @@ public class DatabaseStoreCategoryWatchFolder(
             configManager,
             websocketManager,
             arrDownloadReportService,
-            arrOperationsService);
-        var addFileRequest = new AddFileRequest()
-        {
-            FileName = request.Name,
-            ContentType = "application/x-nzb",
-            Category = category,
-            Priority = QueueItem.PriorityOption.Normal,
-            PostProcessing = QueueItem.PostProcessingOption.RepairUnpackDelete,
-            PauseUntil = DateTime.Now.AddSeconds(3),
-            NzbFileStream = request.Stream,
-            CancellationToken = request.CancellationToken
-        };
+            arrOperationsService,
+            nzbBlobIngestCoordinator,
+            _timeProvider);
+        var addFileRequest = CreateAddFileRequest(category, request, _timeProvider);
         var response = await controller.AddFileAsync(addFileRequest).ConfigureAwait(false);
         var queueItem = dbClient.Ctx.ChangeTracker
             .Entries<QueueItem>()
             .Select(x => x.Entity)
             .First(x => x.Id.ToString() == response.NzoIds[0]);
         return new StoreItemResult(DavStatusCode.Created, new DatabaseStoreQueueItem(queueItem, dbClient));
+    }
+
+    internal static AddFileRequest CreateAddFileRequest(
+        string category,
+        CreateItemRequest request,
+        TimeProvider timeProvider)
+    {
+        return new AddFileRequest
+        {
+            FileName = request.Name,
+            ContentType = "application/x-nzb",
+            Category = category,
+            Priority = QueueItem.PriorityOption.Normal,
+            PostProcessing = QueueItem.PostProcessingOption.RepairUnpackDelete,
+            PauseUntil = timeProvider.GetLocalNow().DateTime.AddSeconds(3),
+            NzbFileStream = request.Stream,
+            CancellationToken = request.CancellationToken
+        };
     }
 
     protected override async Task<DavStatusCode> DeleteItemAsync(DeleteItemRequest request)

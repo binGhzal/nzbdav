@@ -20,4 +20,5 @@ public enum ImportReceiptState
     Imported = 2,
     Removed = 3,
     NeedsReview = 4,
+    VerificationQuarantined = 5,
 }

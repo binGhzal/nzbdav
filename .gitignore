@@ -25,6 +25,16 @@ nuget
 
 artifacts/benchmarks/
 artifacts/arr-validation/
+artifacts/
+
+#############################
+# generated local artifacts #
+#############################
+
+.DS_Store
+__pycache__/
+*.py[cod]
+*.trx
 
 ##############
 # IDE config #

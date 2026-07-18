@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
+using NzbWebDAV.Database.Transfer;
 
 namespace NzbWebDAV.Api.Controllers.GetConfig;
 
@@ -13,11 +14,14 @@ public class GetConfigController(DavDatabaseClient dbClient) : BaseApiController
     {
         var configItems = await dbClient.Ctx.ConfigItems
             .AsNoTracking()
-            .Where(x => request.ConfigKeys.Contains(x.ConfigName))
+            .Where(x => x.ConfigName != TransferV3ReservedConfigPolicy.ImportStateKey
+                        && request.ConfigKeys.Contains(x.ConfigName))
             .ToListAsync(HttpContext.RequestAborted).ConfigureAwait(false);
+        configItems = configItems
+            .Where(configItem => !TransferV3ReservedConfigPolicy.IsReserved(configItem.ConfigName))
+            .ToList();
 
-        if (!request.IncludeSecrets)
-            configItems = configItems.Select(ConfigSecretRedactor.RedactForDisplay).ToList();
+        configItems = configItems.Select(ConfigSecretRedactor.RedactForDisplay).ToList();
 
         var response = new GetConfigResponse { ConfigItems = configItems };
         return response;

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createReconnectingWebSocket } from "~/utils/websocket-util";
 import { getWebsocketUrl, withUrlBase } from "~/utils/url-base";
 import { startMaintenanceTask } from "../start-maintenance-task";
+import { useMaintenanceRun } from "../use-maintenance-run";
 
 const cleanupTaskTopic = { 'ctp': 'state' };
 
@@ -13,18 +14,20 @@ type RemoveUnlinkedFilesProps = {
 
 export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
     // stateful variables
-    const [connected, setConnected] = useState<boolean>(false);
-    const [progress, setProgress] = useState<string | null>(null);
     const [isFetching, setIsFetching] = useState<boolean>(false);
     const [requestError, setRequestError] = useState<string | null>(null);
-    const progressMessage = progress?.replace('Dry Run - ', '');
+    const { acceptRun, isActive, progressMessage: durableProgress, refresh, visibleRun } =
+        useMaintenanceRun(
+            "remove-unlinked-files",
+            ["remove-unlinked-files", "remove-unlinked-files-dry-run"],
+            true);
+    const progressMessage = durableProgress?.replace('Dry Run - ', '');
 
     // derived variables
     const libraryDir = savedConfig["media.library-dir"];
-    const isDone = progressMessage?.startsWith("Done");
-    const isFinished = progressMessage?.startsWith("Done") || progressMessage?.startsWith("Failed") || progressMessage?.startsWith("Aborted");
-    const isRunning = !isFinished && (isFetching || progress !== null);
-    const isRunButtonEnabled = !!libraryDir && connected && !isRunning;
+    const isDone = visibleRun?.status === "completed" && progressMessage?.startsWith("Done");
+    const isRunning = isFetching || isActive;
+    const isRunButtonEnabled = !!libraryDir && !isRunning;
     const runButtonVariant = isRunButtonEnabled ? 'success' : 'secondary';
     const runButtonLabel = isRunning ? "⌛ Running.." : '▶ Run Task';
 
@@ -32,36 +35,40 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
     useEffect(() => {
         return createReconnectingWebSocket({
             createSocket: () => new WebSocket(getWebsocketUrl()),
-            onMessage: (_, message) => setProgress(message),
+            onMessage: () => void refresh(),
             onOpen: socket => {
-                setConnected(true);
                 socket.send(JSON.stringify(cleanupTaskTopic));
             },
-            onClose: () => {
-                setConnected(false);
-                setProgress(null);
-            },
+            onClose: () => undefined,
         });
-    }, [setProgress, setConnected]);
+    }, [refresh]);
 
     // events
     const onRun = useCallback(async () => {
         setIsFetching(true);
         try {
-            await startMaintenanceTask("/api/remove-unlinked-files", "remove unlinked files", setRequestError);
+            const run = await startMaintenanceTask(
+                "/api/remove-unlinked-files",
+                "remove unlinked files",
+                setRequestError);
+            if (run) acceptRun(run);
         } finally {
             setIsFetching(false);
         }
-    }, [setIsFetching, setRequestError]);
+    }, [acceptRun]);
 
     const onDryRun = useCallback(async () => {
         setIsFetching(true);
         try {
-            await startMaintenanceTask("/api/remove-unlinked-files/dry-run", "remove unlinked files dry run", setRequestError);
+            const run = await startMaintenanceTask(
+                "/api/remove-unlinked-files/dry-run",
+                "remove unlinked files dry run",
+                setRequestError);
+            if (run) acceptRun(run);
         } finally {
             setIsFetching(false);
         }
-    }, [setIsFetching, setRequestError]);
+    }, [acceptRun]);
 
     // view
     const dryRunButton =
@@ -118,7 +125,7 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
                             {runButtonLabel}
                         </Button>
                         <div className={styles["task-progress"]}>
-                            {progress}
+                            {durableProgress}
                             {isDone && <>
                                 &nbsp;<a href={withUrlBase("/api/remove-unlinked-files/audit")}>Audit.</a>
                             </>}

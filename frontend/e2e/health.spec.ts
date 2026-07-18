@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { authenticateE2E } from "./auth";
 
 const mockBackendURL = process.env.PLAYWRIGHT_BACKEND_URL ?? "http://127.0.0.1:5174";
 
-test.beforeEach(async ({ request }) => {
+test.beforeEach(async ({ page, request }) => {
   await request.post(`${mockBackendURL}/__e2e/reset`);
+  await authenticateE2E(page.context().request);
 });
 
 test("health page renders repair, cache, mount, provider, and worker diagnostics", async ({ page, request }) => {
@@ -17,7 +19,7 @@ test("health page renders repair, cache, mount, provider, and worker diagnostics
   await expect(page.getByText("usenet.example.test:563")).toBeVisible();
   await expect(page.getByText("/mnt/nzbdav")).toBeVisible();
   await expect(page.getByText("25% used")).toBeVisible();
-  await expect(page.getByText("Rclone invalidations are waiting to drain.")).toBeVisible();
+  await expect(page.getByText("Rclone invalidations are waiting to drain.")).not.toBeVisible();
   await expect(page.getByText("Unverified Movie.mkv", { exact: true })).toBeVisible();
   await expect(page.getByText("active 2/2")).toBeVisible();
 

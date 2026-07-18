@@ -1,0 +1,34 @@
+column|__EFMigrationsHistory_PostgreSql|1|MigrationId|false|character varying(150)|154|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+column|__EFMigrationsHistory_PostgreSql|2|ProductVersion|false|character varying(32)|36|0|true|false|false||||pg_catalog.default|x||-1|0|true|||default-acl
+constraint|__EFMigrationsHistory_PostgreSql|PK___EFMigrationsHistory_PostgreSql|p|false|false|true|true|0|true|||{1}||||||PRIMARY KEY ("MigrationId")
+contract|postgresql-catalog-v3
+database-acl|<owner>|CONNECT|false|<owner>
+database-acl|<owner>|CREATE|false|<owner>
+database-acl|<owner>|TEMPORARY|false|<owner>
+database-acl|PUBLIC|CONNECT|false|<owner>
+database-acl|PUBLIC|TEMPORARY|false|<owner>
+environment-count|default-acl|0
+environment-count|event-trigger|0
+environment-count|publication-namespace|0
+environment-count|publication|0
+environment-count|subscription|0
+index|__EFMigrationsHistory_PostgreSql|PK___EFMigrationsHistory_PostgreSql|<owner>|btree||true|false|true|false|true|false|true|false|true|true|false|1|1|1|"MigrationId"|||100|3126|0|
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|DELETE|false|<owner>
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|INSERT|false|<owner>
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|REFERENCES|false|<owner>
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|SELECT|false|<owner>
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|TRIGGER|false|<owner>
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|TRUNCATE|false|<owner>
+relation-acl|__EFMigrationsHistory_PostgreSql|<owner>|UPDATE|false|<owner>
+relation|PK___EFMigrationsHistory_PostgreSql|i|p|<owner>|btree||0|false|false|false|false|false|n|false|false|false||default-acl
+relation|__EFMigrationsHistory_PostgreSql|r|p|<owner>|heap||0|true|false|false|false|false|d|false|false|false||default-acl
+schema-acl|<owner>|CREATE|false|<owner>
+schema-acl|<owner>|USAGE|false|<owner>
+scope|<owner>|<owner>|default-database-acl|default-schema-acl
+server|16.14|160014
+type-acl|__EFMigrationsHistory_PostgreSql|<owner>|USAGE|false|<owner>
+type-acl|__EFMigrationsHistory_PostgreSql|PUBLIC|USAGE|false|<owner>
+type-acl|___EFMigrationsHistory_PostgreSql|<owner>|USAGE|false|<owner>
+type-acl|___EFMigrationsHistory_PostgreSql|PUBLIC|USAGE|false|<owner>
+type|__EFMigrationsHistory_PostgreSql|c|C|<owner>|-1|false|d|x|false|true|,||-1|0||__EFMigrationsHistory_PostgreSql|___EFMigrationsHistory_PostgreSql|||default-acl
+type|___EFMigrationsHistory_PostgreSql|b|A|<owner>|-1|false|d|x|false|true|,||-1|0||||__EFMigrationsHistory_PostgreSql||default-acl

@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Config;
-using NzbWebDAV.Tasks;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -13,13 +13,15 @@ namespace NzbWebDAV.Services;
 public class RemoveOrphanedFilesSchedulerService : BackgroundService
 {
     private readonly ConfigManager _configManager;
-    private readonly WebsocketManager _websocketManager;
+    private readonly MaintenanceRunService _maintenanceRunService;
     private CancellationTokenSource _rescheduleCts = new();
 
-    public RemoveOrphanedFilesSchedulerService(ConfigManager configManager, WebsocketManager websocketManager)
+    public RemoveOrphanedFilesSchedulerService(
+        ConfigManager configManager,
+        MaintenanceRunService maintenanceRunService)
     {
         _configManager = configManager;
-        _websocketManager = websocketManager;
+        _maintenanceRunService = maintenanceRunService;
 
         _configManager.OnConfigChanged += (_, args) =>
         {
@@ -60,8 +62,17 @@ public class RemoveOrphanedFilesSchedulerService : BackgroundService
                 await Task.Delay(delay, delayLinked.Token).ConfigureAwait(false);
 
                 Log.Information("RemoveOrphanedFilesScheduler: running scheduled Remove Orphaned Files task");
-                var task = new RemoveUnlinkedFilesTask(_configManager, _websocketManager, isDryRun: false);
-                await task.Execute().ConfigureAwait(false);
+                var result = await _maintenanceRunService.TryStartRunAsync(
+                        MaintenanceRunKind.RemoveUnlinkedFiles,
+                        requestedBy: "scheduled",
+                        stoppingToken)
+                    .ConfigureAwait(false);
+                if (!result.Started)
+                {
+                    Log.Warning(
+                        "RemoveOrphanedFilesScheduler: skipped because maintenance run {MaintenanceRunId} is active.",
+                        result.Run.Id);
+                }
             }
             catch (OperationCanceledException e) when (BackgroundServiceCancellationUtil.IsExpectedCancellation(e, stoppingToken))
             {

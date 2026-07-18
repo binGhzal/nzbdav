@@ -1,13 +1,16 @@
+using System.Data;
+using System.Diagnostics;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
-using NzbWebDAV.Api.SabControllers.GetHistory;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
+using NzbWebDAV.Coordination;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Par2Recovery.Packets;
 using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
 using NzbWebDAV.Queue.DeobfuscationSteps._2.GetPar2FileDescriptors;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
@@ -15,11 +18,32 @@ using NzbWebDAV.Queue.FileAggregators;
 using NzbWebDAV.Queue.FileProcessors;
 using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Services;
+using NzbWebDAV.Telemetry;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
 
 namespace NzbWebDAV.Queue;
+
+internal sealed class QueueWorkerLeaseLostException(Guid queueItemId, WorkerLeaseIdentity lease)
+    : InvalidOperationException(
+        $"Download worker lease {lease.JobId} generation {lease.Generation} no longer owns queue item {queueItemId}.")
+{
+}
+
+internal sealed class QueueCompletionIndeterminateException(Guid queueItemId, Exception innerException)
+    : InvalidOperationException(
+        $"Queue completion state for {queueItemId} is indeterminate after a database acknowledgement failure.",
+        innerException)
+{
+}
+
+internal sealed class QueueCompletionNotCommittedException(Guid queueItemId, Exception innerException)
+    : InvalidOperationException(
+        $"Queue completion transaction for {queueItemId} did not commit and can be retried.",
+        innerException)
+{
+}
 
 public class QueueItemProcessor(
     QueueItem queueItem,
@@ -31,23 +55,52 @@ public class QueueItemProcessor(
     ArrDownloadReportService arrDownloadReportService,
     IProgress<int> progress,
     CancellationToken ct,
-    Action<QueueProcessingStage>? onStageChanged = null
+    Action<QueueProcessingStage>? onStageChanged = null,
+    HistoryVisibilityNotifier? historyVisibilityNotifier = null,
+    TimeProvider? timeProvider = null,
+    WorkerLeaseIdentity? workerLease = null,
+    Func<DavDatabaseContext>? completionContextFactory = null
 )
 {
+    private readonly HistoryVisibilityNotifier _historyVisibilityNotifier =
+        historyVisibilityNotifier ?? new HistoryVisibilityNotifier(configManager, websocketManager);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
     public async Task<ProcessingOutcome> ProcessAsync()
     {
-        // initialize
-        var startTime = DateTime.Now;
-        onStageChanged?.Invoke(QueueProcessingStage.Downloading);
-        _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Downloading");
-        await arrDownloadReportService
-            .RecordQueueLifecycleAsync(dbClient, queueItem, "Downloading", ct: ct)
-            .ConfigureAwait(false);
+        var startTimestamp = Stopwatch.GetTimestamp();
+        try
+        {
+            onStageChanged?.Invoke(QueueProcessingStage.Downloading);
+            _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Downloading");
+            await arrDownloadReportService
+                .RecordQueueLifecycleAsync(dbClient, queueItem, "Downloading", ct: ct)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception.GetBaseException().IsCancellationException())
+        {
+            dbClient.Ctx.ClearChangeTracker();
+            return ProcessingOutcome.Cancelled;
+        }
+        catch (Exception exception)
+        {
+            if (ct.IsCancellationRequested)
+            {
+                dbClient.Ctx.ClearChangeTracker();
+                return ProcessingOutcome.Cancelled;
+            }
+            Log.Error(
+                exception,
+                "Could not persist initial lifecycle state for queue item {QueueItemId}; scheduling retry.",
+                queueItem.Id);
+            dbClient.Ctx.ClearChangeTracker();
+            return ProcessingOutcome.RetryScheduled;
+        }
 
         // process the job
         try
         {
-            await ProcessQueueItemAsync(startTime).ConfigureAwait(false);
+            await ProcessQueueItemAsync(startTimestamp).ConfigureAwait(false);
             return ProcessingOutcome.Completed;
         }
 
@@ -60,6 +113,27 @@ public class QueueItemProcessor(
             return ProcessingOutcome.Cancelled;
         }
 
+        catch (QueueWorkerLeaseLostException e)
+        {
+            Log.Warning(e, "Stopped stale queue worker for {QueueItemId} before terminal commit.", queueItem.Id);
+            dbClient.Ctx.ClearChangeTracker();
+            return ProcessingOutcome.Cancelled;
+        }
+
+        catch (QueueCompletionIndeterminateException e)
+        {
+            Log.Error(e, "Queue completion state is indeterminate for {QueueItemId}.", queueItem.Id);
+            dbClient.Ctx.ClearChangeTracker();
+            return ProcessingOutcome.RetryScheduled;
+        }
+
+        catch (QueueCompletionNotCommittedException e)
+        {
+            Log.Warning(e, "Queue completion did not commit for {QueueItemId}; scheduling retry.", queueItem.Id);
+            dbClient.Ctx.ClearChangeTracker();
+            return ProcessingOutcome.RetryScheduled;
+        }
+
         // when a retryable error is encountered
         // let's not remove the item from the queue
         // to give it a chance to retry. Simply
@@ -69,11 +143,12 @@ public class QueueItemProcessor(
             try
             {
                 Log.Error($"Failed to process job, `{queueItem.JobName}` -- {e.Message}");
+                ct.ThrowIfCancellationRequested();
                 dbClient.Ctx.ClearChangeTracker();
-                queueItem.PauseUntil = DateTime.Now.AddMinutes(1);
+                queueItem.PauseUntil = _timeProvider.GetLocalNow().DateTime.AddMinutes(1);
                 dbClient.Ctx.QueueItems.Attach(queueItem);
                 dbClient.Ctx.Entry(queueItem).Property(x => x.PauseUntil).IsModified = true;
-                await dbClient.Ctx.SaveChangesAsync().ConfigureAwait(false);
+                await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
                 _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Queued");
                 await arrDownloadReportService
                     .RecordQueueLifecycleAsync(dbClient, queueItem, "Queued", "Download retry scheduled.", ct)
@@ -81,11 +156,17 @@ public class QueueItemProcessor(
                 await arrDownloadReportService
                     .RefreshMonitoredDownloadsDebouncedAsync(queueItem.Category, ct)
                     .ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
                 return ProcessingOutcome.RetryScheduled;
             }
             catch (Exception ex)
             {
                 Log.Error(ex, ex.Message);
+                if (ct.IsCancellationRequested || ex.GetBaseException().IsCancellationException())
+                {
+                    dbClient.Ctx.ClearChangeTracker();
+                    return ProcessingOutcome.Cancelled;
+                }
                 return ProcessingOutcome.RetryScheduled;
             }
         }
@@ -97,13 +178,19 @@ public class QueueItemProcessor(
         {
             try
             {
-                await MarkQueueItemCompleted(startTime, error: e.Message).ConfigureAwait(false);
+                await MarkQueueItemCompleted(startTimestamp, error: e.Message).ConfigureAwait(false);
                 return ProcessingOutcome.Completed;
             }
             catch (Exception ex)
             {
-                Log.Error(e, ex.Message);
-                return ProcessingOutcome.Completed;
+                Log.Error(
+                    ex,
+                    "Failed to record terminal queue outcome for {JobName} after processing error {ProcessingError}: {CompletionError}",
+                    queueItem.JobName,
+                    e.Message,
+                    ex.Message);
+                dbClient.Ctx.ClearChangeTracker();
+                return ProcessingOutcome.RetryScheduled;
             }
         }
     }
@@ -115,7 +202,7 @@ public class QueueItemProcessor(
         Cancelled
     }
 
-    private async Task ProcessQueueItemAsync(DateTime startTime)
+    private async Task ProcessQueueItemAsync(long startTimestamp)
     {
         // if the `/blobs` folder is tampered with outside the nzbdav process,
         // then it is possible that the nzb file goes missing.
@@ -132,13 +219,27 @@ public class QueueItemProcessor(
         if (isDuplicateNzb && duplicateNzbBehavior == "mark-failed")
         {
             const string error = "Duplicate nzb: the download folder for this nzb already exists.";
-            await MarkQueueItemCompleted(startTime, error, () => Task.FromResult(existingMountFolder))
+            await MarkQueueItemCompleted(startTimestamp, error, () => Task.FromResult(existingMountFolder))
                 .ConfigureAwait(false);
             return;
         }
 
         // read the nzb document
-        var nzb = await LoadQueueNzbDocumentAsync().ConfigureAwait(false);
+        var parseStart = Stopwatch.GetTimestamp();
+        var parseFailed = true;
+        NzbDocument nzb;
+        try
+        {
+            nzb = await LoadQueueNzbDocumentAsync().ConfigureAwait(false);
+            parseFailed = false;
+        }
+        finally
+        {
+            CriticalPathTelemetry.Shared.RecordElapsed(
+                CriticalPathStage.QueueParse,
+                parseStart,
+                parseFailed);
+        }
         var nzbFiles = nzb.Files.Where(x => x.Segments.Count > 0).ToList();
 
         // Look for a password in filename, submission params, and nzb document.
@@ -158,10 +259,38 @@ public class QueueItemProcessor(
         var part1Progress = progress
             .Scale(50, 100)
             .ToPercentage(nzbFiles.Count);
-        var segments = await FetchFirstSegmentsStep.FetchFirstSegments(
-            nzbFiles, usenetClient, configManager, ct, part1Progress).ConfigureAwait(false);
-        var par2FileDescriptors = await GetPar2FileDescriptorsStep.GetPar2FileDescriptors(
-            segments, usenetClient, ct).ConfigureAwait(false);
+        var firstSegmentStart = Stopwatch.GetTimestamp();
+        var firstSegmentFailed = true;
+        List<FetchFirstSegmentsStep.NzbFileWithFirstSegment> segments;
+        try
+        {
+            segments = await FetchFirstSegmentsStep.FetchFirstSegments(
+                nzbFiles, usenetClient, configManager, ct, part1Progress).ConfigureAwait(false);
+            firstSegmentFailed = false;
+        }
+        finally
+        {
+            CriticalPathTelemetry.Shared.RecordElapsed(
+                CriticalPathStage.QueueFirstSegmentDiscovery,
+                firstSegmentStart,
+                firstSegmentFailed);
+        }
+        var par2DiscoveryStart = Stopwatch.GetTimestamp();
+        var par2DiscoveryFailed = true;
+        List<FileDesc> par2FileDescriptors;
+        try
+        {
+            par2FileDescriptors = await GetPar2FileDescriptorsStep.GetPar2FileDescriptors(
+                segments, usenetClient, ct).ConfigureAwait(false);
+            par2DiscoveryFailed = false;
+        }
+        finally
+        {
+            CriticalPathTelemetry.Shared.RecordElapsed(
+                CriticalPathStage.QueuePar2Discovery,
+                par2DiscoveryStart,
+                par2DiscoveryFailed);
+        }
         var fileInfos = GetFileInfosStep.GetFileInfos(
             segments, par2FileDescriptors);
 
@@ -171,10 +300,24 @@ public class QueueItemProcessor(
             .Offset(50)
             .Scale(50, 100)
             .ToMultiProgress(fileProcessors.Count);
-        var fileProcessingResultsAll = await fileProcessors
-            .Select(x => x!.ProcessAsync(part2Progress.SubProgress))
-            .WithConcurrencyAsync(configManager.GetAdaptiveQueueFileProcessingConcurrency())
-            .GetAllAsync(ct).ConfigureAwait(false);
+        var processorsStart = Stopwatch.GetTimestamp();
+        var processorsFailed = true;
+        List<BaseProcessor.Result?> fileProcessingResultsAll;
+        try
+        {
+            fileProcessingResultsAll = await fileProcessors
+                .Select(x => x!.ProcessAsync(part2Progress.SubProgress))
+                .WithConcurrencyAsync(configManager.GetAdaptiveQueueFileProcessingConcurrency())
+                .GetAllAsync(ct).ConfigureAwait(false);
+            processorsFailed = false;
+        }
+        finally
+        {
+            CriticalPathTelemetry.Shared.RecordElapsed(
+                CriticalPathStage.QueueProcessors,
+                processorsStart,
+                processorsFailed);
+        }
         var fileProcessingResults = fileProcessingResultsAll
             .Where(x => x is not null)
             .Select(x => x!)
@@ -191,7 +334,7 @@ public class QueueItemProcessor(
         await arrDownloadReportService
             .RecordQueueLifecycleAsync(dbClient, queueItem, "Moving", ct: ct)
             .ConfigureAwait(false);
-        await MarkQueueItemCompleted(startTime, error: null, async () =>
+        await MarkQueueItemCompleted(startTimestamp, error: null, async () =>
         {
             var categoryFolder = await GetOrCreateCategoryFolder().ConfigureAwait(false);
             var mountFolder = await CreateMountFolder(categoryFolder, existingMountFolder, duplicateNzbBehavior)
@@ -224,6 +367,8 @@ public class QueueItemProcessor(
 
             return mountFolder;
         }).ConfigureAwait(false);
+        if (queuePostDownloadVerification)
+            HealthWorkerWakeSignal.Pulse();
     }
 
     private async Task EnqueuePostDownloadVerifyJobAsync(DavItem mountFolder)
@@ -401,12 +546,12 @@ public class QueueItemProcessor(
         throw new Exception("Duplicate nzb with more than 100 existing copies.");
     }
 
-    private HistoryItem CreateHistoryItem(DavItem? mountFolder, DateTime jobStartTime, string? errorMessage = null)
+    private HistoryItem CreateHistoryItem(DavItem? mountFolder, long jobStartTimestamp, string? errorMessage = null)
     {
         return new HistoryItem()
         {
             Id = queueItem.Id,
-            CreatedAt = DateTime.Now,
+            CreatedAt = _timeProvider.GetLocalNow().DateTime,
             FileName = queueItem.FileName,
             JobName = queueItem.JobName,
             Category = queueItem.Category,
@@ -414,7 +559,7 @@ public class QueueItemProcessor(
                 ? HistoryItem.DownloadStatusOption.Completed
                 : HistoryItem.DownloadStatusOption.Failed,
             TotalSegmentBytes = queueItem.TotalSegmentBytes,
-            DownloadTimeSeconds = (int)(DateTime.Now - jobStartTime).TotalSeconds,
+            DownloadTimeSeconds = GetDownloadTimeSeconds(jobStartTimestamp, Stopwatch.GetTimestamp()),
             FailMessage = errorMessage,
             DownloadDirId = mountFolder?.Id,
             NzbBlobId = queueItem.Id,
@@ -423,35 +568,276 @@ public class QueueItemProcessor(
 
     private async Task MarkQueueItemCompleted
     (
-        DateTime startTime,
+        long startTimestamp,
         string? error = null,
         Func<Task<DavItem?>>? databaseOperations = null
     )
     {
+        var completionStart = Stopwatch.GetTimestamp();
+        var completionFailed = true;
+        try
+        {
+            CompletionCommitResult completion;
+            try
+            {
+                completion = await CommitQueueCompletionAsync(
+                        startTimestamp,
+                        error,
+                        databaseOperations)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception commitException)
+            {
+                if (completionContextFactory is null)
+                    throw UnwrapCompletionException(commitException);
+
+                QueueCompletionReconciliation reconciliation;
+                try
+                {
+                    reconciliation = await ReconcileQueueCompletionAsync(error).ConfigureAwait(false);
+                }
+                catch (Exception reconciliationException)
+                {
+                    throw new QueueCompletionIndeterminateException(
+                        queueItem.Id,
+                        new AggregateException(commitException, reconciliationException));
+                }
+
+                if (reconciliation == QueueCompletionReconciliation.NotCommitted)
+                {
+                    if (commitException is QueueCompletionPersistenceException persistenceException)
+                    {
+                        throw new QueueCompletionNotCommittedException(
+                            queueItem.Id,
+                            persistenceException.InnerException!);
+                    }
+
+                    throw UnwrapCompletionException(commitException);
+                }
+                if (reconciliation == QueueCompletionReconciliation.Indeterminate)
+                    throw new QueueCompletionIndeterminateException(queueItem.Id, commitException);
+
+                completionFailed = false;
+                await PublishReconciledCompletionAsync().ConfigureAwait(false);
+                return;
+            }
+
+            completionFailed = false;
+            if (completion.StagedImportRefresh)
+                ArrImportCommandWakeSignal.Pulse();
+            _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, queueItem.Id.ToString());
+            try
+            {
+                if (!completion.StagedImportRefresh)
+                {
+                    await _historyVisibilityNotifier
+                        .PublishIfVisibleAsync(dbClient.Ctx, completion.HistoryItemId, CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+            }
+            catch (Exception exception)
+            {
+                Log.Warning(
+                    exception,
+                    "Could not publish history visibility after completing queue item {QueueItemId}: {Message}",
+                    queueItem.Id,
+                    exception.Message);
+            }
+        }
+        finally
+        {
+            CriticalPathTelemetry.Shared.RecordElapsed(
+                CriticalPathStage.QueueCompletion,
+                completionStart,
+                completionFailed);
+        }
+    }
+
+    private async Task<CompletionCommitResult> CommitQueueCompletionAsync(
+        long startTimestamp,
+        string? error,
+        Func<Task<DavItem?>>? databaseOperations)
+    {
+        try
+        {
+            return await CommitQueueCompletionCoreAsync(startTimestamp, error, databaseOperations)
+                .ConfigureAwait(false);
+        }
+        catch (QueueWorkerLeaseLostException)
+        {
+            throw;
+        }
+        catch (QueueCompletionBusinessException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception.GetBaseException().IsCancellationException())
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw new QueueCompletionPersistenceException(exception);
+        }
+    }
+
+    private async Task<CompletionCommitResult> CommitQueueCompletionCoreAsync(
+        long startTimestamp,
+        string? error,
+        Func<Task<DavItem?>>? databaseOperations)
+    {
+        var isolationLevel = dbClient.Ctx.Database.IsNpgsql()
+            ? IsolationLevel.ReadCommitted
+            : IsolationLevel.Serializable;
+        await using var transaction = await dbClient.Ctx.Database
+            .BeginTransactionAsync(isolationLevel, ct)
+            .ConfigureAwait(false);
+
+        if (workerLease.HasValue)
+        {
+            var lease = workerLease.Value;
+            var fenced = await dbClient.Ctx.WorkerJobs
+                .Where(job => job.Id == lease.JobId
+                              && job.Kind == WorkerJob.JobKind.Download
+                              && job.TargetId == queueItem.Id
+                              && job.Status == WorkerJob.JobStatus.Leased
+                              && job.LeaseOwner == lease.Owner
+                              && job.LeaseToken == lease.Token
+                              && job.LeaseGeneration == lease.Generation
+                              && job.CancelRequestedAt == null)
+                .ExecuteUpdateAsync(
+                    setters => setters.SetProperty(job => job.UpdatedAt, job => job.UpdatedAt),
+                    ct)
+                .ConfigureAwait(false);
+            if (fenced != 1)
+                throw new QueueWorkerLeaseLostException(queueItem.Id, lease);
+        }
+
         dbClient.Ctx.ClearChangeTracker();
-        var mountFolder = databaseOperations != null ? await databaseOperations.Invoke().ConfigureAwait(false) : null;
-        var historyItem = CreateHistoryItem(mountFolder, startTime, error);
-        var historySlot = GetHistoryResponse.HistorySlot.FromHistoryItem(historyItem, mountFolder, configManager);
+        DavItem? mountFolder;
+        try
+        {
+            mountFolder = databaseOperations != null
+                ? await databaseOperations.Invoke().ConfigureAwait(false)
+                : null;
+        }
+        catch (Exception exception)
+        {
+            throw new QueueCompletionBusinessException(exception);
+        }
+        var historyItem = CreateHistoryItem(mountFolder, startTimestamp, error);
         dbClient.Ctx.QueueItems.Remove(queueItem);
         dbClient.Ctx.HistoryItems.Add(historyItem);
         dbClient.Ctx.EnqueueRcloneVfsForgetPaths(["/nzbs"]);
+        var stagedImportRefresh = false;
         if (error == null)
         {
             await new ImportReceiptService(dbClient.Ctx)
                 .StageAvailableReceiptsAsync(historyItem.Id, DateTimeOffset.UtcNow, ct)
                 .ConfigureAwait(false);
+            var changedDavItems = dbClient.Ctx.ChangeTracker.Entries<DavItem>()
+                .Where(x => x.State is EntityState.Added or EntityState.Deleted)
+                .Select(x => x.Entity)
+                .ToList();
+            stagedImportRefresh = await arrDownloadReportService
+                .StageCompletionRefreshAsync(
+                    dbClient,
+                    historyItem,
+                    DavDatabaseContext.GetRcloneVfsForgetDirectories(changedDavItems),
+                    ct)
+                .ConfigureAwait(false);
         }
-        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
         await arrDownloadReportService
             .RecordHistoryLifecycleAsync(
                 dbClient,
                 historyItem,
                 error == null ? "Completed" : "Failed",
                 error,
-                ct)
+                ct,
+                saveChanges: false)
             .ConfigureAwait(false);
+        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        await transaction.CommitAsync(ct).ConfigureAwait(false);
+        return new CompletionCommitResult(historyItem.Id, stagedImportRefresh);
+    }
+
+    private static Exception UnwrapCompletionException(Exception exception)
+    {
+        return exception switch
+        {
+            QueueCompletionBusinessException businessException => businessException.InnerException!,
+            QueueCompletionPersistenceException persistenceException => persistenceException.InnerException!,
+            _ => exception
+        };
+    }
+
+    private async Task<QueueCompletionReconciliation> ReconcileQueueCompletionAsync(string? error)
+    {
+        await using var freshContext = completionContextFactory!();
+        var queueExists = await freshContext.QueueItems.AsNoTracking()
+            .AnyAsync(item => item.Id == queueItem.Id, CancellationToken.None)
+            .ConfigureAwait(false);
+        var historyItem = await freshContext.HistoryItems.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == queueItem.Id, CancellationToken.None)
+            .ConfigureAwait(false);
+        var expectedStatus = error == null
+            ? HistoryItem.DownloadStatusOption.Completed
+            : HistoryItem.DownloadStatusOption.Failed;
+        var historyMatches = historyItem is not null
+                             && historyItem.DownloadStatus == expectedStatus
+                             && historyItem.NzbBlobId == queueItem.Id
+                             && (error == null || historyItem.FailMessage == error);
+
+        if (!queueExists && historyMatches) return QueueCompletionReconciliation.Committed;
+        if (queueExists && historyItem is null) return QueueCompletionReconciliation.NotCommitted;
+        return QueueCompletionReconciliation.Indeterminate;
+    }
+
+    private async Task PublishReconciledCompletionAsync()
+    {
+        ArrImportCommandWakeSignal.Pulse();
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, queueItem.Id.ToString());
-        _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemAdded, historySlot.ToJson());
-        _ = arrDownloadReportService.RefreshMonitoredDownloadsDebouncedAsync(queueItem.Category);
+        try
+        {
+            await using var freshContext = completionContextFactory!();
+            await _historyVisibilityNotifier
+                .PublishIfVisibleAsync(freshContext, queueItem.Id, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            Log.Warning(
+                exception,
+                "Could not publish reconciled history visibility after completing queue item {QueueItemId}: {Message}",
+                queueItem.Id,
+                exception.Message);
+        }
+    }
+
+    private sealed record CompletionCommitResult(Guid HistoryItemId, bool StagedImportRefresh);
+
+    private sealed class QueueCompletionBusinessException(Exception innerException)
+        : Exception("Queue completion business operation failed.", innerException)
+    {
+    }
+
+    private sealed class QueueCompletionPersistenceException(Exception innerException)
+        : Exception("Queue completion persistence failed.", innerException)
+    {
+    }
+
+    private enum QueueCompletionReconciliation
+    {
+        Committed,
+        NotCommitted,
+        Indeterminate
+    }
+
+    private static int GetDownloadTimeSeconds(long startTimestamp, long endTimestamp)
+    {
+        var elapsedSeconds = Stopwatch.GetElapsedTime(startTimestamp, endTimestamp).TotalSeconds;
+        if (elapsedSeconds <= 0) return 0;
+        if (elapsedSeconds >= int.MaxValue) return int.MaxValue;
+        return (int)elapsedSeconds;
     }
 }

@@ -1,0 +1,439 @@
+{
+  "formatVersion": 1,
+  "context": "NzbWebDAV.Database.DavDatabaseContext",
+  "historyTable": "__EFMigrationsHistory",
+  "snapshot": {
+    "path": "backend/Database/Migrations/DavDatabaseContextModelSnapshot.cs",
+    "type": "NzbWebDAV.Database.Migrations.DavDatabaseContextModelSnapshot",
+    "context": "NzbWebDAV.Database.DavDatabaseContext",
+    "buildModelSha256": "dca729c3e5873ccb9a508853255fdedefc1aa29bb264453393a834c6e1ae58a8"
+  },
+  "migrations": [
+    {
+      "id": "20250529081501_InitializeDatabase",
+      "className": "InitializeDatabase",
+      "sourcePath": "backend/Database/Migrations/20250529081501_InitializeDatabase.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20250529081501_InitializeDatabase.Designer.cs",
+      "upThroughEofSha256": "2da2c84ec24080ab36af0e7e605347322e7e9fb95ee9e614886359e1be99aa1c",
+      "buildTargetModelSha256": "cf96228b6e740fba1cdd1edc1b175bfa1d7a1a3a6a91e17408d93e4bf1921e3b"
+    },
+    {
+      "id": "20250529102749_Add-CreatedAt-To-DavItem",
+      "className": "AddCreatedAtToDavItem",
+      "sourcePath": "backend/Database/Migrations/20250529102749_Add-CreatedAt-To-DavItem.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20250529102749_Add-CreatedAt-To-DavItem.Designer.cs",
+      "upThroughEofSha256": "58fbb14ee73de172758cb629e01d0942d8465ac22cd7efdeed4d79081ea9902c",
+      "buildTargetModelSha256": "42fe21f1f0fdc962718c643fdd16813805029ba9ac3a21451070695305d410ea"
+    },
+    {
+      "id": "20250605030729_Add-Accounts-Table",
+      "className": "AddAccountsTable",
+      "sourcePath": "backend/Database/Migrations/20250605030729_Add-Accounts-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20250605030729_Add-Accounts-Table.Designer.cs",
+      "upThroughEofSha256": "8c81cbdb9d3cf0925835e066b6798da9deaa4f2104234d3e2c9234d8e50320cf",
+      "buildTargetModelSha256": "0b6a90b0aa872210576e086fb669bd8755dec11ff09a204629640aa3b101600f"
+    },
+    {
+      "id": "20250710072717_AddConfigItemsTable",
+      "className": "AddConfigItemsTable",
+      "sourcePath": "backend/Database/Migrations/20250710072717_AddConfigItemsTable.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20250710072717_AddConfigItemsTable.Designer.cs",
+      "upThroughEofSha256": "b593a7ee5b1fe3387e621853bc0b72ad34b97bf78765ec2e6e18e6792fd2d1bc",
+      "buildTargetModelSha256": "f2930b0046492a023ea1e46d711ada20ee91180bdca25e3473beb6f0ae0538fb"
+    },
+    {
+      "id": "20250722004955_Ensure-Api-Key-Exists",
+      "className": "EnsureApiKeyExists",
+      "sourcePath": "backend/Database/Migrations/20250722004955_Ensure-Api-Key-Exists.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20250722004955_Ensure-Api-Key-Exists.Designer.cs",
+      "upThroughEofSha256": "7e8d241fba0d2d96f69dd02311d2a58b1c114b4dae84509f018f7372d60b3245",
+      "buildTargetModelSha256": "f2930b0046492a023ea1e46d711ada20ee91180bdca25e3473beb6f0ae0538fb"
+    },
+    {
+      "id": "20250818232259_Add-DownloadDirId-To-HistoryItem",
+      "className": "AddDownloadDirIdToHistoryItem",
+      "sourcePath": "backend/Database/Migrations/20250818232259_Add-DownloadDirId-To-HistoryItem.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20250818232259_Add-DownloadDirId-To-HistoryItem.Designer.cs",
+      "upThroughEofSha256": "8ceef4f25ae55b8b38675aac5ed7f860fabbef905a99dda758a59e678a0d3ab9",
+      "buildTargetModelSha256": "9d566ca1384fd33450fdd74bd6ea6de665d9840ad9db386dc0fc3e2e361d525c"
+    },
+    {
+      "id": "20250819091746_Add-Ids-Root-Directory",
+      "className": "AddIdsRootDirectory",
+      "sourcePath": "backend/Database/Migrations/20250819091746_Add-Ids-Root-Directory.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20250819091746_Add-Ids-Root-Directory.Designer.cs",
+      "upThroughEofSha256": "cdfe4cbfd43ed3177973f4a8f9a6728e7de1236ca0373d44a49a4350bc7f4e4d",
+      "buildTargetModelSha256": "9d566ca1384fd33450fdd74bd6ea6de665d9840ad9db386dc0fc3e2e361d525c"
+    },
+    {
+      "id": "20250819221618_Add-Path-To-DavItem",
+      "className": "AddPathToDavItem",
+      "sourcePath": "backend/Database/Migrations/20250819221618_Add-Path-To-DavItem.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20250819221618_Add-Path-To-DavItem.Designer.cs",
+      "upThroughEofSha256": "1e4332dbd16099cde05e58653fe44e0d8929a6a48f2ec226194d3f5928377abf",
+      "buildTargetModelSha256": "8050b87b5beebaa71804f23c7e0d3322b1477f6f6b0b8c3ed0389bc1c3ea0cc3"
+    },
+    {
+      "id": "20250824100609_Add-IdPrefix-To-DavItems",
+      "className": "AddIdPrefixToDavItems",
+      "sourcePath": "backend/Database/Migrations/20250824100609_Add-IdPrefix-To-DavItems.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20250824100609_Add-IdPrefix-To-DavItems.Designer.cs",
+      "upThroughEofSha256": "d10008af164f0467cd632b8a7e82e5895ece8d9e55dafcacfb8c1c8159ace9bb",
+      "buildTargetModelSha256": "5ff31899d532b7457d4e20be8a97045f846f53aaee3f053f019650656c272b49"
+    },
+    {
+      "id": "20251010192643_Add-Healthcheck-Columns-To-DavItems",
+      "className": "AddHealthcheckColumnsToDavItems",
+      "sourcePath": "backend/Database/Migrations/20251010192643_Add-Healthcheck-Columns-To-DavItems.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20251010192643_Add-Healthcheck-Columns-To-DavItems.Designer.cs",
+      "upThroughEofSha256": "5e575926c2e723673c7b1561647ffd35635bae52f453497bfab4734b70dc25d3",
+      "buildTargetModelSha256": "b463bdfe033c87edb2ef4d8676f45641333ef4c73e77e902bde86529fcc4b37a"
+    },
+    {
+      "id": "20251014060520_Add-HealthCheckResults-Table",
+      "className": "AddHealthCheckResultsTable",
+      "sourcePath": "backend/Database/Migrations/20251014060520_Add-HealthCheckResults-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20251014060520_Add-HealthCheckResults-Table.Designer.cs",
+      "upThroughEofSha256": "5c6d2ca0a8246b272f11681dfbbc7b6a7842ce5207055c59fa97c2d12996d81f",
+      "buildTargetModelSha256": "66518fc78c18df217ab22fa1677a36dda840cd9d1717f455d9ec2c2ee9e42f79"
+    },
+    {
+      "id": "20251014062743_Add-HealthCheckQueue-Index",
+      "className": "AddHealthCheckQueueIndex",
+      "sourcePath": "backend/Database/Migrations/20251014062743_Add-HealthCheckQueue-Index.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20251014062743_Add-HealthCheckQueue-Index.Designer.cs",
+      "upThroughEofSha256": "e157446423af0b04387e7016bc4a9cc40dedb99fece3ea91e41d5f056925eb67",
+      "buildTargetModelSha256": "935334b25c8e22f05efaf956355f2b73379e78b5d5be05261c42522288cfd817"
+    },
+    {
+      "id": "20251024003729_Add-DavMultipartFiles-Table",
+      "className": "AddDavMultipartFilesTable",
+      "sourcePath": "backend/Database/Migrations/20251024003729_Add-DavMultipartFiles-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20251024003729_Add-DavMultipartFiles-Table.Designer.cs",
+      "upThroughEofSha256": "5efbc5c2eff8c8570c3a04e7b94ba079870a6b044c4dfe942feb5217c678a054",
+      "buildTargetModelSha256": "794059feb59b7f6284ef620e63d1af8ea9b6a9b583b7588de62c963a7193d85e"
+    },
+    {
+      "id": "20251030163510_Add-QueueNzbContents-Table",
+      "className": "AddQueueNzbContentsTable",
+      "sourcePath": "backend/Database/Migrations/20251030163510_Add-QueueNzbContents-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20251030163510_Add-QueueNzbContents-Table.Designer.cs",
+      "upThroughEofSha256": "d7f5a1790298d1ff8ec77e223485f4b646ee5a6ef42bb995f751587f8f1d55af",
+      "buildTargetModelSha256": "3b68239c425641e82b0a6c004a63fa4d9740d66faf0a60f251f32ce2d57219ca"
+    },
+    {
+      "id": "20251105050845_Add-HealthCheckStats-Table",
+      "className": "AddHealthCheckStatsTable",
+      "sourcePath": "backend/Database/Migrations/20251105050845_Add-HealthCheckStats-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20251105050845_Add-HealthCheckStats-Table.Designer.cs",
+      "upThroughEofSha256": "719dd1f60d3e2d4eccd7a2b0bb321b62f28836240742d605fca04ddb7eda2f1c",
+      "buildTargetModelSha256": "10521377165d20c2eb646efb2d32ead985849583768b1a130c903bb421f2928b"
+    },
+    {
+      "id": "20251105200722_Add-CreatedAt-Index-To-HealthCheckResults-Table",
+      "className": "AddCreatedAtIndexToHealthCheckResultsTable",
+      "sourcePath": "backend/Database/Migrations/20251105200722_Add-CreatedAt-Index-To-HealthCheckResults-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20251105200722_Add-CreatedAt-Index-To-HealthCheckResults-Table.Designer.cs",
+      "upThroughEofSha256": "620cdb80fd93e8aa222e3e3d83646c1ef15eea574eee8a9734bb809ff88882bc",
+      "buildTargetModelSha256": "18482a18289ad5d2a1cc6c635575696ca026cc376acc152bb07bfbf1d47b4102"
+    },
+    {
+      "id": "20251106165542_Ensure-Strm-Key-Exists",
+      "className": "EnsureStrmKeyExists",
+      "sourcePath": "backend/Database/Migrations/20251106165542_Ensure-Strm-Key-Exists.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20251106165542_Ensure-Strm-Key-Exists.Designer.cs",
+      "upThroughEofSha256": "a0dd948b7ed6c52757ee5e7cc920c5a0aea2f52299a5ab3ff69ab8537976a52b",
+      "buildTargetModelSha256": "18482a18289ad5d2a1cc6c635575696ca026cc376acc152bb07bfbf1d47b4102"
+    },
+    {
+      "id": "20251113081523_Populate-Usenet-Providers-Config",
+      "className": "PopulateUsenetProvidersConfig",
+      "sourcePath": "backend/Database/Migrations/20251113081523_Populate-Usenet-Providers-Config.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20251113081523_Populate-Usenet-Providers-Config.Designer.cs",
+      "upThroughEofSha256": "a09229e59f3d352d816a3a8dbf19c013ab255635b2e0e03f2f3a7f3eace17e5b",
+      "buildTargetModelSha256": "18482a18289ad5d2a1cc6c635575696ca026cc376acc152bb07bfbf1d47b4102"
+    },
+    {
+      "id": "20251220004937_Fix-Empty-Categories",
+      "className": "FixEmptyCategories",
+      "sourcePath": "backend/Database/Migrations/20251220004937_Fix-Empty-Categories.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20251220004937_Fix-Empty-Categories.Designer.cs",
+      "upThroughEofSha256": "3ae82c2a42c7b5d70d7e0f3ceb3342de8164c6e6a30df5223f6da76ce0821f8e",
+      "buildTargetModelSha256": "18482a18289ad5d2a1cc6c635575696ca026cc376acc152bb07bfbf1d47b4102"
+    },
+    {
+      "id": "20260108054841_Add-BlobCleanupItems-Table",
+      "className": "AddBlobCleanupItemsTable",
+      "sourcePath": "backend/Database/Migrations/20260108054841_Add-BlobCleanupItems-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260108054841_Add-BlobCleanupItems-Table.Designer.cs",
+      "upThroughEofSha256": "0cfc1c9bb2f43bc82c62202f369aff32a79fcab41ec8b8d93f5ff6bc54db6b9c",
+      "buildTargetModelSha256": "b8c451299842abf6bfad77773f16b6007a7b5c6efe3edd3ee1ee935f0886d93d"
+    },
+    {
+      "id": "20260108061241_Add-Trigger-To-QueueItems-Table",
+      "className": "AddTriggerToQueueItemsTable",
+      "sourcePath": "backend/Database/Migrations/20260108061241_Add-Trigger-To-QueueItems-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260108061241_Add-Trigger-To-QueueItems-Table.Designer.cs",
+      "upThroughEofSha256": "358106a961d467a9104761cbd1b279c4eb352054ca8ce25aedcadbe96e84072c",
+      "buildTargetModelSha256": "b8c451299842abf6bfad77773f16b6007a7b5c6efe3edd3ee1ee935f0886d93d"
+    },
+    {
+      "id": "20260121033824_Populate-Blocklisted-Files-Setting",
+      "className": "PopulateBlocklistedFilesSetting",
+      "sourcePath": "backend/Database/Migrations/20260121033824_Populate-Blocklisted-Files-Setting.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260121033824_Populate-Blocklisted-Files-Setting.Designer.cs",
+      "upThroughEofSha256": "a746a6de38a34b8964d7b283ed7e99f3367a0d31d52bd8f18919719ffaadbb76",
+      "buildTargetModelSha256": "b103ab24f5569ec3e483bc3d0d6e30d5f2e96e68796075a11b74997f381bd44a"
+    },
+    {
+      "id": "20260122220920_Populate-Health-Check-Categories-Setting",
+      "className": "PopulateHealthCheckCategoriesSetting",
+      "sourcePath": "backend/Database/Migrations/20260122220920_Populate-Health-Check-Categories-Setting.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260122220920_Populate-Health-Check-Categories-Setting.Designer.cs",
+      "upThroughEofSha256": "e4f279278d0f13198c7d057c6fff14a82ec0d0f2d9d66a25359531df770771ed",
+      "buildTargetModelSha256": "b103ab24f5569ec3e483bc3d0d6e30d5f2e96e68796075a11b74997f381bd44a"
+    },
+    {
+      "id": "20260129182923_Update-DavItems-Type-And-SubType",
+      "className": "UpdateDavItemsTypeAndSubType",
+      "sourcePath": "backend/Database/Migrations/20260129182923_Update-DavItems-Type-And-SubType.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260129182923_Update-DavItems-Type-And-SubType.Designer.cs",
+      "upThroughEofSha256": "e758307c926e6c4571be719ef95b0867c50737c1cff534b37a6ae294954abe86",
+      "buildTargetModelSha256": "05a977fcd566c6b3c3c82b14cdfdc4d89efc2abd897ec26e1ade732c5ea088bf"
+    },
+    {
+      "id": "20260129190728_Add-FileBlobId-To-DavItems-Table",
+      "className": "AddFileBlobIdToDavItemsTable",
+      "sourcePath": "backend/Database/Migrations/20260129190728_Add-FileBlobId-To-DavItems-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260129190728_Add-FileBlobId-To-DavItems-Table.Designer.cs",
+      "upThroughEofSha256": "00180ef2a1c9543992891ccf665e23fefa1bbd1a7d7f2c0b04dc69b3fd6158cc",
+      "buildTargetModelSha256": "7f29645541cee942a340d9b03d77b9e931f41f421e02799fe65c45c48555871d"
+    },
+    {
+      "id": "20260130005230_Add-Trigger-To-DavItems-Table",
+      "className": "AddTriggerToDavItemsTable",
+      "sourcePath": "backend/Database/Migrations/20260130005230_Add-Trigger-To-DavItems-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260130005230_Add-Trigger-To-DavItems-Table.Designer.cs",
+      "upThroughEofSha256": "2681f97f6ae4c66c4c352fcdf7882a35c204ec636359019eb1a1a7b885954eb8",
+      "buildTargetModelSha256": "7f29645541cee942a340d9b03d77b9e931f41f421e02799fe65c45c48555871d"
+    },
+    {
+      "id": "20260201023253_Add-HistoryItemId-To-DavItems-Table",
+      "className": "AddHistoryItemIdToDavItemsTable",
+      "sourcePath": "backend/Database/Migrations/20260201023253_Add-HistoryItemId-To-DavItems-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260201023253_Add-HistoryItemId-To-DavItems-Table.Designer.cs",
+      "upThroughEofSha256": "75829fe5429a4785129262faf4d6f0fe67d033b3ae230bef8427ce4f5452026c",
+      "buildTargetModelSha256": "a333ea7436fe11d1cffe9aa553f71ec029c1381441cccc7a0ccafbaa2d06b1a9"
+    },
+    {
+      "id": "20260202005856_Add-Type-CreatedAt-Index-To-DavItems-Table",
+      "className": "AddTypeCreatedAtIndexToDavItemsTable",
+      "sourcePath": "backend/Database/Migrations/20260202005856_Add-Type-CreatedAt-Index-To-DavItems-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260202005856_Add-Type-CreatedAt-Index-To-DavItems-Table.Designer.cs",
+      "upThroughEofSha256": "b09481ae0be3dab71d4a2ce26269d8f8baa23ca15f235663639b151f50bfa9a0",
+      "buildTargetModelSha256": "a5b4dd5b58b9e967c0bc554afc782be1d907546864ce546f6f7dfa3d7d681024"
+    },
+    {
+      "id": "20260202094106_Add-SubType-CreatedAt-Index-To-DavItems-Table",
+      "className": "AddSubTypeCreatedAtIndexToDavItemsTable",
+      "sourcePath": "backend/Database/Migrations/20260202094106_Add-SubType-CreatedAt-Index-To-DavItems-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260202094106_Add-SubType-CreatedAt-Index-To-DavItems-Table.Designer.cs",
+      "upThroughEofSha256": "aaa78cb826f1fa643b8de3004c42ca26f506c6b5110926cfd25641caefac7b84",
+      "buildTargetModelSha256": "564d4e343149f93fbd417ad2434471ecb884c828eb5f90199b73be2dd6326f46"
+    },
+    {
+      "id": "20260203071130_Add-DavCleanupItems-Table",
+      "className": "AddDavCleanupItemsTable",
+      "sourcePath": "backend/Database/Migrations/20260203071130_Add-DavCleanupItems-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260203071130_Add-DavCleanupItems-Table.Designer.cs",
+      "upThroughEofSha256": "e00cde894b0a5740ab94555a00c22be999f418cb6775139d108173540f7d2be2",
+      "buildTargetModelSha256": "c505c0b46cb2fa9453bb27d21df6bf11416f745931e8820b2b54a2f788000649"
+    },
+    {
+      "id": "20260203205014_Add-DeleteMountedFiles-To-HistoryCleanupItems-Table",
+      "className": "AddDeleteMountedFilesToHistoryCleanupItemsTable",
+      "sourcePath": "backend/Database/Migrations/20260203205014_Add-DeleteMountedFiles-To-HistoryCleanupItems-Table.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260203205014_Add-DeleteMountedFiles-To-HistoryCleanupItems-Table.Designer.cs",
+      "upThroughEofSha256": "a478c63a97a68e93f9f1aa971c03c387dfb4bb3467cf2c987bd6c90cd218c852",
+      "buildTargetModelSha256": "d2287c901f78356b329283b34beacb297d09c01b4359fca23c9ed7f2ffe937bf"
+    },
+    {
+      "id": "20260226053712_Add-NzbBlobId-And-NzbNames",
+      "className": "AddNzbBlobIdAndNzbNames",
+      "sourcePath": "backend/Database/Migrations/20260226053712_Add-NzbBlobId-And-NzbNames.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260226053712_Add-NzbBlobId-And-NzbNames.Designer.cs",
+      "upThroughEofSha256": "3a9986bb05b5e942d1364b572fe2a344bf8e98176a97a12e37946b9a619255bc",
+      "buildTargetModelSha256": "7424858d396c3b14951d93538020f8091cf4dd0804be4d053740b45a3c2ed727"
+    },
+    {
+      "id": "20260407215451_Change-QueueItems-FileName-Index-To-Category-FileName",
+      "className": "ChangeQueueItemsFileNameIndexToCategoryFileName",
+      "sourcePath": "backend/Database/Migrations/20260407215451_Change-QueueItems-FileName-Index-To-Category-FileName.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260407215451_Change-QueueItems-FileName-Index-To-Category-FileName.Designer.cs",
+      "upThroughEofSha256": "ebc27e411d1e96273ce468676dcf5af3773e1021eaca8f72a832de6ffc24e865",
+      "buildTargetModelSha256": "8d95c963480fc1d1eca9b8f1b0fc43ca0189653fb87b24db5e107621eb976397"
+    },
+    {
+      "id": "20260702110859_Add-ArchivePassword-To-QueueItems",
+      "className": "AddArchivePasswordToQueueItems",
+      "sourcePath": "backend/Database/Migrations/20260702110859_Add-ArchivePassword-To-QueueItems.cs",
+      "metadataLayout": "designer",
+      "metadataPath": "backend/Database/Migrations/20260702110859_Add-ArchivePassword-To-QueueItems.Designer.cs",
+      "upThroughEofSha256": "b3b2827b37da0e2dc82db52619c3476378ec75df8aa5e9e3c3e0ab1814e49b91",
+      "buildTargetModelSha256": "0e588bd364b7050d95f9691a8a242a3e39d9acfd599edaae5827c79f19988f1e"
+    },
+    {
+      "id": "20260702142000_Add-QueueSelection-Index",
+      "className": "AddQueueSelectionIndex",
+      "sourcePath": "backend/Database/Migrations/20260702142000_Add-QueueSelection-Index.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260702142000_Add-QueueSelection-Index.cs",
+      "upThroughEofSha256": "03d3e7e0f3d56c71510f64b7b9028d9aa134261079f69616e4edc6e05533136e"
+    },
+    {
+      "id": "20260702153000_Add-RcloneInvalidationItems-Table",
+      "className": "AddRcloneInvalidationItemsTable",
+      "sourcePath": "backend/Database/Migrations/20260702153000_Add-RcloneInvalidationItems-Table.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260702153000_Add-RcloneInvalidationItems-Table.cs",
+      "upThroughEofSha256": "4687f4d400bee59ff7a14447a15a62f9e351e3da6197a9157b95dc76bd6e01cd"
+    },
+    {
+      "id": "20260702170000_Add-WorkerJobs-Table",
+      "className": "AddWorkerJobsTable",
+      "sourcePath": "backend/Database/Migrations/20260702170000_Add-WorkerJobs-Table.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260702170000_Add-WorkerJobs-Table.cs",
+      "upThroughEofSha256": "1c5f02b36a81a708185a5db407d04666a3d662ae16ad8535061f9719273c0ccb"
+    },
+    {
+      "id": "20260702183000_Add-RepairRuns-Tables",
+      "className": "AddRepairRunsTables",
+      "sourcePath": "backend/Database/Migrations/20260702183000_Add-RepairRuns-Tables.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260702183000_Add-RepairRuns-Tables.cs",
+      "upThroughEofSha256": "a6d66d290c04f37ff070f4f6f6ef6d29fbf96369813036318b2d8d1be233e053"
+    },
+    {
+      "id": "20260704120000_Add-ArrDrivenPriority-Tables",
+      "className": "AddArrDrivenPriorityTables",
+      "sourcePath": "backend/Database/Migrations/20260704120000_Add-ArrDrivenPriority-Tables.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260704120000_Add-ArrDrivenPriority-Tables.cs",
+      "upThroughEofSha256": "b3038bab8b1a22411575dddaabad009fd44751066b97dc2d3e583e72f3d153a6"
+    },
+    {
+      "id": "20260704143000_Add-ArrCorrelation-Source-And-ManualLock",
+      "className": "AddArrCorrelationSourceAndManualLock",
+      "sourcePath": "backend/Database/Migrations/20260704143000_Add-ArrCorrelation-Source-And-ManualLock.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260704143000_Add-ArrCorrelation-Source-And-ManualLock.cs",
+      "upThroughEofSha256": "07279c91ecaa551499dbd033882a81011b3da5f5a84ab8576aaa0b2ac44f98d0"
+    },
+    {
+      "id": "20260705013000_Add-WorkerJob-Operational-Indexes",
+      "className": "AddWorkerJobOperationalIndexes",
+      "sourcePath": "backend/Database/Migrations/20260705013000_Add-WorkerJob-Operational-Indexes.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260705013000_Add-WorkerJob-Operational-Indexes.cs",
+      "upThroughEofSha256": "77e910eef53b36c46816020a92b076e31ca79793619c7b1cb18cada23a860396"
+    },
+    {
+      "id": "20260705023000_Make-DavCleanup-Trigger-Idempotent",
+      "className": "MakeDavCleanupTriggerIdempotent",
+      "sourcePath": "backend/Database/Migrations/20260705023000_Make-DavCleanup-Trigger-Idempotent.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260705023000_Make-DavCleanup-Trigger-Idempotent.cs",
+      "upThroughEofSha256": "f0eb20076e2c56729ea4f581952a4a19f30917a125c8b5ccee1ea2614e23ec46"
+    },
+    {
+      "id": "20260705033000_Add-HealthCheckResult-Latest-Index",
+      "className": "AddHealthCheckResultLatestIndex",
+      "sourcePath": "backend/Database/Migrations/20260705033000_Add-HealthCheckResult-Latest-Index.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260705033000_Add-HealthCheckResult-Latest-Index.cs",
+      "upThroughEofSha256": "dc38186076886748203b86ef8f95fa1b684b7171e0bd7a6bd0fed861005b0985"
+    },
+    {
+      "id": "20260706093000_Make-BlobCleanup-Triggers-Idempotent",
+      "className": "MakeBlobCleanupTriggersIdempotent",
+      "sourcePath": "backend/Database/Migrations/20260706093000_Make-BlobCleanup-Triggers-Idempotent.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260706093000_Make-BlobCleanup-Triggers-Idempotent.cs",
+      "upThroughEofSha256": "a4251e727dc7ca59bf4afec6035770ab5e50f4b1e2b3d721aa054bf77d877bca"
+    },
+    {
+      "id": "20260711120000_Add-Worker-Lease-Coordination",
+      "className": "AddWorkerLeaseCoordination",
+      "sourcePath": "backend/Database/Migrations/20260711120000_Add-Worker-Lease-Coordination.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260711120000_Add-Worker-Lease-Coordination.cs",
+      "upThroughEofSha256": "d46da5a5d74c666c9c8ef8e003b202603f5052668aec008fe349b7af300a07bc"
+    },
+    {
+      "id": "20260711133000_Add-Import-Receipts",
+      "className": "AddImportReceipts",
+      "sourcePath": "backend/Database/Migrations/20260711133000_Add-Import-Receipts.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260711133000_Add-Import-Receipts.cs",
+      "upThroughEofSha256": "ade0f9f06ca1e346f51f2d8a272236bed19d13e7c1197e8a289bb65f552f75a1"
+    },
+    {
+      "id": "20260712113000_Add-Maintenance-Runs",
+      "className": "AddMaintenanceRuns",
+      "sourcePath": "backend/Database/Migrations/20260712113000_Add-Maintenance-Runs.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260712113000_Add-Maintenance-Runs.cs",
+      "upThroughEofSha256": "6987f0a62bbe324a1af6e055b62c37ddab7f7734effaa3172fec5d9367be9e1a"
+    },
+    {
+      "id": "20260712120000_Add-Rclone-Invalidation-Revision",
+      "className": "AddRcloneInvalidationRevision",
+      "sourcePath": "backend/Database/Migrations/20260712120000_Add-Rclone-Invalidation-Revision.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260712120000_Add-Rclone-Invalidation-Revision.cs",
+      "upThroughEofSha256": "b5862d3fdd86b0d2d311125337e3da0ab447470089cb5ea81838c5cef3a5a413"
+    },
+    {
+      "id": "20260712123000_Add-Arr-Import-Commands",
+      "className": "AddArrImportCommands",
+      "sourcePath": "backend/Database/Migrations/20260712123000_Add-Arr-Import-Commands.cs",
+      "metadataLayout": "inline",
+      "metadataPath": "backend/Database/Migrations/20260712123000_Add-Arr-Import-Commands.cs",
+      "upThroughEofSha256": "7709161f32c12cf56b1c5952c0eeb66f9768a240930e240d70d7428a898a7f40"
+    }
+  ]
+}
