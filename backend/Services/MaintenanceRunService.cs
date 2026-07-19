@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using Serilog;
+using NzbWebDAV.Security;
 
 namespace NzbWebDAV.Services;
 
@@ -270,13 +271,13 @@ public sealed class MaintenanceRunService(IMaintenanceTaskExecutor taskExecutor)
                 : MaintenanceRunStatus.Cancelled;
             await MarkTerminalAsync(run.Id, status, error: null, CancellationToken.None).ConfigureAwait(false);
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            Log.Error(exception, "Maintenance run {MaintenanceRunId} failed.", run.Id);
+            Log.Error("Maintenance run {MaintenanceRunId} failed.", run.Id);
             await MarkTerminalAsync(
                     run.Id,
                     MaintenanceRunStatus.Failed,
-                    exception.Message,
+                    PublicDiagnosticContract.Message(PublicDiagnosticKind.MaintenanceFailure),
                     CancellationToken.None)
                 .ConfigureAwait(false);
         }

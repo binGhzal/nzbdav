@@ -1,9 +1,10 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Api.Controllers;
-using NzbWebDAV.Api.Controllers.ConvertStrmToSymlinks;
 using NzbWebDAV.Api.Controllers.Maintenance;
+using NzbWebDAV.Api.Controllers.RemoveUnlinkedFiles;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 using NzbWebDAV.Services;
 using backend.Tests.Services;
 
@@ -25,20 +26,25 @@ public sealed class MaintenanceRunControllerTests
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
         var executor = new NoOpMaintenanceTaskExecutor();
         using var service = new MaintenanceRunService(executor);
-        var getController = new RecreateStrmFiles(service);
+        var getController = new RemoveUnlinkedFilesController(service);
 
         var getResult = await HandleAuthenticatedAsync(getController, HttpMethods.Get);
 
         var methodNotAllowed = Assert.IsType<ObjectResult>(getResult);
         Assert.Equal(StatusCodes.Status405MethodNotAllowed, methodNotAllowed.StatusCode);
+        AssertFailure(
+            getController.HttpContext,
+            Assert.IsType<BaseApiResponse>(methodNotAllowed.Value),
+            "method_not_allowed",
+            "The request method is not allowed.");
 
-        var startController = new RecreateStrmFiles(service);
+        var startController = new RemoveUnlinkedFilesController(service);
         var startResult = await HandleAuthenticatedAsync(startController, HttpMethods.Post);
 
         var accepted = Assert.IsType<AcceptedResult>(startResult);
         var acceptedResponse = Assert.IsType<MaintenanceRunResponse>(accepted.Value);
         Assert.Equal("queued", acceptedResponse.Run.Status);
-        Assert.Equal("recreate-strm-files", acceptedResponse.Run.Kind);
+        Assert.Equal("remove-unlinked-files", acceptedResponse.Run.Kind);
         Assert.Equal($"/api/maintenance/runs/{acceptedResponse.Run.Id}", accepted.Location);
         Assert.Equal(0, executor.ExecutionCount);
 
@@ -50,12 +56,30 @@ public sealed class MaintenanceRunControllerTests
         var detail = Assert.IsType<MaintenanceRunResponse>(Assert.IsType<OkObjectResult>(detailResult).Value);
         Assert.Equal(acceptedResponse.Run.Id, detail.Run.Id);
 
-        var conflictController = new ConvertStrmToSymlinks(service);
+        var conflictController = new RemoveUnlinkedFilesDryRunController(service);
         var conflictResult = await HandleAuthenticatedAsync(conflictController, HttpMethods.Post);
 
         var conflict = Assert.IsType<ConflictObjectResult>(conflictResult);
         var conflictResponse = Assert.IsType<MaintenanceRunConflictResponse>(conflict.Value);
         Assert.Equal(acceptedResponse.Run.Id, conflictResponse.ActiveRun.Id);
+        AssertFailure(
+            conflictController.HttpContext,
+            Assert.IsAssignableFrom<BaseApiResponse>(conflictResponse),
+            "maintenance_run_active",
+            "A maintenance run is already active.");
+
+        var missingDetailController = new MaintenanceRunController(service);
+        var missingDetail = await HandleAuthenticatedAsync(
+            missingDetailController,
+            HttpMethods.Get,
+            Guid.NewGuid());
+
+        var missingDetailResult = Assert.IsType<NotFoundObjectResult>(missingDetail);
+        AssertFailure(
+            missingDetailController.HttpContext,
+            Assert.IsType<BaseApiResponse>(missingDetailResult.Value),
+            "resource_not_found",
+            "The requested resource was not found.");
     }
 
     [Fact]
@@ -99,6 +123,20 @@ public sealed class MaintenanceRunControllerTests
             "manual",
             CancellationToken.None);
 
+        var wrongMethodController = new CancelMaintenanceRunController(service);
+        var wrongMethod = await HandleAuthenticatedAsync(
+            wrongMethodController,
+            HttpMethods.Get,
+            started.Run.Id);
+
+        var methodNotAllowed = Assert.IsType<ObjectResult>(wrongMethod);
+        Assert.Equal(StatusCodes.Status405MethodNotAllowed, methodNotAllowed.StatusCode);
+        AssertFailure(
+            wrongMethodController.HttpContext,
+            Assert.IsType<BaseApiResponse>(methodNotAllowed.Value),
+            "method_not_allowed",
+            "The request method is not allowed.");
+
         var cancelController = new CancelMaintenanceRunController(service);
         var cancelled = await HandleAuthenticatedAsync(
             cancelController,
@@ -114,7 +152,12 @@ public sealed class MaintenanceRunControllerTests
             HttpMethods.Post,
             Guid.NewGuid());
 
-        Assert.IsType<NotFoundObjectResult>(missing);
+        var missingResult = Assert.IsType<NotFoundObjectResult>(missing);
+        AssertFailure(
+            missingController.HttpContext,
+            Assert.IsType<BaseApiResponse>(missingResult.Value),
+            "resource_not_found",
+            "The requested resource was not found.");
     }
 
     private static async Task<IActionResult> HandleAuthenticatedAsync(
@@ -152,6 +195,20 @@ public sealed class MaintenanceRunControllerTests
         context.Request.Method = method;
         context.Request.QueryString = new QueryString(query);
         return context;
+    }
+
+    private static void AssertFailure(
+        HttpContext context,
+        BaseApiResponse response,
+        string expectedCode,
+        string expectedMessage)
+    {
+        Assert.False(response.Status);
+        Assert.Equal(expectedCode, response.Code);
+        Assert.Equal(expectedMessage, response.Error);
+        Assert.Matches("^[0-9a-f]{32}$", response.CorrelationId);
+        Assert.Equal(response.CorrelationId, context.Response.Headers[PublicFailureContract.CorrelationHeaderName]);
+        Assert.Equal(expectedCode, context.Response.Headers[PublicFailureContract.ErrorCodeHeaderName]);
     }
 
     private sealed class NoOpMaintenanceTaskExecutor : IMaintenanceTaskExecutor

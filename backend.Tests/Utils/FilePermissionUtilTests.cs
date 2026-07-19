@@ -8,7 +8,7 @@ public sealed class FilePermissionUtilTests
     public async Task WriteAllTextAsync_CreatesMissingParentDirectory()
     {
         var root = Path.Join(Path.GetTempPath(), "nzbdav-file-write", Guid.NewGuid().ToString("N"));
-        var path = Path.Join(root, "nested", "Movie.strm");
+        var path = Path.Join(root, "nested", "Movie.mkv");
         try
         {
             await FilePermissionUtil.WriteAllTextAsync(path, "http://localhost/view/test");
@@ -26,7 +26,7 @@ public sealed class FilePermissionUtilTests
     public async Task WriteAllTextAsync_DoesNotRewriteUnchangedFile()
     {
         var root = Path.Join(Path.GetTempPath(), "nzbdav-file-write", Guid.NewGuid().ToString("N"));
-        var path = Path.Join(root, "Movie.strm");
+        var path = Path.Join(root, "Movie.mkv");
         var timestamp = new DateTime(2024, 01, 01, 00, 00, 00, DateTimeKind.Utc);
         try
         {

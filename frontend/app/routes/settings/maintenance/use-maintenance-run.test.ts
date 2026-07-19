@@ -16,7 +16,7 @@ describe("useMaintenanceRun", () => {
             .mockReturnValueOnce(firstResponse.promise)
             .mockResolvedValueOnce(statusResponse(maintenanceRun({ message: "newer" })));
         vi.stubGlobal("fetch", fetchMock);
-        const { result } = renderHook(() => useMaintenanceRun("recreate-strm-files"));
+        const { result } = renderHook(() => useMaintenanceRun("remove-unlinked-files"));
 
         let joinedRefresh!: Promise<void>;
         act(() => {
@@ -37,7 +37,7 @@ describe("useMaintenanceRun", () => {
     it("does not let a delayed poll overwrite a newly accepted run", async () => {
         const delayedResponse = deferred<Response>();
         vi.stubGlobal("fetch", vi.fn().mockReturnValueOnce(delayedResponse.promise));
-        const { result } = renderHook(() => useMaintenanceRun("recreate-strm-files"));
+        const { result } = renderHook(() => useMaintenanceRun("remove-unlinked-files"));
         const acceptedRun = maintenanceRun({
             id: "new-run",
             message: "accepted",
@@ -71,16 +71,16 @@ describe("useMaintenanceRun", () => {
         vi.stubGlobal("fetch", fetchMock);
         const { result, rerender } = renderHook(
             ({ kind }) => useMaintenanceRun(kind),
-            { initialProps: { kind: "recreate-strm-files" as MaintenanceRunKind } });
+            { initialProps: { kind: "remove-unlinked-files" as MaintenanceRunKind } });
 
-        rerender({ kind: "convert-strm-to-symlinks" });
+        rerender({ kind: "remove-unlinked-files-dry-run" });
 
         expect(fetchMock).toHaveBeenCalledTimes(2);
-        expect(fetchMock.mock.calls[1][0]).toContain("kind=convert-strm-to-symlinks");
+        expect(fetchMock.mock.calls[1][0]).toContain("kind=remove-unlinked-files-dry-run");
 
         newKindResponse.resolve(statusResponse(maintenanceRun({
             id: "new-kind-run",
-            kind: "convert-strm-to-symlinks",
+            kind: "remove-unlinked-files-dry-run",
             message: "new kind",
         })));
         await act(async () => {
@@ -91,7 +91,7 @@ describe("useMaintenanceRun", () => {
 
         oldKindResponse.resolve(statusResponse(maintenanceRun({
             id: "old-kind-run",
-            kind: "recreate-strm-files",
+            kind: "remove-unlinked-files",
             message: "old kind",
         })));
         await act(async () => {
@@ -108,7 +108,7 @@ describe("useMaintenanceRun", () => {
 function maintenanceRun(overrides: Partial<MaintenanceRun> = {}): MaintenanceRun {
     return {
         id: "run",
-        kind: "recreate-strm-files",
+        kind: "remove-unlinked-files",
         status: "running",
         requestedBy: "manual",
         createdAt: "2026-07-12T08:00:00Z",

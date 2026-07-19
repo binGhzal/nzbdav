@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.node.json",
+  "include": [
+    "bootstrap.ts",
+    "server.ts",
+    "server/debug-output.ts",
+    "server/public-failure-response.ts",
+    "server/react-router-handler.ts",
+    "server/request-policy.ts",
+    "server/websocket-policy.ts",
+    "app/utils/public-failure.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "incremental": false,
+    "noEmit": false,
+    "outDir": "dist-node",
+    "rootDir": "."
+  }
+}

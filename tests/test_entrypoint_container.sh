@@ -8,11 +8,24 @@ migration_name="${prefix}-migration"
 export_name="${prefix}-export"
 rejected_name="${prefix}-rejected"
 missing_key_name="${prefix}-missing-session-key"
+invalid_identity_name="${prefix}-invalid-identity"
 normal_name="${prefix}-normal"
 session_key=$(printf '%064d' 0)
+internal_key=$(printf '%064d' 1)
+identity_uid=$(id -u)
+identity_gid=$(id -g)
+case "$identity_uid:$identity_gid" in
+  0:*|*:0)
+    echo "Container identity smoke requires a nonzero host UID and GID fixture." >&2
+    exit 1
+    ;;
+esac
+expected_identity_diagnostic='entrypoint_failure code=invalid_identity'
+expected_session_key_diagnostic='SESSION_KEY must be exactly 64 hexadecimal characters.'
+invalid_session_key=$(printf '%063d' 0)g
 
 remove_containers() {
-  for container in "$migration_name" "$export_name" "$rejected_name" "$missing_key_name" "$normal_name"; do
+  for container in "$migration_name" "$export_name" "$rejected_name" "$missing_key_name" "$invalid_identity_name" "$normal_name"; do
     docker rm -f "$container" >/dev/null 2>&1 || true
   done
 }
@@ -63,13 +76,13 @@ case "$metadata" in
 esac
 
 run_bounded_container "$migration_name" 120 \
-  -e PUID="$(id -u)" -e PGID="$(id -g)" \
+  -e PUID="$identity_uid" -e PGID="$identity_gid" \
   -v "$root/config:/config" -v "$root/transfer:/transfer" \
   "$image" --db-migration
 [ "$CONTAINER_EXIT_CODE" -eq 0 ]
 
 run_bounded_container "$export_name" 120 \
-  -e PUID="$(id -u)" -e PGID="$(id -g)" \
+  -e PUID="$identity_uid" -e PGID="$identity_gid" \
   -v "$root/config:/config" -v "$root/transfer:/transfer" \
   "$image" --db-export-json /transfer/snapshot.json
 [ "$CONTAINER_EXIT_CODE" -eq 0 ]
@@ -90,24 +103,57 @@ run_bounded_container "$rejected_name" 30 "$image" --db-import-json --db-migrati
 run_bounded_container "$rejected_name" 30 "$image" --db-import-json --replace
 [ "$CONTAINER_EXIT_CODE" -eq 64 ]
 
+for configured_identity in \
+  "0:$identity_gid" \
+  "000000:$identity_gid" \
+  "$identity_uid:0" \
+  "$identity_uid:000000"
+do
+  configured_puid=${configured_identity%%:*}
+  configured_pgid=${configured_identity#*:}
+  run_bounded_container "$invalid_identity_name" 30 \
+    -e PUID="$configured_puid" -e PGID="$configured_pgid" \
+    -e AUTH_MODE=local \
+    -v "$root/missing-key-config:/config" \
+    "$image"
+  [ "$CONTAINER_EXIT_CODE" -eq 64 ]
+  [ "$CONTAINER_LOGS" = "$expected_identity_diagnostic" ] || {
+    echo "Numeric-zero identity did not produce the exact bounded startup diagnostic." >&2
+    exit 1
+  }
+done
+
 run_bounded_container "$missing_key_name" 60 \
-  -e PUID="$(id -u)" -e PGID="$(id -g)" \
-  -e AUTH_MODE=local -e FRONTEND_BACKEND_API_KEY=entrypoint-smoke \
+  -e PUID="$identity_uid" -e PGID="$identity_gid" \
+  -e AUTH_MODE=local \
   -v "$root/missing-key-config:/config" \
   "$image"
-[ "$CONTAINER_EXIT_CODE" -ne 0 ]
+[ "$CONTAINER_EXIT_CODE" -eq 78 ]
+[ "$CONTAINER_LOGS" = "$expected_session_key_diagnostic" ] || {
+  echo "Missing SESSION_KEY did not produce the exact bounded startup diagnostic." >&2
+  exit 1
+}
+
+run_bounded_container "$missing_key_name" 60 \
+  -e PUID="$identity_uid" -e PGID="$identity_gid" \
+  -e AUTH_MODE=local -e SESSION_KEY="$invalid_session_key" \
+  -v "$root/missing-key-config:/config" \
+  "$image"
+[ "$CONTAINER_EXIT_CODE" -eq 78 ]
+[ "$CONTAINER_LOGS" = "$expected_session_key_diagnostic" ] || {
+  echo "Invalid SESSION_KEY did not produce the exact bounded startup diagnostic." >&2
+  exit 1
+}
 case "$CONTAINER_LOGS" in
-  *"SESSION_KEY must be exactly 64 hexadecimal characters."*) ;;
-  *)
-    echo "Missing SESSION_KEY did not produce the required startup diagnostic." >&2
-    printf '%s\n' "$CONTAINER_LOGS" >&2
+  *"$invalid_session_key"*)
+    echo "Invalid SESSION_KEY diagnostic exposed candidate material." >&2
     exit 1
     ;;
 esac
 
-docker run -d --name "$normal_name" -e PUID="$(id -u)" -e PGID="$(id -g)" \
+docker run -d --name "$normal_name" -e PUID="$identity_uid" -e PGID="$identity_gid" \
   -e AUTH_MODE=local -e SESSION_KEY="$session_key" \
-  -e FRONTEND_BACKEND_API_KEY=entrypoint-smoke \
+  -e FRONTEND_BACKEND_API_KEY="$internal_key" \
   -v "$root/normal-config:/config" -p 127.0.0.1::3000 "$image" >/dev/null
 port=$(docker port "$normal_name" 3000/tcp | awk -F: 'NR == 1 { print $NF }')
 health_deadline=$(($(date +%s) + 90))
@@ -124,6 +170,58 @@ until curl --max-time 5 -fsS "http://127.0.0.1:$port/health" >/dev/null; do
   fi
   sleep 1
 done
+
+docker exec -i \
+  -e EXPECTED_UID="$identity_uid" \
+  -e EXPECTED_GID="$identity_gid" \
+  "$normal_name" sh <<'SH'
+set -eu
+
+assert_process_identity() {
+  process_status=$1
+  expected_uid=$2
+  expected_gid=$3
+  process_label=$4
+  uid_values=$(awk '/^Uid:/ { print $2 " " $3 " " $4 " " $5 }' "$process_status")
+  gid_values=$(awk '/^Gid:/ { print $2 " " $3 " " $4 " " $5 }' "$process_status")
+  expected_uid_values="$expected_uid $expected_uid $expected_uid $expected_uid"
+  expected_gid_values="$expected_gid $expected_gid $expected_gid $expected_gid"
+
+  [ "$uid_values" = "$expected_uid_values" ] || {
+    echo "$process_label did not drop every UID identity to the expected value." >&2
+    exit 1
+  }
+  [ "$gid_values" = "$expected_gid_values" ] || {
+    echo "$process_label did not drop every GID identity to the expected value." >&2
+    exit 1
+  }
+}
+
+assert_process_identity "/proc/1/status" 0 0 "Container PID 1"
+
+backend_pid=
+frontend_pid=
+identity_deadline=$(($(date +%s) + 15))
+while [ -z "$backend_pid" ] || [ -z "$frontend_pid" ]; do
+  # shellcheck disable=SC2013 # Linux exposes direct child PIDs as space-separated words.
+  for child_pid in $(cat "/proc/1/task/1/children"); do
+    [ -r "/proc/$child_pid/cmdline" ] || continue
+    child_command=$(tr '\000' ' ' < "/proc/$child_pid/cmdline")
+    case "$child_command" in
+      *NzbWebDAV*) backend_pid=$child_pid ;;
+      *"node dist-node/bootstrap.js"*) frontend_pid=$child_pid ;;
+    esac
+  done
+  if [ "$(date +%s)" -ge "$identity_deadline" ]; then
+    echo "Could not resolve both network workload processes from container PID 1." >&2
+    exit 1
+  fi
+  [ -n "$backend_pid" ] && [ -n "$frontend_pid" ] || sleep 1
+done
+
+assert_process_identity "/proc/$backend_pid/status" "$EXPECTED_UID" "$EXPECTED_GID" "Backend workload"
+assert_process_identity "/proc/$frontend_pid/status" "$EXPECTED_UID" "$EXPECTED_GID" "Frontend workload"
+SH
 docker stop -t 20 "$normal_name" >/dev/null
 [ "$(docker inspect --format '{{.State.ExitCode}}' "$normal_name")" -eq 0 ]
 docker rm "$normal_name" >/dev/null

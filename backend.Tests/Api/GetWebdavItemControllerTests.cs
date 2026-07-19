@@ -5,20 +5,28 @@ using NzbWebDAV.Api.Controllers.GetWebdavItem;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.WebDav.Base;
+using backend.Tests.Services;
 
 namespace backend.Tests.Api;
 
-public sealed class GetWebdavItemControllerTests
+[Collection(nameof(ContentIndexDatabaseCollection))]
+public sealed class GetWebdavItemControllerTests : IDisposable
 {
+    private const string InternalFixtureKey = "fixture-internal";
+    private readonly string? _previousApiKey =
+        Environment.GetEnvironmentVariable("FRONTEND_BACKEND_API_KEY");
+
+    public GetWebdavItemControllerTests()
+    {
+        Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", InternalFixtureKey);
+    }
+
     [Fact]
     public async Task HandleRequestCopiesResponseBodyWithStreamingSizedReads()
     {
         var source = new TrackingReadStream(length: 256 * 1024);
         var store = new FakeStore(new FakeStoreItem("movie.mkv", source));
         var configManager = new ConfigManager();
-        configManager.UpdateValues([
-            new ConfigItem { ConfigName = "api.strm-key", ConfigValue = "test-strm-key" }
-        ]);
         var controller = new GetWebdavItemController(store, configManager);
         var context = CreateContext(".ids/movie.mkv");
         controller.ControllerContext = new ControllerContext
@@ -136,9 +144,6 @@ public sealed class GetWebdavItemControllerTests
         var item = new FakeStoreItem("movie.mkv", length: 1024);
         var store = new FakeStore(item);
         var configManager = new ConfigManager();
-        configManager.UpdateValues([
-            new ConfigItem { ConfigName = "api.strm-key", ConfigValue = "test-strm-key" }
-        ]);
         var controller = new GetWebdavItemController(store, configManager);
         var context = CreateContext(".ids/movie.mkv");
         context.Request.Method = HttpMethods.Head;
@@ -161,7 +166,6 @@ public sealed class GetWebdavItemControllerTests
         var store = new FakeStore(item);
         var configManager = new ConfigManager();
         configManager.UpdateValues([
-            new ConfigItem { ConfigName = "api.strm-key", ConfigValue = "test-strm-key" },
             new ConfigItem { ConfigName = "webdav.preview-par2-files", ConfigValue = "true" }
         ]);
         var controller = new GetWebdavItemController(store, configManager);
@@ -188,9 +192,6 @@ public sealed class GetWebdavItemControllerTests
     {
         var store = new FakeStore(item);
         var configManager = new ConfigManager();
-        configManager.UpdateValues([
-            new ConfigItem { ConfigName = "api.strm-key", ConfigValue = "test-strm-key" }
-        ]);
         return new GetWebdavItemController(store, configManager);
     }
 
@@ -201,11 +202,16 @@ public sealed class GetWebdavItemControllerTests
         context.Request.Path = $"/view/{path}";
         context.Request.QueryString = QueryString.Create(
             "downloadKey",
-            GetWebdavItemRequest.GenerateDownloadKey("test-strm-key", path));
+            GetWebdavItemRequest.GenerateDownloadKey(InternalFixtureKey, path));
         if (rangeHeader is not null)
             context.Request.Headers.Range = rangeHeader;
         context.Response.Body = new MemoryStream();
         return context;
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", _previousApiKey);
     }
 
     private sealed class FakeStore(IStoreItem item) : IStore

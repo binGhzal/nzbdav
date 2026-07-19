@@ -1,6 +1,14 @@
 import { useEffect } from "react";
 import type { UploadingFile } from "../route";
 import { withUrlBase } from "~/utils/url-base";
+import {
+    fallbackHttpFailure,
+    parseBoundedJsonObject,
+    renderPublicFailure,
+    resolvePublicFailureEnvelope,
+} from "~/utils/public-failure";
+
+const MaximumUploadResponseBytes = 512;
 
 export function initializeUploadController(
     isUploadingRef: React.RefObject<boolean>,
@@ -34,7 +42,7 @@ async function processUploadQueue(
         const formData = new FormData();
         formData.append('nzbFile', fileToUpload.file, fileToUpload.file.name);
 
-        xhr.responseType = 'json';
+        xhr.responseType = 'text';
         xhr.upload.addEventListener('progress', (e) => {
             if (e.lengthComputable) {
                 const progress = Math.round((e.loaded / e.total) * 100);
@@ -52,25 +60,31 @@ async function processUploadQueue(
                 ));
             }
         });
+        xhr.addEventListener('progress', (e) => {
+            if (shouldAbortUploadResponse(e.loaded)) xhr.abort();
+        });
 
-        var response: any = await new Promise<void>((resolve, reject) => {
+        const responseText = await new Promise<string>((resolve, reject) => {
             xhr.addEventListener('load', () => {
                 if (xhr.status >= 200 && xhr.status < 300) {
-                    resolve(xhr.response);
+                    resolve(xhr.responseText);
                 } else {
-                    const errorMessage = xhr.response.error || `Upload failed with status ${xhr.status}`;
-                    reject(new Error(errorMessage));
+                    reject(new SafeUploadError(getUploadFailureMessage(xhr.status, xhr.responseText, name => xhr.getResponseHeader(name))));
                 }
             });
-            xhr.addEventListener('error', () => reject(new Error('Upload failed')));
-            xhr.addEventListener('abort', () => reject(new Error('Upload aborted')));
+            xhr.addEventListener('error', () => reject(new SafeUploadError('Upload failed.')));
+            xhr.addEventListener('abort', () => reject(new SafeUploadError('Upload failed.')));
 
             xhr.open('POST', withUrlBase(`/api?mode=addfile&cat=${fileToUpload.queueSlot.cat}&priority=0&pp=0`));
             xhr.send(formData);
         });
 
-        if (response.status == false) {
-            throw new Error(response.error);
+        const response = parseBoundedJsonObject(responseText);
+        if (response?.status !== true) {
+            throw new SafeUploadError(getUploadFailureMessage(
+                xhr.status,
+                responseText,
+                name => xhr.getResponseHeader(name)));
         }
 
     } catch (error) {
@@ -80,7 +94,7 @@ async function processUploadQueue(
                 queueSlot: {
                     ...f.queueSlot,
                     status: 'upload failed',
-                    error: error instanceof Error ? error.message : 'Upload failed'
+                    error: error instanceof SafeUploadError ? error.message : 'Upload failed.'
                 }
             } : f
         ));
@@ -92,4 +106,20 @@ async function processUploadQueue(
     if (uploadQueueRef.current.length > 0) {
         processUploadQueue(isUploadingRef, uploadQueueRef, setUploadingFiles);
     }
+}
+
+class SafeUploadError extends Error {}
+
+export function getUploadFailureMessage(
+    status: number,
+    body: string,
+    getHeader: (name: string) => string | null,
+): string {
+    const headers = { get: getHeader };
+    const envelope = resolvePublicFailureEnvelope(body, headers);
+    return envelope ? renderPublicFailure(envelope) : fallbackHttpFailure(status);
+}
+
+export function shouldAbortUploadResponse(loadedBytes: number): boolean {
+    return loadedBytes > MaximumUploadResponseBytes;
 }

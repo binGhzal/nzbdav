@@ -214,7 +214,9 @@ async function authenticate(request: Request): Promise<User> {
   const formData = await request.formData();
   const username = formData.get("username")?.toString();
   const password = formData.get("password")?.toString();
-  if (!username || !password) throw new Error("username and password required");
+  if (!username || !password) throw new PublicAuthenticationError("username and password required");
   if (await backendClient.authenticate(username, password)) return { username };
-  throw new Error("Invalid credentials");
+  throw new PublicAuthenticationError("Invalid credentials");
 }
+
+export class PublicAuthenticationError extends Error {}

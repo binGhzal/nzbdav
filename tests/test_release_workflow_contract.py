@@ -168,7 +168,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
             workflow,
         )
 
-    def test_dependabot_tracks_both_pinned_dockerfiles(self):
+    def test_dependabot_tracks_only_the_supported_root_dockerfile(self):
         dependabot = (REPOSITORY_ROOT / ".github" / "dependabot.yml").read_text(
             encoding="utf-8"
         )
@@ -177,7 +177,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
             r'package-ecosystem:\s*"docker"\s*\n\s*directory:\s*"([^"]+)"',
             dependabot,
         )
-        self.assertEqual({"/", "/frontend"}, set(docker_entries))
+        self.assertEqual({"/"}, set(docker_entries))
 
 
 if __name__ == "__main__":

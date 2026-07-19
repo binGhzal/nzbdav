@@ -6,14 +6,6 @@ namespace backend.Tests.Config;
 
 public sealed class ConfigSecretRedactorTests
 {
-    [Fact]
-    public void RedactValue_RedactsStrmMasterKey()
-    {
-        Assert.Equal(
-            ConfigSecretRedactor.RedactedSecret,
-            ConfigSecretRedactor.RedactValue("api.strm-key", "strm-secret"));
-    }
-
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -170,15 +162,15 @@ public sealed class ConfigSecretRedactorTests
         string user,
         string pass,
         bool useSsl = true) => new()
-    {
-        Type = ProviderType.Pooled,
-        Host = host,
-        Port = port,
-        UseSsl = useSsl,
-        User = user,
-        Pass = pass,
-        MaxConnections = 10
-    };
+        {
+            Type = ProviderType.Pooled,
+            Host = host,
+            Port = port,
+            UseSsl = useSsl,
+            User = user,
+            Pass = pass,
+            MaxConnections = 10
+        };
 
     private static ArrConfig.ConnectionDetails Arr(string host, string apiKey) => new()
     {

@@ -140,7 +140,6 @@ public class GetWebdavItemController(IStore store, ConfigManager configManager) 
     {
         try
         {
-            HttpContext.Items["configManager"] = configManager;
             var request = new GetWebdavItemRequest(HttpContext);
             await using var response = await GetWebdavItem(request);
             await CopyResponseBodyAsync(response, Response.Body, HttpContext.RequestAborted)
@@ -157,7 +156,6 @@ public class GetWebdavItemController(IStore store, ConfigManager configManager) 
     {
         try
         {
-            HttpContext.Items["configManager"] = configManager;
             var request = new GetWebdavItemRequest(HttpContext);
             await using var response = await GetWebdavItem(request).ConfigureAwait(false);
             // HEAD: headers already set, body omitted

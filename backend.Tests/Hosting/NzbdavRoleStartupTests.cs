@@ -5,11 +5,37 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Transfer;
 using NzbWebDAV.Hosting;
+using backend.Tests.Security;
 
 namespace backend.Tests.Hosting;
 
 public sealed class NzbdavRoleStartupTests
 {
+    [Fact]
+    public void LegacyUpgradeGuardUsesTheFixedStartupFailureBoundary()
+    {
+        var source = File.ReadAllText(SqliteContractTestSupport.AbsolutePath("backend/Program.cs"));
+        var guard = source[source.IndexOf("private static void BlockUpgradesToV06X", StringComparison.Ordinal)..];
+        guard = guard[..guard.IndexOf("private static void ConfigureThreadPool", StringComparison.Ordinal)];
+
+        Assert.Contains("StartupFailureContract.LegacyUpgradeRefusalMessage", guard, StringComparison.Ordinal);
+        Assert.DoesNotContain("Console.", guard, StringComparison.Ordinal);
+        Assert.DoesNotContain("Environment.Exit", guard, StringComparison.Ordinal);
+        Assert.DoesNotContain("/config", guard, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InvalidRoleProcessOutputNeverRendersConfiguredValueOrException()
+    {
+        var result = await StartApplicationAsync(PublicFailureCanary.Composite);
+
+        Assert.NotEqual(0, result.ExitCode);
+        PublicFailureCanary.AssertSafe(result.Output, maximumLength: 1024);
+        Assert.Contains("startup_invalid_role", result.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("Unhandled exception", result.Output, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(" at ", result.Output, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("control", "Control")]
     [InlineData("gateway", "Gateway")]

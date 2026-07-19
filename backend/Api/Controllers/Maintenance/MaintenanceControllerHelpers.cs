@@ -1,23 +1,22 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Api.Controllers.Maintenance;
 
 internal static class MaintenanceControllerHelpers
 {
-    public static ObjectResult MethodNotAllowed(ControllerBase controller, string method)
+    public static IActionResult MethodNotAllowed(BaseApiController controller, string method)
     {
-        return controller.StatusCode(StatusCodes.Status405MethodNotAllowed, new BaseApiResponse
-        {
-            Status = false,
-            Error = $"This endpoint requires {method}.",
-        });
+        return controller.Failure(
+            StatusCodes.Status405MethodNotAllowed,
+            PublicFailureContract.MethodNotAllowed());
     }
 
     public static async Task<IActionResult> StartRunAsync(
-        ControllerBase controller,
+        BaseApiController controller,
         MaintenanceRunService service,
         MaintenanceRunKind kind,
         CancellationToken cancellationToken)
@@ -25,10 +24,13 @@ internal static class MaintenanceControllerHelpers
         var result = await service.TryStartRunAsync(kind, "manual", cancellationToken).ConfigureAwait(false);
         if (!result.Started)
         {
-            return controller.Conflict(new MaintenanceRunConflictResponse
-            {
-                ActiveRun = MaintenanceRunDto.FromModel(result.Run),
-            });
+            return controller.Failure(
+                StatusCodes.Status409Conflict,
+                PublicFailureContract.MaintenanceRunActive(),
+                new MaintenanceRunConflictResponse
+                {
+                    ActiveRun = MaintenanceRunDto.FromModel(result.Run),
+                });
         }
 
         var dto = MaintenanceRunDto.FromModel(result.Run);

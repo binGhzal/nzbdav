@@ -1,5 +1,5 @@
 import { withUrlBase } from "~/utils/url-base";
-import { readJsonObjectOrEmpty } from "~/utils/http-response";
+import { getHttpErrorMessage, readJsonObjectOrEmpty } from "~/utils/http-response";
 
 export type MaintenanceRunStatus =
     "queued"
@@ -12,9 +12,7 @@ export type MaintenanceRunStatus =
 
 export type MaintenanceRunKind =
     "remove-unlinked-files"
-    | "remove-unlinked-files-dry-run"
-    | "convert-strm-to-symlinks"
-    | "recreate-strm-files";
+    | "remove-unlinked-files-dry-run";
 
 export type MaintenanceRun = {
     id: string;
@@ -37,17 +35,21 @@ export async function startMaintenanceTask(
     label: string,
     setError: (message: string | null) => void,
 ) {
+    let response: Response;
     try {
-        const response = await fetch(withUrlBase(path), { method: "POST" });
-        const body = await readJsonObjectOrEmpty<{ run?: unknown, error?: unknown }>(response);
-        if (response.status !== 202) {
-            const detail = typeof body.error === "string" && body.error.trim()
-                ? `: ${body.error.trim().replace(/\.$/, "")}.`
-                : ` (${response.status}).`;
-            setError(`Failed to start ${label}${detail}`);
-            return null;
-        }
+        response = await fetch(withUrlBase(path), { method: "POST" });
+    } catch {
+        setError(`Failed to start ${label}: request failed.`);
+        return null;
+    }
 
+    if (response.status !== 202) {
+        setError(`Failed to start ${label}: ${await getHttpErrorMessage(response)}.`);
+        return null;
+    }
+
+    try {
+        const body = await readJsonObjectOrEmpty<{ run?: unknown }>(response);
         if (!isMaintenanceRun(body.run)) {
             setError(`Failed to start ${label}: the server returned an invalid run response.`);
             return null;
@@ -55,9 +57,8 @@ export async function startMaintenanceTask(
 
         setError(null);
         return body.run;
-    } catch (error) {
-        const message = error instanceof Error && error.message ? error.message : "unknown error";
-        setError(`Failed to start ${label}: ${message}.`);
+    } catch {
+        setError(`Failed to start ${label}: the server returned an invalid run response.`);
         return null;
     }
 }

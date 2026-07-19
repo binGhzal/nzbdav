@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 
 namespace NzbWebDAV.Api.Controllers.Repair;
 
@@ -81,7 +82,7 @@ public sealed class RepairRunDto
             Deleted = run.Deleted,
             ActionNeeded = run.ActionNeeded,
             BrokenFiles = run.BrokenFiles,
-            Message = run.Message
+            Message = PublicDiagnosticContract.RepairRunDetail(run.Status, run.Message)
         };
     }
 }
@@ -114,7 +115,9 @@ public sealed class RepairBrokenFileDto
             RepairRunId = brokenFile.RepairRunId.ToString(),
             DavItemId = brokenFile.DavItemId.ToString(),
             Path = brokenFile.Path,
-            Reason = brokenFile.Reason,
+            Reason = PublicDiagnosticContract.FromOptional(
+                brokenFile.Reason,
+                PublicDiagnosticKind.RepairFailure) ?? "",
             CreatedAt = brokenFile.CreatedAt
         };
     }

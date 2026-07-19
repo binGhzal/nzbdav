@@ -155,13 +155,7 @@ public class GetStatusController(
 
     public static string GetCompleteDir(ConfigManager configManager)
     {
-        return configManager.GetImportStrategy() switch
-        {
-            "strm" => configManager.GetStrmCompletedDownloadDir(),
-            "both" => Path.Join(configManager.GetMountDir(), DavItem.SymlinkFolder.Name),
-            "symlinks" => Path.Join(configManager.GetMountDir(), DavItem.SymlinkFolder.Name),
-            _ => Path.Join(configManager.GetMountDir(), DavItem.SymlinkFolder.Name)
-        };
+        return Path.Join(configManager.GetMountDir(), DavItem.SymlinkFolder.Name);
     }
 
     private static string GetUptime()

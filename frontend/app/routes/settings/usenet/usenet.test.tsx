@@ -91,7 +91,7 @@ describe("UsenetSettings", () => {
         expect(container.querySelector('[class*="connection-bar"]')).toBeNull();
     });
 
-    it("shows the backend error body when a provider connection test fails", async () => {
+    it("rejects an arbitrary backend error body when a provider connection test fails", async () => {
         vi.stubGlobal("WebSocket", FakeWebSocket);
         vi.stubGlobal("fetch", vi.fn(async () => new Response("provider auth failed", { status: 401 })));
         const config = {
@@ -107,8 +107,28 @@ describe("UsenetSettings", () => {
 
         await waitFor(() => {
             expect(screen.getByRole("alert").textContent)
-                .toContain("Connection test failed: provider auth failed");
+                .toBe("Connection test failed: HTTP 401");
         });
+    });
+
+    it("renders a stable connection-timeout compatibility failure", async () => {
+        vi.stubGlobal("WebSocket", FakeWebSocket);
+        vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+            status: true, connected: false, error: "hostile-legacy-detail",
+            code: "connection_timeout", correlation_id: "0123456789abcdef0123456789abcdef",
+        }, {
+            status: 504,
+            headers: { "X-Error-Code": "connection_timeout", "X-Correlation-ID": "0123456789abcdef0123456789abcdef" },
+        })));
+        const config = { "usenet.providers": JSON.stringify(createProviderConfig()), "usenet.nntp-pipelining.enabled": "true" };
+
+        render(<UsenetSettings config={config} setNewConfig={vi.fn()} />);
+        fireEvent.click(screen.getByTitle("Edit Provider"));
+        fireEvent.change(screen.getByLabelText("Username"), { target: { value: "changed-user" } });
+        fireEvent.click(screen.getByRole("button", { name: "Test Connection" }));
+
+        await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(
+            "Connection test failed: The connection test timed out. (0123456789abcdef0123456789abcdef)"));
     });
 
     it("submits the saved-password marker with the exact TLS and username identity", async () => {

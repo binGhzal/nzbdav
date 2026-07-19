@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using System.Net;
 using NWebDav.Server;
 using NWebDav.Server.Stores;
 using NzbWebDAV.Api.SabControllers;
@@ -14,6 +15,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Transfer;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Hosting;
+using NzbWebDAV.Logging;
 using NzbWebDAV.Middlewares;
 using NzbWebDAV.Mount;
 using NzbWebDAV.Queue;
@@ -24,7 +26,6 @@ using NzbWebDAV.WebDav.Base;
 using NzbWebDAV.Websocket;
 using Serilog;
 using Serilog.Events;
-using Serilog.Sinks.SystemConsole.Themes;
 
 namespace NzbWebDAV;
 
@@ -32,7 +33,21 @@ class Program
 {
     private const long DefaultMaxStartupVacuumBytes = 1L * 1024 * 1024 * 1024;
 
-    static async Task Main(string[] args)
+    static async Task<int> Main(string[] args)
+    {
+        try
+        {
+            await RunAsync(args).ConfigureAwait(false);
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(StartupFailureContract.Format(exception));
+            return 1;
+        }
+    }
+
+    private static async Task RunAsync(string[] args)
     {
         var maintenanceCommand = MaintenanceCommandLine.Parse(args);
         if (maintenanceCommand.Kind is MaintenanceCommandKind.ExportV3Unavailable
@@ -76,7 +91,7 @@ class Program
             .MinimumLevel.Override("Microsoft.AspNetCore.Mvc", LogEventLevel.Warning)
             .MinimumLevel.Override("Microsoft.AspNetCore.Routing", LogEventLevel.Warning)
             .MinimumLevel.Override("Microsoft.AspNetCore.DataProtection", LogEventLevel.Error)
-            .WriteTo.Console(theme: AnsiConsoleTheme.Code)
+            .WriteTo.Console(new V1SafeConsoleFormatter())
             .CreateLogger();
 
         if (sqliteRuntime is not null)
@@ -140,7 +155,14 @@ class Program
         // initialize webapp
         var builder = WebApplication.CreateBuilder(args);
         var maxRequestBodySize = EnvironmentUtil.GetLongVariable("MAX_REQUEST_BODY_SIZE") ?? 100 * 1024 * 1024;
-        builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = maxRequestBodySize);
+        var backendListenPort = BackendListenPolicy.ResolvePort(
+            Environment.GetEnvironmentVariable("ASPNETCORE_URLS"),
+            builder.Configuration);
+        builder.WebHost.ConfigureKestrel(options =>
+        {
+            options.Listen(IPAddress.Loopback, backendListenPort);
+            options.Limits.MaxRequestBodySize = maxRequestBodySize;
+        });
         builder.Host.UseSerilog();
         builder.Services.AddControllers();
         builder.Services.AddHealthChecks();
@@ -206,6 +228,7 @@ class Program
         // run
         var app = builder.Build();
         app.UseMiddleware<ExceptionMiddleware>();
+        app.UseMiddleware<WebDavPathBaseMiddleware>();
         app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
         app.MapHealthChecks("/health");
         app.Map("/ws", websocketManager.HandleRoute);
@@ -244,17 +267,7 @@ class Program
         var upgradeEnv = EnvironmentUtil.GetVariable("UPGRADE");
         if (upgradeEnv == "0.6.0") return;
 
-        // Otherwise, display the upgrade message, and exit.
-        Console.WriteLine(
-            """
-            Version 0.6.0 of nzbdav is NOT backwards compatible.
-            You can upgrade, but you won't be able to downgrade.
-            Make a backup of your entire /config directory prior to upgrading.
-            The only way to downgrade back to a previous version is by restoring this backup.
-            To acknowledge this message and continue upgrading, set the env variable UPGRADE=0.6.0
-            """
-        );
-        Environment.Exit(1);
+        throw new InvalidOperationException(StartupFailureContract.LegacyUpgradeRefusalMessage);
     }
 
     private static void ConfigureThreadPool()

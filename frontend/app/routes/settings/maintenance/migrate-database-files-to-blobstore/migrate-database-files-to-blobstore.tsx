@@ -6,11 +6,11 @@ import { getWebsocketUrl } from "~/utils/url-base";
 
 const TaskTopic = { 'uftbmp': 'state' };
 
-type ConvertStrmToSymlinksProps = {
+type MigrateDatabaseFilesToBlobstoreProps = {
     savedConfig: Record<string, string>
 };
 
-export function MigrateDatabaseFilesToBlobstore({ savedConfig }: ConvertStrmToSymlinksProps) {
+export function MigrateDatabaseFilesToBlobstore({ savedConfig }: MigrateDatabaseFilesToBlobstoreProps) {
     // stateful variables
     const [connected, setConnected] = useState<boolean>(false);
     const [progress, setProgress] = useState<string | null>(null);

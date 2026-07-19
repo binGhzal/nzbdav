@@ -30,7 +30,6 @@ public sealed class GetConfigControllerTests
         await SetConfigAsync(dbContext, "rclone.host", "http://rclone:5572");
         await SetConfigAsync(dbContext, "rclone.pass", "rclone-secret");
         await SetConfigAsync(dbContext, "api.key", "sab-secret");
-        await SetConfigAsync(dbContext, "api.strm-key", "strm-secret");
         await SetConfigAsync(dbContext, "webdav.pass", "webdav-hash");
         await SetConfigAsync(dbContext, "usenet.providers", UpdateConfigControllerTests.CreateProviderConfigJson("provider-secret"));
         await SetConfigAsync(dbContext, "arr.instances", UpdateConfigControllerTests.CreateArrConfigJson("arr-secret"));
@@ -41,7 +40,6 @@ public sealed class GetConfigControllerTests
                 "rclone.host",
                 "rclone.pass",
                 "api.key",
-                "api.strm-key",
                 "webdav.pass",
                 "usenet.providers",
                 "arr.instances"
@@ -55,7 +53,6 @@ public sealed class GetConfigControllerTests
         Assert.Equal("http://rclone:5572", items["rclone.host"]);
         Assert.Equal(RedactedSecret, items["rclone.pass"]);
         Assert.Equal(RedactedSecret, items["api.key"]);
-        Assert.Equal(RedactedSecret, items["api.strm-key"]);
         Assert.Equal(RedactedSecret, items["webdav.pass"]);
         Assert.DoesNotContain("provider-secret", items["usenet.providers"]);
         Assert.DoesNotContain("arr-secret", items["arr.instances"]);

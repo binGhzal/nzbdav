@@ -51,7 +51,7 @@ COPY --from=node-runtime /usr/local/ /usr/local/
 # Copy frontend
 COPY --from=frontend-build /frontend/node_modules ./frontend/node_modules
 COPY --from=frontend-build /frontend/package.json ./frontend/package.json
-COPY --from=frontend-build /frontend/dist-node/server.js ./frontend/dist-node/server.js
+COPY --from=frontend-build /frontend/dist-node ./frontend/dist-node
 COPY --from=frontend-build /frontend/build ./frontend/build
 
 # Copy backend
@@ -62,17 +62,23 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Set env variables
-# Port 3000: frontend  Port 8080: backend (WebDAV / API)
-EXPOSE 3000 8080
+# Port 3000 is the sole public listener. The co-located backend stays on loopback.
+EXPOSE 3000
 ARG NZBDAV_VERSION
 ENV NZBDAV_VERSION=${NZBDAV_VERSION}
 ARG URL_BASE=""
 ENV URL_BASE=${URL_BASE}
 ENV NODE_ENV=production
 ENV LOG_LEVEL=warning
-# LISTEN_ADDRESS controls the network interface both the frontend and backend bind to.
-# Default is 0.0.0.0 (all interfaces). Set to a specific IP to restrict binding.
+# LISTEN_ADDRESS controls only the public frontend listener.
+# Default is 0.0.0.0 (all interfaces). Set it to restrict public binding.
 ENV LISTEN_ADDRESS=0.0.0.0
 
+# PID 1 needs root solely to create the configured nonzero PUID/PGID, prepare
+# owned paths, and supervise two children. Both network workloads drop their
+# resolved user and group; this is not an exception for privileged DFS access,
+# SYS_ADMIN, /dev/fuse, or any other elevated workload capability.
+# trivy:ignore:DS-0002
+USER root
 ENTRYPOINT ["/entrypoint.sh"]
 CMD []

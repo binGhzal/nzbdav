@@ -1,14 +1,24 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["server.ts", "vite.config.ts"],
+  "include": [
+    "bootstrap.ts",
+    "server.ts",
+    "server/debug-output.ts",
+    "server/public-failure-response.ts",
+    "server/react-router-handler.ts",
+    "server/request-policy.ts",
+    "server/websocket-policy.ts",
+    "app/utils/public-failure.ts",
+    "vite.config.ts"
+  ],
   "compilerOptions": {
     "composite": true,
     "strict": true,
-    "noEmit": false,
+    "noEmit": true,
     "types": ["node"],
     "lib": ["ES2022"],
     "target": "ES2022",
-    "module": "ES2022",
-    "moduleResolution": "bundler"
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
   }
 }

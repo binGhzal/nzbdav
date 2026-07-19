@@ -409,7 +409,7 @@ public class RcloneInvalidationService : BackgroundService
         DateTimeOffset now,
         CancellationToken ct)
     {
-        var truncatedError = error.Length <= 1024 ? error : error[..1024];
+        var safeError = GetStatusSafeError(error);
         await DavDatabaseContext.ExecuteWithSqliteBusyRetryAsync(async () =>
         {
             await using var transaction = await dbContext.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
@@ -422,7 +422,7 @@ public class RcloneInvalidationService : BackgroundService
                     .ExecuteUpdateAsync(setters => setters
                         .SetProperty(x => x.Attempts, attempts)
                         .SetProperty(x => x.LastAttemptAt, now)
-                        .SetProperty(x => x.LastError, truncatedError)
+                        .SetProperty(x => x.LastError, safeError)
                         .SetProperty(x => x.NextAttemptAt, nextAttemptAt), ct)
                     .ConfigureAwait(false);
             }

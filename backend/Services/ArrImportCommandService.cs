@@ -13,6 +13,7 @@ using NzbWebDAV.Clients.RadarrSonarr.SonarrModels;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 using NzbWebDAV.Utils;
 using Serilog;
 
@@ -953,7 +954,7 @@ public sealed class ArrImportCommandService : BackgroundService
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 
-        for (var attempt = 1;; attempt++)
+        for (var attempt = 1; ; attempt++)
         {
             await using var dbContext = contextFactory();
             var providerName = dbContext.Database.ProviderName;
@@ -1180,6 +1181,7 @@ public sealed class ArrImportCommandService : BackgroundService
         CancellationToken ct)
     {
         if (command.LeaseToken is null) return;
+        var safeError = PublicDiagnosticContract.ArrImportFailureDetail(error);
         var changed = await DavDatabaseContext.ExecuteWithSqliteBusyRetryAsync(async () =>
         {
             await using var dbContext = DavDatabaseContextRuntimeFactory.Create();
@@ -1202,7 +1204,7 @@ public sealed class ArrImportCommandService : BackgroundService
                     .SetProperty(x => x.LeaseExpiresAt, (DateTimeOffset?)null)
                     .SetProperty(x => x.CompletedAt, completedAt)
                     .SetProperty(x => x.ResultsJson, resultsJson)
-                    .SetProperty(x => x.LastError, error), ct)
+                    .SetProperty(x => x.LastError, safeError), ct)
                 .ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
         if (changed == 0)

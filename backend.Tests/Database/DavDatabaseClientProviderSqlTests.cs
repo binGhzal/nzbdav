@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 using NzbWebDAV.Tests.TestDoubles;
 
 namespace backend.Tests.Database;
@@ -139,7 +140,9 @@ public sealed class DavDatabaseClientProviderSqlTests
         Assert.Equal(WorkerJob.JobStatus.Cancelled, orphan.Status);
         Assert.Equal(WorkerJob.FailureClass.Cancelled, orphan.FailureKind);
         Assert.NotNull(orphan.CompletedAt);
-        Assert.Contains("target", orphan.LastError, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(
+            PublicDiagnosticContract.Message(PublicDiagnosticKind.WorkerFailure),
+            orphan.LastError);
         Assert.Equal(0, orphan.Attempts);
     }
 

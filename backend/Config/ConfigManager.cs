@@ -439,12 +439,6 @@ public class ConfigManager
                ?? EnvironmentUtil.GetRequiredVariable("FRONTEND_BACKEND_API_KEY");
     }
 
-    public string GetStrmKey()
-    {
-        return GetConfigValue("api.strm-key")
-               ?? throw new InvalidOperationException("The `api.strm-key` config does not exist.");
-    }
-
     public List<string> GetApiCategories()
     {
         var value = GetConfigValue("api.categories")
@@ -1274,11 +1268,6 @@ public class ConfigManager
             .ToHashSet();
     }
 
-    public string GetImportStrategy()
-    {
-        return GetConfigValue("api.import-strategy") ?? "symlinks";
-    }
-
     public string GetSymlinkTargetMode()
     {
         var value = GetFirstConfigValue("api.symlink-target-mode", "rclone.symlink-target-mode")
@@ -1286,16 +1275,6 @@ public class ConfigManager
                     ?? "absolute";
         value = value.Trim().ToLowerInvariant();
         return value == "relative" ? "relative" : "absolute";
-    }
-
-    public string GetStrmCompletedDownloadDir()
-    {
-        return GetConfigValue("api.completed-downloads-dir") ?? "/data/completed-downloads";
-    }
-
-    public string GetBaseUrl()
-    {
-        return GetConfigValue("general.base-url") ?? "http://localhost:3000";
     }
 
     public bool IsRcloneRemoteControlEnabled()

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 
 namespace NzbWebDAV.Services;
 
@@ -66,7 +67,9 @@ public static class MaintenanceRunTransitions
                 MaintenanceRunStatus.Cancelled => "Cancelled.",
                 _ => null,
             };
-            var truncatedError = Truncate(error, 4096);
+            var truncatedError = PublicDiagnosticContract.FromOptional(
+                error,
+                PublicDiagnosticKind.MaintenanceFailure);
             var updated = await UpdateTerminalAsync(
                 dbContext,
                 id,

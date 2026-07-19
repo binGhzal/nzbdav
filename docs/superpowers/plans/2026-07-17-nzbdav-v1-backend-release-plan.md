@@ -2,7 +2,7 @@
 
 **Status:** ACTIVE
 
-**Last reconciled:** 2026-07-18
+**Last reconciled:** 2026-07-19
 
 **Canonical handoff:** [`HANDOFF.md`](../../../HANDOFF.md)
 
@@ -21,7 +21,12 @@ separately planned full rebrand.
 - Unsupported: every pre-V1 in-place upgrade and in-place downgrade.
 - Private/post-V1: PostgreSQL, Transfer-v3 Phase 4, split roles, multi-owner,
   multi-host, and alternate packaging.
-- Full rebrand is blocked until Task 7 records the backend freeze.
+- V1 mount delivery uses the rclone sidecar contract. Any privileged
+  in-container DFS/FUSE prototype remains post-gate and is not covered by a
+  dynamic-user exception for the combined application image.
+- Full rebrand remains blocked through Task 10. It may begin only after the
+  release-candidate GO evidence is complete and the user reviews the backend
+  pass/risk report.
 - Only disposable, uniquely owned fixtures may be used for tests.
 - Production access is read-only diagnosis/canary only after disposable gates;
   never use production for migration, repair, stress, or fault injection.
@@ -57,20 +62,33 @@ release provenance.
 | Transfer-v3 Task 8 focused gate | 26/26 passed, but independent review found a P1 pre-budget catalog materialization path; deferred post-V1 |
 | Frontend typecheck, unit, client build, server build | PASS |
 | Frontend Playwright | 5/5 PASS |
-| npm audit, moderate threshold | 0 vulnerabilities |
-| NuGet vulnerable-package review | No known vulnerable package reported in current scan |
+| npm audit, moderate threshold | 0 vulnerabilities in the fresh Task 2 checkpoint scan |
+| NuGet vulnerable-package review | No vulnerable direct or transitive package reported for either `backend/NzbWebDAV.csproj` or `backend.Tests/backend.Tests.csproj` |
 | Entrypoint shell contract | PASS |
 | Python tooling | 110 tests passed |
 | Docker image build and exact runtime assertions | PASS for local evidence image only |
 | Entrypoint container smoke | PASS |
 | `git diff --check` | PASS at last execution |
+| Task 2 hermetic backend Release suite | 3,071 total: 2,986 passed, 85 deliberate PostgreSQL-only skips, 0 failed |
+| Task 2 frontend unit and Playwright | 50 files/928 unit and 5/5 Playwright PASS |
+| Task 2 Python tooling | 157/157 PASS; Task 2E focused checkpoint was 155/155 before two additive container-release tests |
+| Task 2 local image/container gate | BLOCKED: local Docker lacks buildx; exact remote CI required |
+| Task 2 Trivy | PASS: npm vulnerabilities 0 and Dockerfile misconfigurations 0 after reviewed identity hardening and one exact justified root-Dockerfile exception |
 
-The 2026-07-18 whole-diff review keeps Task 2 open. The backend public API-key
-carrier contract is now frozen, but exact proxy policy remains test-only draft
-code and is not wired to production; raw errors remain exposed or persisted;
-detached repair work, STRM surfaces, false readiness, delete-before-commit blob
-cleanup, and unsafe rclone state recording remain release blockers. See
-`HANDOFF.md` for exact paths and order.
+The 2026-07-19 Task 2 checkpoint wires the exact production HTTP/WebSocket
+proxy, removes reachable STRM surfaces, enforces the symlink-only clean-install
+contract, binds the backend to loopback, closes public failure/log/persistence
+canaries, preflights internal/session credentials, freezes the canonical
+external protocol/operator contract, and closes the reviewed container-user
+boundary. Focused code, operator, and container reviews are green. Graphify
+0.9.19 rebuilt the final AST-only graph at 15,770 nodes, 41,044 edges, and 728
+communities; external graph update and query/path/explain canaries passed. An
+independent combined-diff security review is `0/0/0/0`. The formal Codex
+Security workspace setup timed out without Start Scan being submitted, so the
+formal diff review, signed push, and exact remote container/CI result remain
+pending. Detached repair work, false
+readiness, delete-before-commit blob cleanup, and unsafe rclone state recording
+remain release blockers. See `HANDOFF.md` for exact evidence and order.
 
 ## Task status
 
@@ -78,7 +96,7 @@ cleanup, and unsafe rclone state recording remain release blockers. See
 | --- | --- | --- |
 | 0. Freeze V1 contract and pivot documentation | COMPLETE | New design/plan govern continuation; Phase 4 is explicitly deferred; handoff and `AGENTS.md` point here. |
 | 1. Restore deterministic backend test truth | COMPLETE | No testhost crash; cleanup/visibility contract is correctly classified and green; complete suite runs normally. |
-| 2. Secure sessions, proxying, errors, and logs | IN PROGRESS | Stable session policy, exact route authentication, bounded sanitized responses, and canary-negative tests pass. |
+| 2. Secure sessions, proxying, errors, and logs | 2A-2E + CONTAINER HARDENING LOCAL GREEN; FINAL SECURITY/CI AND 2F REFERENCE AUDIT PENDING | Stable session policy, exact route authentication, bounded sanitized responses, canary-negative tests, reference-gap audit, and exact remote CI pass. |
 | 3. Add real liveness/readiness | NOT STARTED | Core readiness has fault/recovery coverage and entrypoint waits on it. |
 | 4. Own repair and shutdown lifecycle | NOT STARTED | No detached persistence mutation; bounded host-owned execution and shutdown tests pass. |
 | 5. Make rclone safe-up fail closed | NOT STARTED | Full unchanged/changed/unhealthy/mount/canary/state fault matrix passes. |
@@ -123,7 +141,8 @@ analyzer suppression, or fake service response can satisfy a gate.
 
 - [x] Freeze SQLite, one owner, `role=all`, and Docker-first V1.
 - [x] Record user choice: V1 is clean-install-only; upgrades are post-V1.
-- [x] Record user choice: full rebrand waits until the backend fully passes.
+- [x] Record user choice: full rebrand waits for Task 10 GO and user review of
+      the complete backend pass/risk report.
 - [x] Run six-seat architecture/release/security/product/scope/adversarial
   council.
 - [x] Record unanimous council result: topology accepted, current candidate
@@ -279,7 +298,7 @@ passed the container lifecycle smoke and every stated native Transfer job on
 glibc/musl and x64/arm64 at the carrier-slice base. This is CI evidence for the
 slice base, not final release-candidate provenance.
 
-### 2B. Exact proxy boundary
+### 2B. Exact proxy and symlink-only boundary — complete locally
 
 **Verified topology decision (2026-07-17):** Use the existing frontend listener
 and hostname with a dedicated mount-relative `/protocol` client-ingress prefix.
@@ -391,7 +410,9 @@ now passes focused `34/34` and affected `96/96`, with no production-code change.
 The first independent specification, quality, and bounded-security reviews
 found no P0/P1/P2 and no functional parser defect. The backend parser is sealed
 after accepted review-fix re-review and exact-HEAD run `29661598011`;
-production proxy work remains blocked on the RED route/method/credential matrix.
+at that carrier-only checkpoint, production proxy work remained blocked on the
+RED route/method/credential matrix. The later Task 2B evidence below supersedes
+that historical status.
 
 **Security-tool gate (2026-07-18, sealed):**
 gitleaks 8.30.1 identified exactly eight `generic-api-key` findings, all in
@@ -420,11 +441,13 @@ error builds, scoped format, whitespace, gitleaks, and independent review are
 green. Signed checkpoint `88e05f87e37147bf60b7fad8b0914df43e219eab`
 was pushed without force; exact-HEAD run `29664771054` completed with the main
 verifier and native Transfer glibc/musl x64/arm64 all successful, zero failed
-jobs, and zero failed steps. Stop before resuming the proxy matrix. External
+jobs, and zero failed steps. The then-required stop before resuming the proxy
+matrix was honored and later superseded by explicit continuation. External
 signed commit
 `0e9e3583e6b26fedb26c222f06519a02853bc902` already added clone-local Graphify
-configuration and passed exact run `29663671084`; this incident task must not
-rerun or modify Graphify.
+configuration and passed exact run `29663671084`; the prohibition applied to
+that incident slice only. The current checkpoint must perform its final
+AST-only update after the diff stabilizes.
 
 **Files:**
 
@@ -467,6 +490,34 @@ before admin proxying, strip client internal keys, inject the configured key
 only server-side, and preserve independently authenticated WebDAV/SAB routes
 through exact allowlists.
 
+**Local completion evidence (2026-07-19):** The production listener now runs
+the raw-target classifier for every HTTP lane and authenticates exact
+`<URL_BASE>/ws` before 101. UI/admin relays require the selected principal and
+receive one server-owned internal key; `/protocol` lanes preserve only their
+reviewed public/WebDAV credentials. Browser authority, hop-by-hop fields,
+private redirects, and private cookies are stripped. A `Connection` option may
+not nominate an API-key, authorization, form/framing, conditional, range,
+authority, destination, or internal PathBase header; capture and real ASP.NET
+regressions prove conflicts cannot be erased before the sealed backend parser.
+The backend binds explicit loopback only and rejects configured Kestrel
+endpoints; the image exposes only port 3000.
+
+Mounted WebDAV uses one bounded base64url internal PathBase header that is
+removed before NWebDav and logical store lookup. Empty, single, and nested
+mounts pass disposable ASP.NET `34/34` plus the subsequent Connection-carrier
+regressions. Pinned rclone `1.74.4` passes `7/7` across list, range, upload,
+queue removal, operator content deletion, and completed-symlink acknowledgement.
+Runtime `URL_BASE` is restricted to literal unreserved ASCII segments, exact
+case, and an 8,192-byte mounted WebDAV PathBase ceiling. Wildcard runtime
+`DEBUG` is disabled before routing so Express/HPM cannot emit credential-bearing
+targets.
+
+The symlink-only sub-slice removes STRM/both configuration, migration seed,
+post-processing, recreation/conversion controllers and tasks, UI actions, and
+dead utilities. Fresh-install/source manifests and executable contract tests
+prove retired values/routes are absent while canonical `/.ids` symlink targets,
+ARR completed paths, cleanup, DFS, and rclone behavior remain green.
+
 **Confirmed adjacent defect:** `scripts/nzbdav_arr_report_validation.py` sends
 the documented public `NZBDAV_API_KEY` to `/api/get-config`, but
 `BaseApiController` accepts only `FRONTEND_BACKEND_API_KEY`. Existing Python
@@ -476,18 +527,18 @@ return only the required non-secret app-type/search-mode/duplicate-policy fields
 from `/api/arr/validation`, remove the helper's general-config request, and run
 the focused .NET/Python gates before adding that route to `/protocol`.
 
-**Implementation status (2026-07-17):** GREEN locally; independent review is
-pending. `ArrValidationResponse` now returns only configured app kinds,
+**Completion status (2026-07-19):** GREEN locally and accepted within the
+independent Task 2 whole-diff review. `ArrValidationResponse` returns only configured app kinds,
 normalized search-nudge mode, and normalized duplicate policy. The helper no
 longer references `/api/get-config`. Verified focused service `1/1`, focused
 Python `7/7`, full `ArrOperationsServiceTests` `27/27`, all Python `110/110`,
 and complete backend Release `2,825` passed with `84` expected PostgreSQL skips.
 Release warning-as-error build, edited-file formatter checks, Python compile,
-documentation validation, and `git diff --check` all exited zero. Do not mark
-this slice sealed until the independent review report is read and any material
-finding is resolved.
+documentation validation, and `git diff --check` all exited zero. The wider
+Task 2 checkpoint later passed backend Release `2,986` with `85` deliberate
+PostgreSQL-only skips; exact remote checkpoint CI is still pending.
 
-### 2C. Public error and log contract
+### 2C. Public error, log, and persistence contract — complete
 
 **Files:**
 
@@ -505,13 +556,155 @@ oversized canaries through 400/401/500 paths. Assert canary absence everywhere.
 Keep only redacted structured detail in logs. Bound frontend display and log
 capture.
 
+**Local completion evidence (2026-07-19):** The affected admin/SAB/history/
+maintenance/config/ARR/WebDAV projections now emit bounded stable summaries or
+allowlisted values rather than raw exception, URL, provider, path, credential,
+or persisted failure text. Frontend proxy policy failures and private-hop
+failures use fixed bounded JSON; wildcard Express/HPM diagnostics are disabled.
+Synthetic canaries are absent from response bodies, headers, process streams,
+logs, configuration projection, history, maintenance, and WebSocket status
+topics in the affected suites. Gitleaks current-tree and full-history scans are
+`0/0`; the sealed eight-entry fingerprint-only historical exception file is
+unchanged.
+
+Final focused review found P0/P1/P2/P3 `0/0/0/0`. The accepted terminology
+residual is that `Repaired` means an ARR repair command was accepted, not that
+the external ARR completed it. A future extension of maintenance
+`ExecuteUpdate` strings to external text would require renewed sanitization
+review; current values are fixed and code-owned.
+
+### 2D. Internal-key and normal-startup authentication preflight — complete
+
+The combined entrypoint generates a fresh lowercase 64-hex
+`FRONTEND_BACKEND_API_KEY` only when omitted or empty, preserves an explicitly
+configured valid 64-hex value, and rejects malformed explicit values before
+identity-system discovery/mutation, filesystem, database, or child-process
+work. Generation is checked before export and no failure path prints candidate
+material.
+
+Normal startup validates exact `AUTH_MODE` before internal-key generation.
+`local` requires and exports an exact 64-hex `SESSION_KEY` unchanged;
+`authentik-proxy` remains session-key independent. Valid maintenance commands
+remain independent of frontend session configuration, while invalid
+maintenance argv retains first precedence and status `64`.
+
+The first startup-preflight review found P0/P1/P2/P3 `0/0/3/0`: non-local mode
+bypass, a test that masked validation ordering by injecting the internal key,
+and a digits-only fixture that did not prove preservation/export. RED tests for
+invalid/empty mode, omitted/empty internal-key ordering, and mixed-case child
+export preceded the repair. Final shell portability cleanup and independent
+review found `0/0/0/0`; shell contract, `sh -n`, severity-error ShellCheck,
+actionlint, frontend production/packaged gates, and diff checks are green.
+
+Local checkpoint evidence is in
+`.superpowers/sdd/task-2d-internal-key-startup-report.md`. Exact current hashes
+are recorded there after the adjacent container-user repair.
+
+The adjacent Trivy gate is also complete. V1 rejects zero/padded-zero
+`PUID`/`PGID`, normalizes valid nonzero IDs, runs backend/frontend children with
+the resolved user and group, and keeps only PID 1 root for dynamic identity,
+owned-path preparation, and supervision. The exact root `Dockerfile` has one
+DS-0002 exception limited to that contract; it does not cover privileged DFS/
+FUSE, and V1 uses the rclone sidecar. Legacy backend/frontend standalone
+Dockerfiles and entrypoint/dependency surfaces are retired.
+
+The first implementation review found P0/P1/P2/P3 `0/0/1/0` because the smoke
+used client-host `/proc` and checked only real IDs. A tests-only RED required
+inspection inside the container PID namespace and all real/effective/saved/
+filesystem UID/GID columns. Repair and re-review are `0/0/0/0`. Final focused
+gates: Python `157/157`, packaged runtime `6/6`, shell contract, typecheck,
+`sh`/Dash/BusyBox syntax, full ShellCheck, actionlint, diff check, Trivy npm
+vulnerabilities `0`, and Trivy Dockerfile misconfigurations `0`. Local Docker
+was not run; exact remote CI owns executable container proof.
+
+### 2E. Canonical protocol client and operator contract — complete
+
+External clients use exactly `<origin><normalized URL_BASE>/protocol`. Root and
+nested deployments retain suffixes beneath that base; rclone mounts the full
+protocol root so `/.ids`, `/completed-symlinks`, `/content`, and `/nzbs` remain
+available. `<origin><URL_BASE>/view` remains a frontend-principal route outside
+the public protocol namespace and every reverse-proxy bypass.
+
+The shared Python normalizer runs before secret resolution, network access, or
+artifact creation. Benchmark HTTP paths are suffixes, not replacement URLs.
+C0/DEL controls, separator resets, dot/empty segments, and unresolved
+ambiguous/excessive encodings fail closed; terminal literal `%25`, `%2541`, and
+`%2525literal` forms and frontend-compatible C1 values remain valid. Sonarr,
+Radarr, and Lidarr setup uses the exact URL Base, first-run local HTTP examples
+include required session/cookie policy, and public docs expose no private
+PostgreSQL implementation path.
+
+Final focused counts are helper `4/4`, ARR `12/12`, benchmark `41/41`,
+grab-to-Plex `42/42`, operator contract `17/17`, request policy `158/158`, and
+complete Python `155/155`. Initial code review `0/0/3/1`, second code review
+`0/0/2/0`, and operator review `0/3/3/0` were repaired RED-first. Final code
+and operator reviews each found P0/P1/P2/P3 `0/0/0/0`.
+
+### 2F. Clean-room reference archaeology and V1 gap reconciliation — next
+
+Analyze these user-selected reference implementations only after the signed
+Task 2 checkpoint is clean and exact remote CI passes:
+
+- `https://github.com/qooode/nzbdavex`
+- `https://github.com/Gaisberg/streamnzb`
+- `https://github.com/javi11/altmount`
+
+Clone them read-only beneath an ephemeral directory outside `/opt/pinrail`.
+Never create `/opt/pinrail/repo`, a nested repository, or a published fork.
+For each reference, inspect the complete current tree, relevant commit/tag/
+release history, exact license, dependency licenses, docs, configuration,
+containers, API/protocol contracts, tests, CI, failure/recovery behavior,
+security boundaries, caching and random-access/mount behavior, budgets,
+observability, operator UI, and deployment model. Build an AST-only Graphify
+graph per clone and use `query`, `path`, and `explain` on the important flows.
+
+Repository-page claims are hypotheses until verified in source and history.
+The reported MIT licenses for nzbdavex/altmount and GPL-3.0 license for
+streamnzb must be read from exact current and relevant tagged `LICENSE` files.
+GPL provenance is an explicit compatibility blocker: copy no code, test, asset,
+schema, or expression unless a documented Pinrail license analysis proves it
+compatible. Prefer clean-room behavior reimplementation from public contracts
+and independently authored RED tests; add no dependency merely because a
+reference uses it.
+
+Produce a source-cited matrix against current Pinrail HEAD, this plan, the
+governing design, `HANDOFF.md`, and the progress ledger. Classify every candidate
+as implemented, partial, genuinely missing in approved V1, deliberately
+post-V1, or unsuitable/unsafe. Rank actionable gaps P0/P1/P2 and specifically
+cover NZB validation/ingestion, article availability, range/archive streaming,
+sparse/cache semantics, WebDAV/rclone/FUSE behavior, durable queue recovery,
+retry/idempotency, multi-provider operation, resource budgets, filesystem
+correctness, API compatibility, security, diagnostics, and UI workflows.
+
+Only verified, license-safe gaps inside the frozen Docker/SQLite/one-owner/
+`role=all` V1 may change Pinrail. Reuse existing abstractions, preserve the
+SearchNudge and category/CDH containment contracts, and apply focused RED,
+minimum GREEN, affected/full gates, independent review, documentation,
+signed-off push, and exact remote CI to each accepted slice. PostgreSQL,
+Transfer-v3 Phase 4, split roles, visual rebrand, production mutation, and
+unapproved deployment remain unreachable.
+
 ### Task 2 gates
 
 - [x] Session matrix passes.
-- [ ] Proxy authorization/header matrix passes.
-- [ ] Error and log canary matrix passes.
-- [ ] Frontend and backend full test/build gates remain green.
-- [ ] Independent security review reports no P0/P1.
+- [x] Proxy authorization/header matrix passes locally.
+- [x] Error and log canary matrix passes locally.
+- [x] Internal-key and normal-startup authentication preflight passes locally.
+- [x] Canonical protocol client/operator contract passes locally.
+- [x] Frontend and backend full test/build gates remain green locally.
+- [x] Independent security review reports no P0/P1 on the reviewed code diff.
+- [x] Close the actionable Trivy container-user P2 and document the exact
+      dynamic-identity exception, retirement scope, and non-coverage of the
+      privileged DFS prototype.
+- [x] Refresh the final AST-only Graphify graph and run query/path/explain
+      canaries against the stable combined diff.
+- [ ] Complete the formal Codex Security diff scan. Its native workspace is
+      open, but the setup wait expired before Start Scan was submitted; the
+      independent `0/0/0/0` review is additive and does not replace this gate.
+- [ ] Signed Task 2 checkpoint passes exact remote CI, including container
+      lifecycle smoke and native Transfer glibc/musl x64/arm64.
+- [ ] Reference archaeology matrix is complete and every accepted V1 gap is
+      either closed or routed explicitly to its existing later task.
 
 ---
 
@@ -644,8 +837,9 @@ Run on the same reviewed worktree state:
 
 **Acceptance:** Zero failure/crash/flaky rerun, no P0/P1, and no unexplained
 skip. Record accepted P2/P3 and residual risk. Update `HANDOFF.md` with exact
-commands and results. Present the backend pass report to the user. Do not begin
-visual rebrand yet.
+commands and results. Record the backend freeze, but do not begin visual
+rebrand. The strict design/rebrand gate remains Task 10 GO plus user review of
+the complete backend pass and risk report.
 
 ---
 
@@ -715,9 +909,9 @@ separate user authorization.
 
 **Status:** BLOCKED
 
-After Task 10, present the complete backend verification evidence and release
-risk report to the user. Only then use the official Figma MCP to inspect the
-existing
+After Task 10 reaches GO, present the complete backend verification evidence
+and release risk report to the user. Only after the user reviews that report
+may the official Figma MCP be used to inspect the existing
 [Pinrail — Product Design / Wireframes file](https://www.figma.com/design/WxDUx3FJ9iINrtXn2GmkZC/Pinrail-%E2%80%94-Product-Design---Wireframes?m=auto&t=YBuWaX8ZhLg6aYZd-6).
 
 The Figma file is the mandatory source of truth for the redesign. Ask before

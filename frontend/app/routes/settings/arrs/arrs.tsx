@@ -471,9 +471,9 @@ function InstanceForm({ instance, index, type, onUpdate, onRemove }: InstanceFor
                 setConnectionState('error');
                 setConnectionError(`${formatArrType(type)} connection failed.`);
             }
-        } catch (error) {
+        } catch {
             setConnectionState('error');
-            setConnectionError(`${formatArrType(type)} connection failed: ${error instanceof Error ? error.message : "unknown error"}.`);
+            setConnectionError(`${formatArrType(type)} connection failed: request failed.`);
         }
     }, [type]);
 

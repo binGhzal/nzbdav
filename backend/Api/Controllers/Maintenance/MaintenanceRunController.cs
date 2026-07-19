@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using NzbWebDAV.Security;
 using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Api.Controllers.Maintenance;
@@ -17,13 +18,7 @@ public sealed class MaintenanceRunController(MaintenanceRunService service) : Ba
 
         var run = await service.GetRunAsync(id, HttpContext.RequestAborted).ConfigureAwait(false);
         if (run is null)
-        {
-            return NotFound(new BaseApiResponse
-            {
-                Status = false,
-                Error = $"Maintenance run {id} was not found.",
-            });
-        }
+            return Failure(StatusCodes.Status404NotFound, PublicFailureContract.ResourceNotFound());
 
         return Ok(new MaintenanceRunResponse { Run = MaintenanceRunDto.FromModel(run) });
     }

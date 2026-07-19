@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 
 namespace NzbWebDAV.Coordination;
 
@@ -12,9 +13,6 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
 {
     private const long PostgreSqlLaneLockNamespace = 0x4E5A424400000000;
     private const int MaxJsonUtf8Bytes = 16 * 1024;
-    private const int MaxErrorLength = 1024;
-    private const string MissingDownloadTargetError =
-        "Download worker target no longer exists and has no matching history item.";
     private readonly Func<DavDatabaseContext> _contextFactory;
     private readonly DavDatabaseContext? _sharedContext;
     private readonly IWorkerLaneCapacityPolicy _capacityPolicy;
@@ -159,7 +157,7 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
         DateTimeOffset now,
         CancellationToken ct)
     {
-        var boundedError = BoundLength(error, MaxErrorLength);
+        var safeError = PublicDiagnosticContract.Message(PublicDiagnosticKind.WorkerFailure);
         return WithSqliteRetryAsync(async db =>
         {
             if (failureKind == WorkerJob.FailureClass.Cancelled)
@@ -172,7 +170,7 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
                         .SetProperty(job => job.CompletedAt, now)
                         .SetProperty(job => job.LeaseExpiresAt, (DateTimeOffset?)null)
                         .SetProperty(job => job.FailureKind, failureKind)
-                        .SetProperty(job => job.LastError, boundedError), ct)
+                        .SetProperty(job => job.LastError, safeError), ct)
                     .ConfigureAwait(false);
                 if (cancelled == 1) return true;
 
@@ -198,7 +196,7 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
                     .SetProperty(job => job.LeaseExpiresAt, (DateTimeOffset?)null)
                     .SetProperty(job => job.LastHeartbeatAt, (DateTimeOffset?)null)
                     .SetProperty(job => job.FailureKind, failureKind)
-                    .SetProperty(job => job.LastError, boundedError), ct)
+                    .SetProperty(job => job.LastError, safeError), ct)
                 .ConfigureAwait(false);
             if (changed == 1) return true;
 
@@ -210,7 +208,7 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
                 && (job.Status == WorkerJob.JobStatus.Retry
                     || job.Status == WorkerJob.JobStatus.Quarantined)
                 && job.FailureKind == failureKind
-                && job.LastError == boundedError
+                && job.LastError == safeError
                 && job.AvailableAt == nextAttemptAt, ct).ConfigureAwait(false);
         }, ct);
     }
@@ -272,7 +270,8 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
                 .SetProperty(job => job.CompletedAt, now)
                 .SetProperty(job => job.LeaseExpiresAt, (DateTimeOffset?)null)
                 .SetProperty(job => job.FailureKind, WorkerJob.FailureClass.Cancelled)
-                .SetProperty(job => job.LastError, "Cancellation request expired before acknowledgement."), ct)
+                .SetProperty(job => job.LastError,
+                    PublicDiagnosticContract.Message(PublicDiagnosticKind.WorkerFailure)), ct)
             .ConfigureAwait(false);
 
         await ReconcileOrphanedDownloadJobsAsync(db, kind, now, ct).ConfigureAwait(false);
@@ -401,7 +400,8 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
                 .SetProperty(job => job.CompletedAt, now)
                 .SetProperty(job => job.LeaseExpiresAt, (DateTimeOffset?)null)
                 .SetProperty(job => job.FailureKind, WorkerJob.FailureClass.Cancelled)
-                .SetProperty(job => job.LastError, MissingDownloadTargetError), ct)
+                .SetProperty(job => job.LastError,
+                    PublicDiagnosticContract.Message(PublicDiagnosticKind.WorkerFailure)), ct)
             .ConfigureAwait(false);
     }
 
@@ -456,7 +456,7 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
         CancellationToken ct)
     {
         const int maxAttempts = 5;
-        for (var attempt = 1;; attempt++)
+        for (var attempt = 1; ; attempt++)
         {
             try
             {
@@ -495,12 +495,4 @@ public sealed class DatabaseWorkerJobCoordinator : IWorkerJobCoordinator
         return value[..length];
     }
 
-    private static string BoundLength(string value, int maxLength)
-    {
-        if (value.Length <= maxLength) return value;
-
-        var length = maxLength;
-        if (char.IsHighSurrogate(value[length - 1])) length--;
-        return value[..length];
-    }
 }

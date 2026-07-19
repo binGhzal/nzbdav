@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using backend.Tests.Security;
 using backend.Tests.Services;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -321,7 +322,9 @@ public sealed class RcloneInvalidationTests
             var item = Assert.Single(await dbContext.RcloneInvalidationItems.ToListAsync());
             Assert.Equal("/nzbs", item.Path);
             Assert.Equal(2, item.Attempts);
-            Assert.Equal("previous failure", item.LastError);
+            Assert.Equal("rclone_invalidation_legacy_failure", item.LastError);
+            Assert.DoesNotContain("previous failure", item.LastError, StringComparison.Ordinal);
+            PublicFailureCanary.AssertSafe(item.LastError);
             Assert.True(item.NextAttemptAt <= DateTimeOffset.UtcNow.AddSeconds(1));
         }
         finally
@@ -645,7 +648,9 @@ public sealed class RcloneInvalidationTests
         Assert.Equal(1, stats.Ready);
         Assert.Equal(2, stats.Failed);
         Assert.Equal(4, stats.MaxAttempts);
-        Assert.Equal("latest failure", stats.LastError);
+        Assert.Equal("rclone_invalidation_legacy_failure", stats.LastError);
+        Assert.DoesNotContain("latest failure", stats.LastError, StringComparison.Ordinal);
+        PublicFailureCanary.AssertSafe(stats.LastError);
         Assert.Equal(
             DateTimeOffset.FromUnixTimeSeconds(now.AddMinutes(-3).ToUnixTimeSeconds()),
             stats.OldestPendingAt);
@@ -696,7 +701,9 @@ public sealed class RcloneInvalidationTests
         Assert.Equal(1, stats.Ready);
         Assert.Equal(2, stats.Failed);
         Assert.Equal(4, stats.MaxAttempts);
-        Assert.Equal("latest failure", stats.LastError);
+        Assert.Equal("rclone_invalidation_legacy_failure", stats.LastError);
+        Assert.DoesNotContain("latest failure", stats.LastError, StringComparison.Ordinal);
+        PublicFailureCanary.AssertSafe(stats.LastError);
         Assert.Equal(
             DateTimeOffset.FromUnixTimeSeconds(now.AddMinutes(-3).ToUnixTimeSeconds()),
             stats.OldestPendingAt);

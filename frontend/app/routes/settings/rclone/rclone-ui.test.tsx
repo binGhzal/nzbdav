@@ -9,7 +9,7 @@ describe("RcloneSettings", () => {
         vi.unstubAllGlobals();
     });
 
-    it("shows the backend error body when the connection test fails", async () => {
+    it("rejects an arbitrary backend error body when the connection test fails", async () => {
         vi.stubGlobal("fetch", vi.fn(async () => new Response("server error", { status: 500 })));
         const config = {
             "rclone.rc-enabled": "true",
@@ -23,8 +23,22 @@ describe("RcloneSettings", () => {
         fireEvent.click(screen.getByRole("button", { name: "Test Conn" }));
 
         await waitFor(() => {
-            expect(screen.getByRole("alert").textContent).toContain("Rclone connection failed: server error");
+            expect(screen.getByRole("alert").textContent).toBe("Rclone connection failed: HTTP 500");
         });
+    });
+
+    it("renders a stable backend failure envelope", async () => {
+        vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+            status: false, error: "The request could not be completed.", code: "internal_error",
+            correlation_id: "0123456789abcdef0123456789abcdef",
+        }, { status: 500 })));
+        const config = { "rclone.rc-enabled": "true", "rclone.host": "http://rclone:5572", "rclone.user": "", "rclone.pass": "" };
+
+        render(<RcloneSettings config={config} setNewConfig={vi.fn()} />);
+        fireEvent.click(screen.getByRole("button", { name: "Test Conn" }));
+
+        await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(
+            "Rclone connection failed: The request could not be completed. (0123456789abcdef0123456789abcdef)"));
     });
 
     it("offers an optional VFS selector for shared RC servers", () => {

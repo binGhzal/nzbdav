@@ -96,6 +96,13 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
 
 export async function action({ request }: Route.ActionArgs) {
     try {
+        const formData = await request.formData();
+        const username = formData.get("username")?.toString();
+        const password = formData.get("password")?.toString();
+        const confirmPassword = formData.get("confirmPassword")?.toString();
+        if (!username || !password) return { error: "username and password required" };
+        if (password !== confirmPassword) return { error: "passwords must match" };
+
         // if already logged in, redirect to landing page
         if (await isAuthenticated(request)) return redirect("/")
 
@@ -104,21 +111,12 @@ export async function action({ request }: Route.ActionArgs) {
         if (!isOnboarding) return redirect("/login");
 
         // finish onboarding
-        const formData = await request.formData();
-        const username = formData.get("username")?.toString();
-        const password = formData.get("password")?.toString();
-        const confirmPassword = formData.get("confirmPassword")?.toString();
-        if (!username || !password) throw new Error("username and password required");
-        if (password !== confirmPassword) throw new Error("passwords must match");
         var isSuccess = await backendClient.createAccount(username, password);
-        if (!isSuccess) throw new Error("Unknown error creating account");
+        if (!isSuccess) return { error: "Unable to create the account." };
         var responseInit = await setSessionUser(request, username);
         return redirect("/", responseInit);
     }
-    catch (error) {
-        if (error instanceof Error) {
-            return { error: error.message };
-        }
-        throw error
+    catch {
+        return { error: "Unable to create the account." };
     }
 }

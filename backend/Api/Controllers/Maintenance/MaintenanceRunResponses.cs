@@ -1,4 +1,5 @@
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 
 namespace NzbWebDAV.Api.Controllers.Maintenance;
 
@@ -33,8 +34,12 @@ public sealed class MaintenanceRunDto
             CancellationRequestedAt = run.CancellationRequestedAt,
             ProgressCurrent = run.ProgressCurrent,
             ProgressTotal = run.ProgressTotal,
-            Message = run.Message,
-            Error = run.Error,
+            Message = run.Status == MaintenanceRunStatus.Failed
+                ? "Failed."
+                : run.Message,
+            Error = PublicDiagnosticContract.FromOptional(
+                run.Error,
+                PublicDiagnosticKind.MaintenanceFailure),
         };
     }
 }
@@ -44,10 +49,8 @@ public sealed class MaintenanceRunResponse
     public required MaintenanceRunDto Run { get; init; }
 }
 
-public sealed class MaintenanceRunConflictResponse
+public sealed class MaintenanceRunConflictResponse : BaseApiResponse
 {
-    public bool Status => false;
-    public string Error => "A maintenance run is already active.";
     public required MaintenanceRunDto ActiveRun { get; init; }
 }
 
@@ -68,8 +71,6 @@ public static class MaintenanceRunApiValues
     {
         MaintenanceRunKind.RemoveUnlinkedFiles => "remove-unlinked-files",
         MaintenanceRunKind.RemoveUnlinkedFilesDryRun => "remove-unlinked-files-dry-run",
-        MaintenanceRunKind.ConvertStrmToSymlinks => "convert-strm-to-symlinks",
-        MaintenanceRunKind.RecreateStrmFiles => "recreate-strm-files",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 
@@ -91,13 +92,9 @@ public static class MaintenanceRunApiValues
         {
             "remove-unlinked-files" => MaintenanceRunKind.RemoveUnlinkedFiles,
             "remove-unlinked-files-dry-run" => MaintenanceRunKind.RemoveUnlinkedFilesDryRun,
-            "convert-strm-to-symlinks" => MaintenanceRunKind.ConvertStrmToSymlinks,
-            "recreate-strm-files" => MaintenanceRunKind.RecreateStrmFiles,
             _ => default,
         };
         return value is "remove-unlinked-files"
-            or "remove-unlinked-files-dry-run"
-            or "convert-strm-to-symlinks"
-            or "recreate-strm-files";
+            or "remove-unlinked-files-dry-run";
     }
 }

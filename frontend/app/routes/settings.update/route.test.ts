@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { action } from "./route";
+import { action, headers } from "./route";
 import { backendClient } from "~/clients/backend-client.server";
+import {
+    INTERNAL_REQUEST_CORRELATION_HEADER,
+    parsePublicFailureEnvelope,
+} from "~/utils/public-failure";
 
 vi.mock("~/clients/backend-client.server", () => ({
     backendClient: {
@@ -9,8 +13,32 @@ vi.mock("~/clients/backend-client.server", () => ({
 }));
 
 describe("settings update action", () => {
+    const correlationId = "b".repeat(32);
+
     afterEach(() => {
         vi.clearAllMocks();
+    });
+
+    it("projects only a valid closed public failure identity into the route headers", () => {
+        const projected = headers({
+            actionHeaders: new Headers({
+                "Set-Cookie": "private=credential-marker",
+                "X-Correlation-ID": correlationId,
+                "X-Error-Code": "invalid_request",
+                "X-Fixture": "private-runtime-path",
+            }),
+        } as never);
+
+        expect(Object.fromEntries(projected)).toEqual({
+            "x-correlation-id": correlationId,
+            "x-error-code": "invalid_request",
+        });
+        expect(Object.fromEntries(headers({
+            actionHeaders: new Headers({
+                "X-Correlation-ID": "not-a-correlation",
+                "X-Error-Code": "invalid_request",
+            }),
+        } as never))).toEqual({});
     });
 
     it("returns 400 when config form value is missing", async () => {
@@ -20,11 +48,13 @@ describe("settings update action", () => {
             request: new Request("https://example.test/settings/update", {
                 method: "POST",
                 body: form,
+                headers: { [INTERNAL_REQUEST_CORRELATION_HEADER]: correlationId },
             }),
         } as never);
 
         expect(response).toBeInstanceOf(Response);
         expect((response as Response).status).toBe(400);
+        await expectPublicFailure(response as Response, 400, "invalid_request", correlationId);
         expect(backendClient.updateConfig).not.toHaveBeenCalled();
     });
 
@@ -36,11 +66,13 @@ describe("settings update action", () => {
             request: new Request("https://example.test/settings/update", {
                 method: "POST",
                 body: form,
+                headers: { [INTERNAL_REQUEST_CORRELATION_HEADER]: correlationId },
             }),
         } as never);
 
         expect(response).toBeInstanceOf(Response);
         expect((response as Response).status).toBe(400);
+        await expectPublicFailure(response as Response, 400, "invalid_request", correlationId);
         expect(backendClient.updateConfig).not.toHaveBeenCalled();
     });
 
@@ -55,6 +87,7 @@ describe("settings update action", () => {
             request: new Request("https://example.test/settings/update", {
                 method: "POST",
                 body: form,
+                headers: { [INTERNAL_REQUEST_CORRELATION_HEADER]: correlationId },
             }),
         } as never);
 
@@ -71,7 +104,7 @@ describe("settings update action", () => {
     });
 
     it("returns 502 when backend config update fails", async () => {
-        vi.mocked(backendClient.updateConfig).mockRejectedValueOnce(new Error("backend offline"));
+        vi.mocked(backendClient.updateConfig).mockRejectedValueOnce(new Error("credential-marker|backend offline\r\n"));
         const form = new FormData();
         form.append("config", JSON.stringify({
             "webdav.user": "admin",
@@ -81,11 +114,13 @@ describe("settings update action", () => {
             request: new Request("https://example.test/settings/update", {
                 method: "POST",
                 body: form,
+                headers: { [INTERNAL_REQUEST_CORRELATION_HEADER]: correlationId },
             }),
         } as never);
 
         expect(response).toBeInstanceOf(Response);
         expect((response as Response).status).toBe(502);
+        await expectPublicFailure(response as Response, 502, "upstream_unavailable", correlationId);
     });
 
     it("returns 502 when backend returns unsuccessful status", async () => {
@@ -99,10 +134,30 @@ describe("settings update action", () => {
             request: new Request("https://example.test/settings/update", {
                 method: "POST",
                 body: form,
+                headers: { [INTERNAL_REQUEST_CORRELATION_HEADER]: correlationId },
             }),
         } as never);
 
         expect(response).toBeInstanceOf(Response);
         expect((response as Response).status).toBe(502);
+        await expectPublicFailure(response as Response, 502, "upstream_unavailable", correlationId);
     });
 });
+
+async function expectPublicFailure(
+    response: Response,
+    status: number,
+    code: "invalid_request" | "upstream_unavailable",
+    correlationId: string,
+) {
+    expect(response.status).toBe(status);
+    expect(response.headers.get("x-error-code")).toBe(code);
+    expect(response.headers.get("x-correlation-id")).toBe(correlationId);
+    const body = await response.text();
+    expect(parsePublicFailureEnvelope(body)).toEqual({
+        status: false,
+        error: code === "invalid_request" ? "The request is invalid." : "The backend is unavailable.",
+        code,
+        correlation_id: correlationId,
+    });
+}

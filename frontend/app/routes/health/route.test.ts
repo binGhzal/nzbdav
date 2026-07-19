@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { action } from "./route";
 import { backendClient } from "~/clients/backend-client.server";
+import {
+    INTERNAL_REQUEST_CORRELATION_HEADER,
+    parsePublicFailureEnvelope,
+} from "~/utils/public-failure";
 
 vi.mock("~/clients/backend-client.server", () => ({
     backendClient: {
@@ -15,6 +19,8 @@ vi.mock("~/clients/backend-client.server", () => ({
 }));
 
 describe("health action", () => {
+    const correlationId = "a".repeat(32);
+
     afterEach(() => {
         vi.clearAllMocks();
     });
@@ -27,14 +33,13 @@ describe("health action", () => {
             request: new Request("https://example.test/health", {
                 method: "POST",
                 body: form,
+                headers: { [INTERNAL_REQUEST_CORRELATION_HEADER]: correlationId },
             }),
         } as never);
 
         expect(response).toBeInstanceOf(Response);
         expect((response as Response).status).toBe(400);
-        expect(await (response as Response).json()).toEqual({
-            error: "Repair run id is required.",
-        });
+        await expectPublicFailure(response as Response, 400, "invalid_request", correlationId);
         expect(backendClient.cancelRepairRun).not.toHaveBeenCalled();
     });
 
@@ -46,14 +51,13 @@ describe("health action", () => {
             request: new Request("https://example.test/health", {
                 method: "POST",
                 body: form,
+                headers: { [INTERNAL_REQUEST_CORRELATION_HEADER]: correlationId },
             }),
         } as never);
 
         expect(response).toBeInstanceOf(Response);
         expect((response as Response).status).toBe(400);
-        expect(await (response as Response).json()).toEqual({
-            error: "Unsupported repair action.",
-        });
+        await expectPublicFailure(response as Response, 400, "invalid_request", correlationId);
     });
 
     it("returns 502 when a backend health action fails", async () => {
@@ -66,13 +70,30 @@ describe("health action", () => {
             request: new Request("https://example.test/health", {
                 method: "POST",
                 body: form,
+                headers: { [INTERNAL_REQUEST_CORRELATION_HEADER]: correlationId },
             }),
         } as never);
 
         expect(response).toBeInstanceOf(Response);
         expect((response as Response).status).toBe(502);
-        expect(await (response as Response).json()).toEqual({
-            error: "backend offline",
-        });
+        await expectPublicFailure(response as Response, 502, "upstream_unavailable", correlationId);
     });
 });
+
+async function expectPublicFailure(
+    response: Response,
+    status: number,
+    code: "invalid_request" | "upstream_unavailable",
+    correlationId: string,
+) {
+    expect(response.status).toBe(status);
+    expect(response.headers.get("x-error-code")).toBe(code);
+    expect(response.headers.get("x-correlation-id")).toBe(correlationId);
+    const body = await response.text();
+    expect(parsePublicFailureEnvelope(body)).toEqual({
+        status: false,
+        error: code === "invalid_request" ? "The request is invalid." : "The backend is unavailable.",
+        code,
+        correlation_id: correlationId,
+    });
+}

@@ -1,7 +1,7 @@
 import { Alert, Button, Form as BootstrapForm } from "react-bootstrap";
 import styles from "./route.module.css"
 import type { Route } from "./+types/route";
-import { isAuthenticated, login } from "~/auth/authentication.server";
+import { isAuthenticated, login, PublicAuthenticationError } from "~/auth/authentication.server";
 import { Form, redirect, useNavigation } from "react-router";
 import { backendClient } from "~/clients/backend-client.server";
 import { withUrlBase } from "~/utils/url-base";
@@ -48,9 +48,10 @@ export async function action({ request }: Route.ActionArgs) {
         return redirect("/", responseInit);
     }
     catch (error) {
-        if (error instanceof Error) {
-            return { loginError: error.message };
-        }
-        throw error;
+        return {
+            loginError: error instanceof PublicAuthenticationError
+                ? error.message
+                : "Unable to sign in.",
+        };
     }
 }

@@ -13,6 +13,8 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Database.Transfer;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
+using NzbWebDAV.Security;
+using NzbWebDAV.Services;
 using Serilog;
 
 namespace NzbWebDAV.Database;
@@ -1430,6 +1432,7 @@ public class DavDatabaseContext : DbContext
         try
         {
             ValidateNoTrackedReservedConfigMutation();
+            SanitizeTrackedPublicDiagnostics();
             ValidateWorkerJobJsonSizes();
 
             foreach (var blobNzbFile in BlobNzbFiles)
@@ -1473,6 +1476,7 @@ public class DavDatabaseContext : DbContext
         try
         {
             ValidateNoTrackedReservedConfigMutation();
+            SanitizeTrackedPublicDiagnostics();
             ValidateWorkerJobJsonSizes();
 
             // save blobs to blob-store
@@ -1522,6 +1526,95 @@ public class DavDatabaseContext : DbContext
             ValidateWorkerJobJsonSize(workerJob.ResultJson, nameof(WorkerJob.ResultJson));
         }
     }
+
+    private void SanitizeTrackedPublicDiagnostics()
+    {
+        var autoDetectChangesEnabled = ChangeTracker.AutoDetectChangesEnabled;
+        try
+        {
+            if (autoDetectChangesEnabled)
+                ChangeTracker.DetectChanges();
+            ChangeTracker.AutoDetectChangesEnabled = false;
+
+            foreach (var history in TrackedDiagnostics<HistoryItem>())
+            {
+                if (history.DownloadStatus == HistoryItem.DownloadStatusOption.Failed)
+                    history.FailMessage = PublicDiagnosticContract.HistoryFailureDetail(
+                        history.FailMessage);
+            }
+
+            foreach (var run in TrackedDiagnostics<MaintenanceRun>())
+            {
+                run.Error = PublicDiagnosticContract.FromOptional(
+                    run.Error,
+                    PublicDiagnosticKind.MaintenanceFailure);
+                if (run.Status == MaintenanceRunStatus.Failed)
+                    run.Message = PublicDiagnosticContract.FromOptional(
+                        run.Message,
+                        PublicDiagnosticKind.MaintenanceFailure);
+            }
+
+            foreach (var command in ChangeTracker.Entries<ArrSearchNudgeCommand>()
+                         .Where(x => x.State is EntityState.Added or EntityState.Modified)
+                         .Select(x => x.Entity))
+            {
+                command.Error = PublicDiagnosticContract.FromOptional(
+                    command.Error,
+                    PublicDiagnosticKind.SearchNudgeFailure);
+            }
+
+            foreach (var command in TrackedDiagnostics<ArrImportCommand>())
+                command.LastError = PublicDiagnosticContract.ArrImportFailureDetail(command.LastError);
+
+            foreach (var item in TrackedDiagnostics<RcloneInvalidationItem>())
+                item.LastError = RcloneInvalidationService.GetStatusSafeError(item.LastError);
+
+            foreach (var job in TrackedDiagnostics<WorkerJob>())
+                job.LastError = PublicDiagnosticContract.FromOptional(
+                    job.LastError,
+                    PublicDiagnosticKind.WorkerFailure);
+
+            foreach (var result in TrackedDiagnostics<HealthCheckResult>())
+            {
+                result.Message = result.Result == HealthCheckResult.HealthResult.Healthy
+                    ? PublicDiagnosticContract.HealthHealthy
+                    : PublicDiagnosticContract.HealthDetail(
+                        result.Message,
+                        result.RepairStatus);
+            }
+
+            foreach (var run in TrackedDiagnostics<RepairRun>())
+                run.Message = PublicDiagnosticContract.RepairRunDetail(run.Status, run.Message);
+
+            foreach (var entry in TrackedDiagnostics<RepairEntryHealth>())
+                entry.Message = PublicDiagnosticContract.RepairEntryDetail(entry.State, entry.Message);
+
+            foreach (var broken in TrackedDiagnostics<RepairBrokenFile>())
+                broken.Reason = PublicDiagnosticContract.FromOptional(
+                    broken.Reason,
+                    PublicDiagnosticKind.RepairFailure) ?? string.Empty;
+
+            foreach (var lifecycle in TrackedDiagnostics<ArrDownloadLifecycleEvent>())
+            {
+                if (lifecycle.State.Equals("Failed", StringComparison.OrdinalIgnoreCase))
+                    lifecycle.StateReason = PublicDiagnosticContract.FromOptional(
+                        lifecycle.StateReason,
+                        PublicDiagnosticKind.QueueFailure);
+            }
+
+            foreach (var receipt in TrackedDiagnostics<ImportReceipt>())
+                receipt.Detail = PublicDiagnosticContract.ImportReceiptDetail(receipt.State, receipt.Detail);
+        }
+        finally
+        {
+            ChangeTracker.AutoDetectChangesEnabled = autoDetectChangesEnabled;
+        }
+    }
+
+    private IEnumerable<T> TrackedDiagnostics<T>() where T : class =>
+        ChangeTracker.Entries<T>()
+            .Where(x => x.State is EntityState.Added or EntityState.Modified)
+            .Select(x => x.Entity);
 
     private void ValidateNoTrackedReservedConfigMutation()
     {

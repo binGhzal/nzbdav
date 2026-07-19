@@ -32,9 +32,9 @@ export function useHealthQueueTopUp<T>(
 
                 setQueueItems(healthCheckQueue.items);
                 setUncheckedCount(healthCheckQueue.uncheckedCount);
-            } catch (error) {
+            } catch {
                 if (!abortController.signal.aborted)
-                    console.warn("Failed to refresh health check queue", error);
+                    console.warn("Failed to refresh health check queue");
             }
         };
 

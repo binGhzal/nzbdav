@@ -30,7 +30,7 @@ public static class ConfigSecretRedactor
     {
         return configName switch
         {
-            "api.key" or "api.strm-key" or "webdav.pass" or "rclone.pass" => RedactScalarSecret(value),
+            "api.key" or "webdav.pass" or "rclone.pass" => RedactScalarSecret(value),
             "usenet.providers" => RedactUsenetProviders(value),
             "arr.instances" => RedactArrInstances(value),
             _ => value
@@ -57,7 +57,7 @@ public static class ConfigSecretRedactor
 
         return configName switch
         {
-            "api.key" or "api.strm-key" or "webdav.pass" or "rclone.pass"
+            "api.key" or "webdav.pass" or "rclone.pass"
                 when IsRedactedSecret(submittedValue) => ResolveScalarSecret(configName, existingValue),
             "usenet.providers" => PreserveUsenetProviderSecrets(submittedValue, existingValue),
             "arr.instances" => PreserveArrInstanceSecrets(submittedValue, existingValue),

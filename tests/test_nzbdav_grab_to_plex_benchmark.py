@@ -9,9 +9,21 @@ import unittest
 import urllib.parse
 from contextlib import redirect_stdout
 import io
+from unittest import mock
 
 
 SCRIPT_PATH = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "nzbdav_grab_to_plex_benchmark.py"
+TESTS_DIR = pathlib.Path(__file__).resolve().parent
+for import_path in (TESTS_DIR, SCRIPT_PATH.parent):
+    if str(import_path) not in sys.path:
+        sys.path.insert(0, str(import_path))
+
+from protocol_base_contract_cases import (  # noqa: E402
+    INVALID_PROTOCOL_BASES,
+    SAFE_BASE_ERROR,
+    VALID_PROTOCOL_BASES,
+)
+
 SPEC = importlib.util.spec_from_file_location("nzbdav_grab_to_plex_benchmark", SCRIPT_PATH)
 benchmark = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -313,6 +325,14 @@ class BenchmarkRunnerTests(unittest.TestCase):
             },
         })
         self.assertEqual(artifact["run"]["nzo_id"], PipelineTransport.NZO_ID)
+        self.assertEqual(
+            artifact["inputs"]["nzbdav_protocol_base"],
+            "https://nzbdav.test/protocol",
+        )
+        self.assertEqual(
+            artifact["inputs"]["nzbdav_base_url"],
+            artifact["inputs"]["nzbdav_protocol_base"],
+        )
         self.assertIsNone(artifact["run"]["arr_command_id"])
         self.assertEqual(artifact["inputs"]["arr_refresh_mode"], "observe")
         self.assertEqual(artifact["inputs"]["plex_scan_mode"], "observe")
@@ -717,7 +737,7 @@ class BenchmarkRunnerTests(unittest.TestCase):
             for request in transport.requests
             if request.method == "POST"
         ]
-        self.assertEqual(post_paths, ["/api"])
+        self.assertEqual(post_paths, ["/protocol/api"])
         self.assertFalse(any("/refresh" in urllib.parse.urlsplit(request.url).path for request in transport.requests))
 
     def test_polling_timeout_is_deterministic_with_fake_clock(self):
@@ -780,7 +800,7 @@ class CliTests(unittest.TestCase):
                 key_paths[name] = key_path
             args = benchmark.build_parser().parse_args([
                 "run",
-                "--nzbdav-url", "https://nzbdav.test",
+                "--nzbdav-url", "https://nzbdav.test/protocol",
                 "--nzbdav-api-key-file", str(key_paths["nzbdav"]),
                 "--nzb", str(nzb_path),
                 "--category", "movies",
@@ -804,11 +824,78 @@ class CliTests(unittest.TestCase):
         self.assertFalse(config.force_plex_scan)
         self.assertTrue(args.dry_run)
 
+    def test_root_and_nested_protocol_bases_normalize_before_url_construction(self):
+        with temporary_nzb() as nzb_path:
+            for configured, canonical in VALID_PROTOCOL_BASES:
+                with self.subTest(configured=configured), mock.patch.object(
+                    benchmark,
+                    "resolve_secret",
+                    return_value="x",
+                ):
+                    args = pipeline_args(nzb_path, configured)
+                    config = benchmark.config_from_args(args, environ={})
+
+                self.assertEqual(config.nzbdav_base_url, canonical)
+                self.assertEqual(
+                    benchmark.build_url(config.nzbdav_base_url, "/api"),
+                    f"{canonical}/api",
+                )
+                self.assertEqual(
+                    benchmark.build_url(config.nzbdav_base_url, "/api/arr/validation"),
+                    f"{canonical}/api/arr/validation",
+                )
+
+    def test_invalid_protocol_base_fails_before_any_secret_file_resolution(self):
+        with temporary_nzb() as nzb_path:
+            for name, configured in INVALID_PROTOCOL_BASES:
+                args = pipeline_args(
+                    nzb_path,
+                    configured,
+                    nzbdav_secret_file=pathlib.Path("/never-read/nzbdav-key"),
+                )
+                with self.subTest(name=name), mock.patch.object(
+                    benchmark,
+                    "resolve_secret",
+                    return_value="x",
+                ) as resolve_secret:
+                    with self.assertRaisesRegex(ValueError, rf"^{SAFE_BASE_ERROR}$"):
+                        benchmark.config_from_args(args, environ={})
+
+                resolve_secret.assert_not_called()
+
+    def test_arr_and_plex_bases_keep_their_independent_existing_rules(self):
+        base = make_config(pathlib.Path("/not-read.nzb"), arr_kind="radarr")
+        valid = benchmark.RunConfig(
+            **{
+                **base.__dict__,
+                "arr_base_url": "https://arr.test/base/",
+                "plex_base_url": "https://plex.test/library/",
+            }
+        )
+        benchmark.validate_config(valid)
+
+        invalid_cases = (
+            ("arr_base_url", "https://user@arr.test/base"),
+            ("arr_base_url", "https://arr.test/base?query=true"),
+            ("plex_base_url", "https://user@plex.test/library"),
+            ("plex_base_url", "https://plex.test/library#fragment"),
+        )
+        for field, value in invalid_cases:
+            with self.subTest(field=field, value=value):
+                configured = benchmark.RunConfig(
+                    **{
+                        **valid.__dict__,
+                        field: value,
+                    }
+                )
+                with self.assertRaises(ValueError):
+                    benchmark.validate_config(configured)
+
     def test_force_arr_refresh_cli_flag_is_explicit_opt_in(self):
         with temporary_nzb() as nzb_path:
             args = benchmark.build_parser().parse_args([
                 "run",
-                "--nzbdav-url", "https://nzbdav.test",
+                "--nzbdav-url", "https://nzbdav.test/protocol",
                 "--nzbdav-api-key", "nzbdav-secret",
                 "--nzb", str(nzb_path),
                 "--category", "movies",
@@ -830,7 +917,7 @@ class CliTests(unittest.TestCase):
         with temporary_nzb() as nzb_path:
             args = benchmark.build_parser().parse_args([
                 "run",
-                "--nzbdav-url", "https://nzbdav.test",
+                "--nzbdav-url", "https://nzbdav.test/protocol",
                 "--nzbdav-api-key", "nzbdav-secret",
                 "--nzb", str(nzb_path),
                 "--category", "movies",
@@ -945,7 +1032,7 @@ class PipelineTransport:
             status = healthy_full_status()
             deep_update(status, self.nzbdav_status_overrides)
             return response({"status": status})
-        if parsed.netloc == "nzbdav.test" and parsed.path == "/api/arr/validation":
+        if parsed.netloc == "nzbdav.test" and parsed.path == "/protocol/api/arr/validation":
             return response(self.arr_validation)
         if parsed.netloc == "arr.test" and parsed.path == "/api/v3/system/status":
             return response({"appName": self.reported_arr_kind, "version": "test"})
@@ -1187,7 +1274,7 @@ def make_config(
     timeout_seconds=10.0,
 ):
     return benchmark.RunConfig(
-        nzbdav_base_url="https://nzbdav.test",
+        nzbdav_base_url="https://nzbdav.test/protocol",
         nzbdav_api_key="nzbdav-secret",
         nzb_path=nzb_path,
         category="tv" if arr_kind == "sonarr" else "movies",
@@ -1208,6 +1295,42 @@ def make_config(
         plex_page_size=100,
         allow_existing_plex_item=False,
     )
+
+
+def pipeline_args(
+    nzb_path,
+    nzbdav_url,
+    *,
+    nzbdav_secret_file=None,
+):
+    arguments = [
+        "run",
+        "--nzbdav-url",
+        nzbdav_url,
+        "--nzb",
+        str(nzb_path),
+        "--category",
+        "movies",
+        "--arr-kind",
+        "radarr",
+        "--arr-url",
+        "https://arr.test/base",
+        "--arr-api-key",
+        "x",
+        "--plex-url",
+        "https://plex.test/library",
+        "--plex-token",
+        "x",
+        "--plex-section-id",
+        "2",
+        "--plex-final-file",
+        PipelineTransport.FINAL_FILE,
+    ]
+    if nzbdav_secret_file is None:
+        arguments.extend(("--nzbdav-api-key", "x"))
+    else:
+        arguments.extend(("--nzbdav-api-key-file", str(nzbdav_secret_file)))
+    return benchmark.build_parser().parse_args(arguments)
 
 
 def run_artifact(duration_ms):

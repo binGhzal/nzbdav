@@ -17,7 +17,7 @@ public class ArrClient(string host, string apiKey)
     public Task<ArrApiInfoResponse> GetApiInfo(CancellationToken ct = default) =>
         GetRoot<ArrApiInfoResponse>($"/api", ct);
 
-    public virtual Task<bool> RemoveAndSearch(string symlinkOrStrmPath, CancellationToken ct = default) =>
+    public virtual Task<bool> RemoveAndSearch(string symlinkPath, CancellationToken ct = default) =>
         throw new InvalidOperationException();
 
     public Task<List<ArrRootFolder>> GetRootFolders(CancellationToken ct = default) =>

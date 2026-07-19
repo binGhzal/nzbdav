@@ -21,6 +21,25 @@ export type BackendRequestDecision =
       allow?: string[];
     };
 
+export const MAX_FRONTEND_ACTION_BODY_BYTES = 16 * 1024;
+
+export function validateFrontendActionBodyFraming(
+  method: string,
+  rawTarget: string,
+  contentLengthValues: readonly string[],
+  transferEncodingValues: readonly string[],
+): boolean {
+  const normalizedMethod = method.toUpperCase();
+  if (normalizedMethod === "GET" || normalizedMethod === "HEAD") return true;
+  if (classifyBackendRequest(normalizedMethod, rawTarget).kind !== "frontend") return true;
+  if (transferEncodingValues.length !== 0 || contentLengthValues.length !== 1) return false;
+
+  const value = contentLengthValues[0];
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) return false;
+  const length = Number(value);
+  return Number.isSafeInteger(length) && length <= MAX_FRONTEND_ACTION_BODY_BYTES;
+}
+
 const READ_WEBDAV_METHODS = ["GET", "HEAD", "OPTIONS", "PROPFIND"] as const;
 const UI_ROUTES = new Map<string, readonly string[]>([
   ["/api/download-nzb", ["GET"]],
@@ -95,6 +114,10 @@ function classifyProtocolRequest(
   segments: string[],
 ): BackendRequestDecision {
   const backendTarget = stripProtocolPrefix(rawPath) + rawQuery;
+
+  if (segments[0] === "api" && rawPath.endsWith("/")) {
+    return reject(404, "route_not_found");
+  }
 
   if (segments.length === 1 && segments[0] === "api") {
     if (method === "GET" || method === "POST") {

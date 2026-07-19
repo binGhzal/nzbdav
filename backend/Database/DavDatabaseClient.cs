@@ -8,6 +8,7 @@ using NzbWebDAV.Coordination;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
+using NzbWebDAV.Security;
 
 namespace NzbWebDAV.Database;
 
@@ -340,7 +341,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         }
     }
 
-    private async Task<Stream?> ReadQueueNzbStreamAsync(Guid queueItemId, CancellationToken ct)
+    internal async Task<Stream?> ReadQueueNzbStreamAsync(Guid queueItemId, CancellationToken ct)
     {
         // attempt to read nzb contents from blob-store.
         var blobRead = BlobStore.TryOpenReadBlob(queueItemId);
@@ -773,10 +774,10 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         Ctx.HistoryCleanupItems.AddRange(ids
             .Where(x => !existingCleanupIdSet.Contains(x))
             .Select(x => new HistoryCleanupItem
-        {
-            Id = x,
-            DeleteMountedFiles = deleteFiles
-        }));
+            {
+                Id = x,
+                DeleteMountedFiles = deleteFiles
+            }));
     }
 
     private class FileSizeResult
@@ -811,12 +812,12 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     {
         var query = from historyItem in Ctx.HistoryItems
                 .AsNoTracking()
-            where historyItem.Category == category
-                  && historyItem.DownloadStatus == HistoryItem.DownloadStatusOption.Completed
-                  && historyItem.DownloadDirId != null
-            join davItem in Ctx.Items.AsNoTracking() on historyItem.DownloadDirId equals davItem.Id
-            where davItem.Type == DavItem.ItemType.Directory
-            select davItem;
+                    where historyItem.Category == category
+                          && historyItem.DownloadStatus == HistoryItem.DownloadStatusOption.Completed
+                          && historyItem.DownloadDirId != null
+                    join davItem in Ctx.Items.AsNoTracking() on historyItem.DownloadDirId equals davItem.Id
+                    where davItem.Type == DavItem.ItemType.Directory
+                    select davItem;
         return await query.Distinct().ToListAsync(ct).ConfigureAwait(false);
     }
 
@@ -1157,7 +1158,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             UpdatedAt = referenceTime,
             CompletedAt = items.Count == 0 ? referenceTime : null,
             Total = items.Count,
-            Message = items.Count == 0 ? "No eligible files found for repair verification." : null
+            Message = items.Count == 0 ? PublicDiagnosticContract.RepairRunNoEligibleFiles : null
         };
         Ctx.RepairRuns.Add(run);
 
@@ -1198,7 +1199,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         run.Stage = "cancelled";
         run.UpdatedAt = referenceTime;
         run.CancelledAt = referenceTime;
-        run.Message = "Repair run cancelled by operator.";
+        run.Message = PublicDiagnosticContract.RepairRunCancelled;
 
         await Ctx.RepairEntryHealth
             .Where(x => x.RepairRunId == repairRunId)
@@ -1208,7 +1209,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                 setters => setters
                     .SetProperty(x => x.State, RepairEntryHealth.RepairEntryState.Cancelled)
                     .SetProperty(x => x.UpdatedAt, referenceTime)
-                    .SetProperty(x => x.Message, "Repair run cancelled by operator."),
+                    .SetProperty(x => x.Message, PublicDiagnosticContract.RepairCancelled),
                 cancellationToken: ct)
             .ConfigureAwait(false);
 
@@ -1453,8 +1454,8 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .FirstOrDefaultAsync(ct)
             .ConfigureAwait(false) ?? "";
         var message = quarantined
-            ? $"Verification failed and job was quarantined: {error}"
-            : $"Verification failed. Will retry: {error}";
+            ? PublicDiagnosticContract.RepairVerificationQuarantined
+            : PublicDiagnosticContract.RepairVerificationRetryScheduled;
         await UpsertRepairEntryAsync(
                 repairRunId,
                 davItemId,
@@ -1583,7 +1584,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                     SetRepairEntryState(
                         entry,
                         RepairEntryHealth.RepairEntryState.ProviderError,
-                        $"Repair verification job was quarantined: {job.LastError ?? "unknown error"}",
+                        PublicDiagnosticContract.RepairVerificationQuarantined,
                         referenceTime);
                     break;
             }
@@ -1640,9 +1641,10 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             HealthCheckResult.RepairAction.Repaired => RepairEntryHealth.RepairEntryState.Repaired,
             HealthCheckResult.RepairAction.Deleted => RepairEntryHealth.RepairEntryState.Deleted,
             HealthCheckResult.RepairAction.ActionNeeded => RepairEntryHealth.RepairEntryState.Missing,
-            _ when result.Message?.Contains("provider_errors", StringComparison.OrdinalIgnoreCase) == true
+            _ when result.Message is PublicDiagnosticContract.HealthProviderUnavailable
+                or PublicDiagnosticContract.HealthMetadataUnavailable
                 => RepairEntryHealth.RepairEntryState.ProviderError,
-            _ when result.Message?.Contains("unknown", StringComparison.OrdinalIgnoreCase) == true
+            _ when result.Message == PublicDiagnosticContract.HealthVerificationInconclusive
                 => RepairEntryHealth.RepairEntryState.Unknown,
             _ => RepairEntryHealth.RepairEntryState.Unknown
         };
@@ -2190,7 +2192,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                 .SetProperty(job => job.LeaseExpiresAt, (DateTimeOffset?)null)
                 .SetProperty(job => job.FailureKind, WorkerJob.FailureClass.Cancelled)
                 .SetProperty(job => job.LastError,
-                    "Cancellation request expired before acknowledgement."), ct)
+                    PublicDiagnosticContract.Message(PublicDiagnosticKind.WorkerFailure)), ct)
             .ConfigureAwait(false);
     }
 

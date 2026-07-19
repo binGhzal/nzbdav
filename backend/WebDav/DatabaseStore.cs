@@ -4,6 +4,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Middlewares;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Websocket;
@@ -43,7 +44,12 @@ public class DatabaseStore(
 
     public Task<IStoreItem?> GetItemAsync(Uri uri, CancellationToken cancellationToken)
     {
-        return GetItemAsync(Uri.UnescapeDataString(uri.AbsolutePath), cancellationToken);
+        var request = httpContextAccessor.HttpContext?.Request
+            ?? throw new InvalidOperationException("A WebDAV request context is required.");
+        var absolutePath = Uri.UnescapeDataString(uri.AbsolutePath);
+        return GetItemAsync(
+            WebDavPathBaseMiddleware.StripPathBase(request, absolutePath),
+            cancellationToken);
     }
 
     public async Task<IStoreCollection?> GetCollectionAsync(Uri uri, CancellationToken cancellationToken)

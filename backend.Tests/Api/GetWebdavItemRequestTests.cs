@@ -1,12 +1,21 @@
 using Microsoft.AspNetCore.Http;
 using NzbWebDAV.Api.Controllers.GetWebdavItem;
-using NzbWebDAV.Config;
-using NzbWebDAV.Database.Models;
+using backend.Tests.Services;
 
 namespace backend.Tests.Api;
 
-public sealed class GetWebdavItemRequestTests
+[Collection(nameof(ContentIndexDatabaseCollection))]
+public sealed class GetWebdavItemRequestTests : IDisposable
 {
+    private const string InternalFixtureKey = "fixture-internal";
+    private readonly string? _previousApiKey =
+        Environment.GetEnvironmentVariable("FRONTEND_BACKEND_API_KEY");
+
+    public GetWebdavItemRequestTests()
+    {
+        Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", InternalFixtureKey);
+    }
+
     [Fact]
     public void ConstructorRejectsMalformedRangeHeader()
     {
@@ -62,18 +71,18 @@ public sealed class GetWebdavItemRequestTests
 
     private static DefaultHttpContext CreateContext(string rangeHeader)
     {
-        var configManager = new ConfigManager();
-        configManager.UpdateValues([
-            new ConfigItem { ConfigName = "api.strm-key", ConfigValue = "test-strm-key" }
-        ]);
         var path = ".ids/movie.mkv";
         var context = new DefaultHttpContext();
         context.Request.Path = $"/view/{path}";
         context.Request.QueryString = QueryString.Create(
             "downloadKey",
-            GetWebdavItemRequest.GenerateDownloadKey("test-strm-key", path));
+            GetWebdavItemRequest.GenerateDownloadKey(InternalFixtureKey, path));
         context.Request.Headers.Range = rangeHeader;
-        context.Items["configManager"] = configManager;
         return context;
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", _previousApiKey);
     }
 }

@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Npgsql;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 
 namespace NzbWebDAV.Services;
 
@@ -225,7 +226,7 @@ public sealed class ImportReceiptService(DavDatabaseContext dbContext)
             [ImportReceiptState.UnlinkClaimed],
             ImportReceiptState.NeedsReview,
             now,
-            detail,
+            PublicDiagnosticContract.FromOptional(detail, PublicDiagnosticKind.ArrImportFailure),
             ct);
     }
 
@@ -236,12 +237,14 @@ public sealed class ImportReceiptService(DavDatabaseContext dbContext)
         CancellationToken ct)
     {
         DetachTrackedReceipts(historyItemId);
+        var safeDetail = PublicDiagnosticContract.VerificationQuarantineDetail(detail)
+                         ?? PublicDiagnosticContract.Message(PublicDiagnosticKind.ArrImportFailure);
         await dbContext.ImportReceipts
             .Where(x => x.HistoryItemId == historyItemId && x.State != ImportReceiptState.Removed)
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(x => x.State, ImportReceiptState.VerificationQuarantined)
                 .SetProperty(x => x.UpdatedAt, now)
-                .SetProperty(x => x.Detail, detail), ct)
+                .SetProperty(x => x.Detail, safeDetail), ct)
             .ConfigureAwait(false);
 
         var durableReceipts = await dbContext.ImportReceipts
@@ -313,6 +316,7 @@ public sealed class ImportReceiptService(DavDatabaseContext dbContext)
         CancellationToken ct)
     {
         DetachTrackedReceipts(davItemId, historyItemId);
+        var safeDetail = PublicDiagnosticContract.ImportReceiptDetail(target, detail);
         var changed = await dbContext.ImportReceipts
             .Where(x => x.DavItemId == davItemId
                         && x.HistoryItemId == historyItemId
@@ -320,7 +324,7 @@ public sealed class ImportReceiptService(DavDatabaseContext dbContext)
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(x => x.State, target)
                 .SetProperty(x => x.UpdatedAt, now)
-                .SetProperty(x => x.Detail, detail)
+                .SetProperty(x => x.Detail, safeDetail)
                 .SetProperty(
                     x => x.ImportedAt,
                     x => target == ImportReceiptState.Imported ? now : x.ImportedAt)

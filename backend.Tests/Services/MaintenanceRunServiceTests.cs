@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
+using NzbWebDAV.Security;
 using backend.Tests.Services;
 
 namespace backend.Tests.Services;
@@ -24,11 +25,11 @@ public sealed class MaintenanceRunServiceTests
         using var service = CreateService(executor);
 
         var first = await service.TryStartRunAsync(
-            MaintenanceRunKind.RecreateStrmFiles,
+            MaintenanceRunKind.RemoveUnlinkedFiles,
             requestedBy: "manual",
             CancellationToken.None);
         var second = await service.TryStartRunAsync(
-            MaintenanceRunKind.ConvertStrmToSymlinks,
+            MaintenanceRunKind.RemoveUnlinkedFilesDryRun,
             requestedBy: "manual",
             CancellationToken.None);
 
@@ -48,7 +49,7 @@ public sealed class MaintenanceRunServiceTests
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
         var executor = new DelegateMaintenanceTaskExecutor(async (_, report, cancellationToken) =>
         {
-            await report(new MaintenanceTaskProgress("Converted 1 of 2.", 1, 2));
+            await report(new MaintenanceTaskProgress("Processed 1 of 2.", 1, 2));
             cancellationToken.ThrowIfCancellationRequested();
         });
         using var service = CreateService(executor);
@@ -56,7 +57,7 @@ public sealed class MaintenanceRunServiceTests
         try
         {
             var started = await service.TryStartRunAsync(
-                MaintenanceRunKind.ConvertStrmToSymlinks,
+                MaintenanceRunKind.RemoveUnlinkedFilesDryRun,
                 requestedBy: "manual",
                 CancellationToken.None);
 
@@ -67,7 +68,7 @@ public sealed class MaintenanceRunServiceTests
             Assert.Null(completed.ActiveSlot);
             Assert.Equal(1, completed.ProgressCurrent);
             Assert.Equal(2, completed.ProgressTotal);
-            Assert.Equal("Converted 1 of 2.", completed.Message);
+            Assert.Equal("Processed 1 of 2.", completed.Message);
             Assert.Null(completed.Error);
             Assert.Equal(1, executor.ExecutionCount);
         }
@@ -141,7 +142,7 @@ public sealed class MaintenanceRunServiceTests
         try
         {
             var started = await service.TryStartRunAsync(
-                MaintenanceRunKind.RecreateStrmFiles,
+                MaintenanceRunKind.RemoveUnlinkedFiles,
                 requestedBy: "manual",
                 CancellationToken.None);
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -172,7 +173,7 @@ public sealed class MaintenanceRunServiceTests
         try
         {
             var started = await service.TryStartRunAsync(
-                MaintenanceRunKind.RecreateStrmFiles,
+                MaintenanceRunKind.RemoveUnlinkedFiles,
                 requestedBy: "manual",
                 CancellationToken.None);
 
@@ -180,7 +181,9 @@ public sealed class MaintenanceRunServiceTests
 
             Assert.Null(failed.ActiveSlot);
             Assert.NotNull(failed.CompletedAt);
-            Assert.Equal("filesystem failed", failed.Error);
+            Assert.Equal(
+                PublicDiagnosticContract.Message(PublicDiagnosticKind.MaintenanceFailure),
+                failed.Error);
             Assert.Equal("Failed.", failed.Message);
         }
         finally

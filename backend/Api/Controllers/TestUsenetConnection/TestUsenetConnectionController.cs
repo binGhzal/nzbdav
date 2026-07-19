@@ -4,6 +4,8 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Logging;
+using NzbWebDAV.Security;
 using Serilog;
 
 namespace NzbWebDAV.Api.Controllers.TestUsenetConnection;
@@ -43,37 +45,41 @@ public class TestUsenetConnectionController(ConfigManager? configManager = null)
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
-            Log.Warning(
-                "Test connection timed out for {Host}:{Port} (ssl={UseSsl}, user={User})",
-                request.Host,
-                request.Port,
-                request.UseSsl,
-                request.User);
-            return StatusCode(
+            Log.ForContext(
+                    V1SafeConsoleFormatter.EventIdPropertyName,
+                    V1OperationalEventId.UsenetConnectionTimeout)
+                .Warning("Usenet connection test timed out.");
+            return CompatibilityFailure(
                 StatusCodes.Status504GatewayTimeout,
+                PublicFailureContract.ConnectionTimeout(),
                 new TestUsenetConnectionResponse { Status = true, Connected = false });
         }
         catch (CouldNotConnectToUsenetException)
         {
-            Log.Warning("Test connection failed for {Host}:{Port} (ssl={UseSsl}, user={User}): connect error",
-                request.Host, request.Port, request.UseSsl, request.User);
-            return Ok(new TestUsenetConnectionResponse { Status = true, Connected = false });
+            Log.ForContext(
+                    V1SafeConsoleFormatter.EventIdPropertyName,
+                    V1OperationalEventId.UsenetConnectionFailure)
+                .Warning("Usenet connection test failed.");
+            return Ok(CompatibilityFailure(
+                PublicFailureContract.UsenetConnectionFailure(),
+                new TestUsenetConnectionResponse { Status = true, Connected = false }));
         }
         catch (CouldNotLoginToUsenetException)
         {
-            Log.Warning("Test connection failed for {Host}:{Port} (ssl={UseSsl}, user={User}): login error",
-                request.Host, request.Port, request.UseSsl, request.User);
-            return Ok(new TestUsenetConnectionResponse { Status = true, Connected = false });
+            Log.ForContext(
+                    V1SafeConsoleFormatter.EventIdPropertyName,
+                    V1OperationalEventId.UsenetAuthenticationFailure)
+                .Warning("Usenet connection authentication failed.");
+            return Ok(CompatibilityFailure(
+                PublicFailureContract.UsenetConnectionFailure(),
+                new TestUsenetConnectionResponse { Status = true, Connected = false }));
         }
         catch (Exception e) when (!e.IsCancellationException())
         {
-            Log.Warning(
-                "Test connection failed for {Host}:{Port} (ssl={UseSsl}, user={User}): unexpected {ErrorType}",
-                request.Host,
-                request.Port,
-                request.UseSsl,
-                request.User,
-                e.GetType().Name);
+            Log.ForContext(
+                    V1SafeConsoleFormatter.EventIdPropertyName,
+                    V1OperationalEventId.UsenetUnexpectedFailure)
+                .Warning("Usenet connection test failed unexpectedly.");
             throw;
         }
     }

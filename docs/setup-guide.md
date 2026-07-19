@@ -52,6 +52,37 @@ your-root-docker-folder/
 Update `PUID`, `PGID`, `TZ`, and volume paths as needed.
 You can get your PUID/PGID by running `id` in your terminal.
 
+Local authentication requires one persistent 64-character lowercase
+hexadecimal `SESSION_KEY`. Generate and validate it without printing it, store
+it in your secret manager, and export that same value before every Compose
+start so existing sessions survive restarts:
+
+```bash
+configure_nzbdav_session_key() {
+  nzbdav_session_key_candidate=
+  if ! nzbdav_session_key_candidate="$(hexdump -n 32 -ve '1/1 "%.2x"' /dev/urandom)"; then
+    printf '%s\n' 'Failed to generate SESSION_KEY.' >&2
+    unset nzbdav_session_key_candidate
+    return 1
+  fi
+  if [ "${#nzbdav_session_key_candidate}" -ne 64 ]; then
+    printf '%s\n' 'Failed to generate SESSION_KEY.' >&2
+    unset nzbdav_session_key_candidate
+    return 1
+  fi
+  case "$nzbdav_session_key_candidate" in
+    *[!0-9a-f]*)
+      printf '%s\n' 'Failed to generate SESSION_KEY.' >&2
+      unset nzbdav_session_key_candidate
+      return 1
+      ;;
+  esac
+  export SESSION_KEY="$nzbdav_session_key_candidate"
+  unset nzbdav_session_key_candidate
+}
+configure_nzbdav_session_key || exit 1
+```
+
 ```yaml
 services:
   nzbdav:
@@ -74,6 +105,11 @@ services:
       # Change these IDs to match your Docker user that you got from above
       - PUID=1000
       - PGID=1000
+      - AUTH_MODE=local
+      - SESSION_KEY=${SESSION_KEY:?generate and export SESSION_KEY before starting Compose}
+      # This example is accessed directly over HTTP during first-run setup.
+      - SECURE_COOKIES=false
+      - ALLOW_INSECURE_COOKIES=true
       # SQLite is the default database provider and writes /config/db.sqlite.
       - NZBDAV_DATABASE_PROVIDER=sqlite
     volumes:
@@ -111,17 +147,9 @@ Set your username and password.
 
 **D. Database Settings**
 
-SQLite is the supported runtime and stores its database at `/config/db.sqlite`.
-NZBDav deliberately refuses `NZBDAV_DATABASE_PROVIDER=postgres` at startup.
-The inherited migration history was authored for SQLite and does not create a
-type-safe PostgreSQL schema; the legacy whole-snapshot JSON transfer is also not
-an approved production migration path. This fail-closed gate prevents a
-partially compatible PostgreSQL deployment from starting or mutating a target.
-
-PostgreSQL may be enabled only after its provider-native schema, operational
-triggers, bounded transfer, and complete PostgreSQL 16 test gate pass. The
-implementation and rehearsal requirements are tracked in
-`docs/superpowers/plans/2026-07-11-nzbdav-provider-specific-migrations.md`.
+SQLite is the only supported V1 runtime and stores its database at
+`/config/db.sqlite`. NZBDav rejects `NZBDAV_DATABASE_PROVIDER=postgres` at
+startup; PostgreSQL is not an operator-facing V1 option.
 
 **E. ARR Operations**
 
@@ -134,10 +162,17 @@ If ARR repeats the same download request, leave duplicate handling in diagnostic
 Before enabling ARR apply mode or hard duplicate rejection in production, run the read-only report-mode validation helper against the deployed instance:
 
 ```bash
-NZBDAV_BASE_URL=https://nzbdav.example.com \
+NZBDAV_BASE_URL=https://nzbdav.example.com/protocol \
 NZBDAV_API_KEY=replace-with-api-key \
 python3 scripts/nzbdav_arr_report_validation.py
 ```
+
+`NZBDAV_BASE_URL` is the canonical NzbDAV protocol base. It must be an
+absolute HTTP(S) URL whose final path segment is exactly `protocol`, with no
+query, fragment, credentials, dot segments, or ambiguous encoding. For an
+in-network root deployment use `http://nzbdav:3000/protocol`; for
+`URL_BASE=/nzbdav`, use the external form
+`https://example.com/nzbdav/protocol`.
 
 The helper writes a redacted JSON artifact under `artifacts/arr-validation/` and fails if Sonarr/Radarr are missing, search nudging is not in `report` mode, hard duplicate rejection is already enabled, validation errors exist, failed search nudges exist, or active queue correlation is below 90% without `--low-correlation-reason`.
 
@@ -174,11 +209,10 @@ You can find the optimal **Max Download Connections** for your network (`Setting
      ```
    * Download a movie `.nzb` via your indexer website and upload it to NzbDav.
    * In NzbDav UI: Go to `Dav Explore` > `Content` > `Movies` > Pick the movie you just downloaded > Right click the **video file** and click `Copy Link Address`. Now paste it in a text editor where you can see the whole thing.
-   * Now construct test command like below and run it in another terminal window:
-     ```bash
-     docker exec nzbdav sh -c "apk add --no-cache wget > /dev/null 2>&1 && timeout 20s wget -O /dev/null --report-speed=bits --progress=bar:force:noscroll 'http://localhost:8080/view/content/Movies/<Movie Folder>/<Movie Name>.mkv?downloadKey=<download-key>'"
-     ```
-     Take a look at the speed it reports and also notice the CPU usage of the container.
+   * Open the copied link through the authenticated WebUI session and observe
+     throughput in the browser/player while watching `docker stats`. The
+     frontend view route is principal-authenticated and is not a public
+     protocol or download-key bypass.
 3. **Adjust & Repeat:**
    * Set `Max Download Connections` to `10`. Test speed. (e.g., 500Mbps @ 70% CPU)
    * Set `Max Download Connections` to `15`. Test speed. (e.g., 1Gbps @ 85% CPU)
@@ -241,11 +275,15 @@ Now populate `rclone.conf` with:
 ```ini
 [nzbdav]
 type = webdav
-url = http://nzbdav:3000/
+url = http://nzbdav:3000/protocol
 vendor = other
 user = admin
 pass = <PASTE_OBSCURED_PASSWORD_HERE_WITHOUT_ANGLE_BRACKETS>
 ```
+
+Keep the remote URL at the full protocol root. The mounted remote must expose
+`.ids`, `completed-symlinks`, `content`, and `nzbs` together; do not append
+`/content` or another child directory to the configured URL.
 
 ### 3. Update `docker-compose.yml`
 
@@ -334,11 +372,8 @@ server-echoed credentials are never copied into the database or status API.
 
 The invalidation absence check and `VisibleAt` publication are one transaction
 on one fresh context. SQLite starts it with non-deferred `BEGIN IMMEDIATE` and
-recreates the context, connection, and transaction for every BUSY/LOCKED retry.
-PostgreSQL uses `READ COMMITTED`, a transaction-local 500 ms `lock_timeout`, and
-a schema-qualified `SHARE` lock on `RcloneInvalidationItems` before its first
-application-data read. A lock timeout or deadlock retries the entire unit; it
-never publishes visibility from an incomplete attempt.
+recreates the context, connection, and transaction for every BUSY/LOCKED retry;
+it never publishes visibility from an incomplete attempt.
 
 The visibility fence is staged even when no ARR instance is currently
 configured. History remains hidden until required invalidations drain. After
@@ -498,17 +533,22 @@ DFS exposes the same content and `.ids` logical items as WebDAV, and exposes com
 
 ## Phase 4: Integrations
 
-### 1. Add NzbDav Download Client to Radarr/Sonarr
+### 1. Add NzbDav Download Client to Radarr/Sonarr/Lidarr
 
-Go to Radarr/Sonarr > `Settings` > `Download Clients` > `Add Download Client`
+In Sonarr, Radarr, and Lidarr, go to `Settings` > `Download Clients` >
+`Add Download Client`.
 
 * Client: **SABnzbd**
 * Name: `NzbDav`
 * Host: `nzbdav` 
 * Port: `3000`
+* URL Base: `/protocol`
+* Nested URL Base: `/nzbdav/protocol` when the application is using the
+  externally proxied `URL_BASE=/nzbdav` deployment instead of the internal
+  root host above.
 * API Key: Found in NzbDav `Settings` > `SABnzbd`.
 
-### 2. Configure NzbDav for Radarr/Sonarr
+### 2. Configure NzbDav for Radarr/Sonarr/Lidarr
 
 Go to NzbDav `Settings` > `Radarr/Sonarr`.
 
@@ -518,7 +558,12 @@ Go to NzbDav `Settings` > `Radarr/Sonarr`.
 2. **Sonarr Instances > Add**
    * **Host:** `http://sonarr:8989`
    * **API Key:** (Sonarr > Settings > General > Security > API Key)
-3. **Automatic Queue Management:**
+3. **Lidarr Instances > Add**
+   * **Host:** `http://lidarr:8686`
+   * **API Key:** (Lidarr > Settings > General > Security > API Key)
+   * Lidarr remains correlation/report-only; NZBDav does not execute Lidarr
+     search commands in V1.
+4. **Automatic Queue Management:**
 
    Configure these rules to handle failed or bad releases, keeping your queue clean with as little manual intervention as possible. 
    Feel free to experiment and adjust these rules to your liking.
@@ -588,7 +633,7 @@ In the AIOStreams UI:
 
 1. Go to the **Services** menu and select **NzbDav**.
 2. Enter the details:
-   * **NzbDAV URL:** `http://nzbdav:3000` (Use your public URL if accessing remotely).
+   * **NzbDAV URL:** `http://nzbdav:3000/protocol` (For a nested public deployment, use `https://example.com/nzbdav/protocol`).
    * **NzbDAV API Key:** (From NzbDav `Settings` > `SABnzbd`).
    * **NzbDAV WebDAV Username:** (From NzbDav `Settings` > `WebDAV`).
    * **NzbDAV WebDAV Password:** (From NzbDav `Settings` > `WebDAV`).

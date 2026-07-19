@@ -20,6 +20,11 @@ import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
 
+from nzbdav_protocol_base import (
+    SAFE_PROTOCOL_BASE_ERROR,
+    normalize_nzbdav_protocol_base,
+)
+
 
 RUN_KIND = "nzbdav-grab-to-plex-run"
 RUN_SCHEMA_VERSION = 2
@@ -277,6 +282,7 @@ class BenchmarkRunner:
                 "arr_refresh_mode": self.arr_refresh_mode,
                 "plex_scan_mode": self.plex_scan_mode,
                 "category": self.config.category,
+                "nzbdav_protocol_base": redact_url(self.config.nzbdav_base_url),
                 "nzbdav_base_url": redact_url(self.config.nzbdav_base_url),
                 "arr_base_url": redact_url(self.config.arr_base_url),
                 "plex_base_url": redact_url(self.config.plex_base_url),
@@ -973,8 +979,10 @@ class BenchmarkRunner:
 def validate_config(config: RunConfig) -> None:
     if config.arr_kind not in {"sonarr", "radarr"}:
         raise ValueError("arr_kind must be sonarr or radarr")
+    canonical_nzbdav_base = normalize_nzbdav_protocol_base(config.nzbdav_base_url)
+    if canonical_nzbdav_base != config.nzbdav_base_url:
+        raise ValueError(SAFE_PROTOCOL_BASE_ERROR)
     for label, value in (
-        ("NZBDav base URL", config.nzbdav_base_url),
         ("ARR base URL", config.arr_base_url),
         ("Plex base URL", config.plex_base_url),
     ):
@@ -1551,7 +1559,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def add_pipeline_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--nzbdav-url", help="NZBDav base URL, including URL base if configured")
+    parser.add_argument(
+        "--nzbdav-url",
+        help="NzbDAV protocol base URL ending in /protocol",
+    )
     parser.add_argument(
         "--nzbdav-api-key",
         help="NZBDav API key (prefer --nzbdav-api-key-file or NZBDAV_E2E_NZBDAV_API_KEY_FILE)",
@@ -1628,6 +1639,9 @@ def add_output_arguments(parser: argparse.ArgumentParser) -> None:
 
 def config_from_args(args: argparse.Namespace, *, environ: Mapping[str, str] | None = None) -> RunConfig:
     environment = os.environ if environ is None else environ
+    nzbdav_protocol_base = normalize_nzbdav_protocol_base(
+        args.nzbdav_url or environment.get("NZBDAV_E2E_NZBDAV_URL", "")
+    )
     arr_kind = args.arr_kind or environment.get("NZBDAV_E2E_ARR_KIND")
     if arr_kind not in {"sonarr", "radarr"}:
         raise ValueError("--arr-kind or NZBDAV_E2E_ARR_KIND must be sonarr or radarr")
@@ -1646,7 +1660,7 @@ def config_from_args(args: argparse.Namespace, *, environ: Mapping[str, str] | N
     )
 
     return RunConfig(
-        nzbdav_base_url=args.nzbdav_url or environment.get("NZBDAV_E2E_NZBDAV_URL", ""),
+        nzbdav_base_url=nzbdav_protocol_base,
         nzbdav_api_key=resolve_secret(
             direct=args.nzbdav_api_key,
             file_arg=args.nzbdav_api_key_file,

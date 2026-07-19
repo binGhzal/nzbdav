@@ -1,5 +1,7 @@
+using backend.Tests.Security;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 using NzbWebDAV.Services;
 
 namespace backend.Tests.Services;
@@ -184,6 +186,10 @@ public sealed class ImportReceiptServiceTests
 
         Assert.Equal(expectedChanged, result.Changed);
         Assert.Equal(expectedState, result.State);
+        var durable = await dbContext.ImportReceipts.AsNoTracking().SingleAsync(x => x.Id == receipt.Id);
+        Assert.Equal(
+            expectedChanged ? PublicDiagnosticContract.ArrImportFailureMessage : null,
+            durable.Detail);
     }
 
     [Theory]
@@ -209,7 +215,7 @@ public sealed class ImportReceiptServiceTests
         var results = await new ImportReceiptService(dbContext).MarkVerificationQuarantineAsync(
             receipt.HistoryItemId,
             now.AddMinutes(1),
-            "confirmed missing articles",
+            PublicFailureCanary.Composite,
             CancellationToken.None);
 
         var result = Assert.Single(results);
@@ -220,8 +226,9 @@ public sealed class ImportReceiptServiceTests
             .SingleAsync(x => x.Id == receipt.Id);
         Assert.Equal(expectedChanged ? now.AddMinutes(1) : now, durable.UpdatedAt);
         Assert.Equal(
-            expectedChanged ? "confirmed missing articles" : "previous receipt detail",
+            expectedChanged ? PublicDiagnosticContract.ArrImportFailureMessage : null,
             durable.Detail);
+        PublicFailureCanary.AssertSafe(durable.Detail);
 
         if (initialState == ImportReceiptState.Available)
         {
@@ -236,19 +243,42 @@ public sealed class ImportReceiptServiceTests
         }
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" \t")]
+    public async Task MarkVerificationQuarantineMapsAbsentDetailToGeneric(string? detail)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var receipt = CreateReceipt(Guid.NewGuid(), Guid.NewGuid(), now);
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        dbContext.ImportReceipts.Add(receipt);
+        await dbContext.SaveChangesAsync();
+
+        await new ImportReceiptService(dbContext).MarkVerificationQuarantineAsync(
+            receipt.HistoryItemId,
+            now.AddMinutes(1),
+            detail!,
+            CancellationToken.None);
+
+        var durable = await dbContext.ImportReceipts.AsNoTracking().SingleAsync(x => x.Id == receipt.Id);
+        Assert.Equal(PublicDiagnosticContract.ArrImportFailureMessage, durable.Detail);
+        PublicFailureCanary.AssertSafe(durable.Detail);
+    }
+
     private static ImportReceipt CreateReceipt(
         Guid davItemId,
         Guid historyId,
         DateTimeOffset now,
         ImportReceiptState state = ImportReceiptState.Available) => new()
-    {
-        Id = Guid.NewGuid(),
-        DavItemId = davItemId,
-        HistoryItemId = historyId,
-        State = state,
-        CreatedAt = now,
-        UpdatedAt = now
-    };
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = davItemId,
+            HistoryItemId = historyId,
+            State = state,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
 
     private static DavItem CreateDirectory(Guid historyId) => DavItem.New(
         Guid.NewGuid(), DavItem.ContentFolder, "movies", null,

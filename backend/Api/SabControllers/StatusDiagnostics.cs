@@ -8,6 +8,7 @@ using NzbWebDAV.Mount;
 using NzbWebDAV.Services;
 using NzbWebDAV.Streams.Caching;
 using NzbWebDAV.Telemetry;
+using NzbWebDAV.Security;
 
 namespace NzbWebDAV.Api.SabControllers;
 
@@ -244,7 +245,7 @@ public sealed class RcloneInvalidationStatus
             HostConfigured = runtime.HostConfigured,
             LastAttemptAt = runtime.LastAttemptAt,
             LastSuccessfulConfiguredCallAt = runtime.LastSuccessfulConfiguredCallAt,
-            RuntimeLastError = runtime.LastError
+            RuntimeLastError = RcloneInvalidationService.GetStatusSafeError(runtime.LastError)
         };
     }
 }
@@ -484,7 +485,9 @@ public sealed class MountDiagnosticStatus
             Enabled = snapshot.Enabled,
             Ready = snapshot.Ready,
             State = snapshot.State,
-            Message = snapshot.Message,
+            Message = snapshot.State == "failed" || snapshot.FuseErrors > 0
+                ? PublicDiagnosticContract.FromOptional(snapshot.Message, PublicDiagnosticKind.MountFailure)
+                : snapshot.Message,
             FuseErrors = snapshot.FuseErrors,
             ActiveOperations = snapshot.ActiveOperations,
             WaitingOperations = snapshot.WaitingOperations,
@@ -856,8 +859,9 @@ public sealed class ArrImportCommandDiagnosticStatus
             OldestActiveAgeSeconds = stats.OldestActiveAt.HasValue
                 ? Math.Max(0, (long)(now - stats.OldestActiveAt.Value).TotalSeconds)
                 : null,
-            LastError = stats.LastError,
-            LastQuarantineReason = stats.LastQuarantineReason,
+            LastError = PublicDiagnosticContract.ArrImportFailureDetail(stats.LastError),
+            LastQuarantineReason = PublicDiagnosticContract.ArrImportFailureDetail(
+                stats.LastQuarantineReason),
         };
     }
 }

@@ -1,5 +1,7 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Database;
+using NzbWebDAV.Security;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Api.Controllers.GetDatabaseBackup;
@@ -13,12 +15,12 @@ public class GetDatabaseBackupController() : BaseApiController
         // This endpoint allows downloading a backup of the database.
         // It is disabled by default and can only be enabled by the env variable below.
         if (!EnvironmentUtil.IsVariableTrue("DANGEROUS_ENABLE_DATABASE_DOWNLOAD_ENDPOINT"))
-            return Forbid("This endpoint is not enabled.");
+            return Failure(StatusCodes.Status403Forbidden, PublicFailureContract.EndpointDisabled());
 
         var filepath = DavDatabaseContext.DatabaseFilePath;
         return System.IO.File.Exists(filepath)
             ? PhysicalFile(filepath, "application/octet-stream", Path.GetFileName(filepath))
-            : NotFound($"Path not found: `{filepath}`.");
+            : Failure(StatusCodes.Status404NotFound, PublicFailureContract.ResourceNotFound());
     }
 
     protected override Task<IActionResult> HandleRequest()

@@ -145,7 +145,7 @@ public sealed class DatabaseTransferServiceTests
             source.MaintenanceRuns.Add(new MaintenanceRun
             {
                 Id = maintenanceRunId,
-                Kind = MaintenanceRunKind.RecreateStrmFiles,
+                Kind = MaintenanceRunKind.RemoveUnlinkedFiles,
                 Status = MaintenanceRunStatus.Completed,
                 RequestedBy = "test",
                 CreatedAt = leaseTimestamp,

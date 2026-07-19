@@ -229,6 +229,17 @@ jobs:
         working-directory: frontend
         run: npm run typecheck
 
+      - name: Pull pinned rclone protocol client
+        env:
+          RCLONE_PROTOCOL_IMAGE: rclone/rclone@sha256:c61954aaa32328a5486715dd063a81c7879f5195ad3505cd362deddd509dc4a1
+        run: |
+          set -euo pipefail
+          docker pull "$RCLONE_PROTOCOL_IMAGE"
+          docker image inspect \
+            --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+            "$RCLONE_PROTOCOL_IMAGE" \
+            | grep -Fx "$RCLONE_PROTOCOL_IMAGE"
+
       - name: Test frontend
         working-directory: frontend
         run: npm run test
@@ -240,6 +251,10 @@ jobs:
       - name: Build frontend server
         working-directory: frontend
         run: npm run build:server
+
+      - name: Smoke test packaged frontend server
+        working-directory: frontend
+        run: npm run test:packaged
 
       - name: Install Playwright Chromium
         working-directory: frontend
@@ -273,9 +288,13 @@ jobs:
       - name: Test migration failure exits nonzero
         run: |
           set +e
+          internal_key=$(printf '%064d' 2)
+          session_key=$(printf '%064d' 3)
           timeout 60s docker run --rm \
             -e CONFIG_PATH=/dev/null \
-            -e FRONTEND_BACKEND_API_KEY=ci-entrypoint-test \
+            -e AUTH_MODE=local \
+            -e SESSION_KEY="$session_key" \
+            -e FRONTEND_BACKEND_API_KEY="$internal_key" \
             nzbdav:ci >/tmp/nzbdav-entrypoint.log 2>&1
           rc=$?
           set -e
@@ -285,6 +304,10 @@ jobs:
           fi
           if [ "$rc" -eq 124 ]; then
             echo "::error::Container did not fail closed after the forced migration failure."
+            exit 1
+          fi
+          if ! grep -Fqx 'entrypoint_failure code=database_migration_failed' /tmp/nzbdav-entrypoint.log; then
+            echo "::error::Container did not reach the fixed migration-failure boundary."
             exit 1
           fi
 

@@ -17,7 +17,6 @@ import { withUrlBase } from "~/utils/url-base";
 import { areEndpointIdentitiesEquivalent } from "~/utils/endpoint-identity";
 
 const defaultConfig = {
-    "general.base-url": "",
     "api.key": "",
     "api.categories": "",
     "api.manual-category": "uncategorized",
@@ -26,8 +25,6 @@ const defaultConfig = {
     "api.ignore-history-limit": "true",
     "api.download-file-blocklist": "*.nfo, *.par2, *.sfv, *sample.mkv",
     "api.duplicate-nzb-behavior": "increment",
-    "api.import-strategy": "symlinks",
-    "api.completed-downloads-dir": "",
     "api.user-agent": "",
     "usenet.providers": "",
     "usenet.max-download-connections": "15",
@@ -178,8 +175,8 @@ function Body(props: BodyProps) {
 
             setConfig({ ...newConfig });
             setIsSaved(true);
-        } catch (error) {
-            setSaveError(`Failed to save settings: ${error instanceof Error ? error.message : "unknown error"}.`);
+        } catch {
+            setSaveError("Failed to save settings: request failed.");
         } finally {
             setIsSaving(false);
         }

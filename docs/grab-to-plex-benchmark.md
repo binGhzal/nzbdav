@@ -82,7 +82,7 @@ to artifacts or normal output.
 Example environment:
 
 ```sh
-export NZBDAV_E2E_NZBDAV_URL=http://nzbdav:3000
+export NZBDAV_E2E_NZBDAV_URL=http://nzbdav:3000/protocol
 export NZBDAV_E2E_NZBDAV_API_KEY_FILE=/run/secrets/nzbdav_api_key
 export NZBDAV_E2E_NZB_PATH=/bench/input/example.nzb
 export NZBDAV_E2E_CATEGORY=movies
@@ -94,6 +94,13 @@ export NZBDAV_E2E_PLEX_TOKEN_FILE=/run/secrets/plex_token
 export NZBDAV_E2E_PLEX_SECTION_ID=1
 export NZBDAV_E2E_PLEX_FINAL_FILES='["/movies/Example (2026)/Example (2026).mkv"]'
 ```
+
+`NZBDAV_E2E_NZBDAV_URL` is the canonical NzbDAV protocol base, not the UI
+origin. It must end in the exact `protocol` segment. A deployment with
+`URL_BASE=/nzbdav` therefore uses
+`https://example.com/nzbdav/protocol`. The harness normalizes one trailing
+slash and rejects ambiguous or escaping bases before reading secret files,
+the NZB, output paths, or the network.
 
 The expected file is the exact string Plex will expose as `Media[].Part[].file`,
 not the ARR container path unless both applications see the same path. Repeat

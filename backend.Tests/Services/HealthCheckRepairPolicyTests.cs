@@ -1,5 +1,9 @@
 using System.Data.Common;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
+using backend.Tests.Security;
 using backend.Tests.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
@@ -18,7 +22,9 @@ using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
+using NzbWebDAV.Security;
 using NzbWebDAV.Websocket;
+using NzbWebDAV.WebDav;
 using NzbWebDAV.Exceptions;
 using UsenetSharp.Models;
 
@@ -81,15 +87,15 @@ public class HealthCheckRepairPolicyTests
         Assert.Equal(now.AddHours(6), davItem.NextHealthCheck);
         Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, result.Result);
         Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, result.RepairStatus);
-        Assert.Contains("missing articles", result.Message);
+        Assert.Equal(PublicDiagnosticContract.HealthMissingRepairQueued, result.Message);
+        PublicFailureCanary.AssertSafe(result.Message);
     }
 
     [Theory]
-    [InlineData(SegmentCheckState.ProviderError, "provider_errors=1")]
-    [InlineData(SegmentCheckState.Unknown, "unknown=1")]
+    [InlineData(SegmentCheckState.ProviderError)]
+    [InlineData(SegmentCheckState.Unknown)]
     public async Task ApplyUnknownVerificationPolicyRetriesIndeterminateResultsWithoutRepairAction(
-        SegmentCheckState state,
-        string expectedMessagePart)
+        SegmentCheckState state)
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
         var dbClient = new DavDatabaseClient(dbContext);
@@ -109,7 +115,12 @@ public class HealthCheckRepairPolicyTests
         Assert.Equal(now.AddMinutes(15), davItem.NextHealthCheck);
         Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, result.Result);
         Assert.Equal(HealthCheckResult.RepairAction.None, result.RepairStatus);
-        Assert.Contains(expectedMessagePart, result.Message);
+        Assert.Equal(
+            state == SegmentCheckState.ProviderError
+                ? PublicDiagnosticContract.HealthProviderUnavailable
+                : PublicDiagnosticContract.HealthVerificationInconclusive,
+            result.Message);
+        PublicFailureCanary.AssertSafe(result.Message);
         Assert.Empty(await dbContext.WorkerJobs.ToListAsync());
     }
 
@@ -146,6 +157,160 @@ public class HealthCheckRepairPolicyTests
         Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, result.Result);
         Assert.Equal(HealthCheckResult.RepairAction.None, result.RepairStatus);
         Assert.Empty(await dbContext.WorkerJobs.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CrashReconciliationDistinguishesMixedProviderErrorsFromPureUnknown(
+        bool includesProviderError)
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var davItem = CreateDavItem("/content/CrashReconcile.mkv");
+        davItem.ReleaseDate = DateTimeOffset.UtcNow.AddDays(-1);
+        var segmentIds = includesProviderError
+            ? new[] { "provider-segment", "unknown-segment" }
+            : new[] { "unknown-segment" };
+        dbContext.Items.Add(davItem);
+        dbContext.NzbFiles.Add(new DavNzbFile { Id = davItem.Id, SegmentIds = segmentIds });
+        await dbContext.SaveChangesAsync();
+        var run = await dbClient.StartRepairRunAsync(priority: 7, now: DateTimeOffset.UtcNow);
+
+        var results = includesProviderError
+            ? new[]
+            {
+                new SegmentCheckResult(
+                    "provider-segment",
+                    SegmentCheckState.ProviderError,
+                    Provider: "primary",
+                    Error: "timeout"),
+                new SegmentCheckResult(
+                    "unknown-segment",
+                    SegmentCheckState.Unknown,
+                    Provider: "secondary",
+                    Error: "unknown"),
+            }
+            : new[]
+            {
+                new SegmentCheckResult(
+                    "unknown-segment",
+                    SegmentCheckState.Unknown,
+                    Provider: "primary",
+                    Error: "unknown"),
+            };
+        var batch = SegmentCheckBatch.FromResults(results);
+        using var usenetClient = new FixedSegmentCheckStreamingClient(
+            new ConfigManager(),
+            new WebsocketManager(),
+            batch);
+        var service = new HealthCheckService(
+            new ConfigManager(),
+            usenetClient,
+            new QueueWorkLaneCoordinator(),
+            new WebsocketManager());
+
+        await service.PerformHealthCheckAsync(
+            davItem,
+            dbClient,
+            concurrency: 1,
+            CancellationToken.None,
+            repairRunId: run.Id,
+            skipReleaseDateProbe: true,
+            automaticRepairEnabledOverride: false);
+
+        var expectedMessage = includesProviderError
+            ? PublicDiagnosticContract.HealthProviderUnavailable
+            : PublicDiagnosticContract.HealthVerificationInconclusive;
+        var expectedState = includesProviderError
+            ? RepairEntryHealth.RepairEntryState.ProviderError
+            : RepairEntryHealth.RepairEntryState.Unknown;
+        dbContext.ChangeTracker.Clear();
+        Assert.Equal(expectedMessage, (await dbContext.HealthCheckResults.AsNoTracking().SingleAsync()).Message);
+        var recordedEntry = await dbContext.RepairEntryHealth.AsNoTracking().SingleAsync();
+        Assert.Equal(expectedState, recordedEntry.State);
+        Assert.Equal(expectedMessage, recordedEntry.Message);
+
+        await dbContext.RepairEntryHealth.ExecuteUpdateAsync(setters => setters
+            .SetProperty(x => x.State, RepairEntryHealth.RepairEntryState.Pending)
+            .SetProperty(x => x.Message, (string?)null));
+        await dbContext.WorkerJobs
+            .Where(x => x.Kind == WorkerJob.JobKind.Verify)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.Status, WorkerJob.JobStatus.Completed)
+                .SetProperty(x => x.CompletedAt, DateTimeOffset.UtcNow));
+        dbContext.ChangeTracker.Clear();
+
+        await using (var reconciliationContext = await _fixture.CreateMigratedContextAsync())
+        {
+            var reconciliationClient = new DavDatabaseClient(reconciliationContext);
+            var durableRun = await reconciliationContext.RepairRuns.SingleAsync(x => x.Id == run.Id);
+            await reconciliationClient.RefreshRepairRunSummaryAsync(durableRun);
+        }
+
+        await using var observationContext = await _fixture.CreateMigratedContextAsync();
+        var reconciledEntry = await observationContext.RepairEntryHealth.AsNoTracking().SingleAsync();
+        var reconciledRun = await observationContext.RepairRuns.AsNoTracking().SingleAsync(x => x.Id == run.Id);
+        Assert.Equal(expectedState, reconciledEntry.State);
+        Assert.Equal(expectedMessage, reconciledEntry.Message);
+        Assert.Equal(RepairRun.RepairRunStatus.Completed, reconciledRun.Status);
+        Assert.Equal(includesProviderError ? 1 : 0, reconciledRun.ProviderErrors);
+        Assert.Equal(includesProviderError ? 0 : 1, reconciledRun.Unknown);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RepairRunEntryPreservesAutomaticRepairVersusOperatorReviewForMissingArticles(
+        bool automaticRepairEnabled)
+    {
+        var segmentId = $"{Guid.NewGuid():N}-repair-entry-missing";
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var davItem = CreateDavItem("/content/RepairEntryMissing.mkv");
+        davItem.ReleaseDate = DateTimeOffset.UtcNow.AddDays(-1);
+        dbContext.Items.Add(davItem);
+        dbContext.NzbFiles.Add(new DavNzbFile { Id = davItem.Id, SegmentIds = [segmentId] });
+        await dbContext.SaveChangesAsync();
+        var run = await dbClient.StartRepairRunAsync(priority: 7, now: DateTimeOffset.UtcNow);
+
+        var batch = SegmentCheckBatch.FromResults([
+            new SegmentCheckResult(
+                segmentId,
+                SegmentCheckState.Missing,
+                Provider: "primary",
+                Error: "missing")
+        ]);
+        var configManager = automaticRepairEnabled
+            ? CreateAutomaticRepairEnabledConfig()
+            : new ConfigManager();
+        using var usenetClient = new FixedSegmentCheckStreamingClient(
+            configManager,
+            new WebsocketManager(),
+            batch);
+        var service = new HealthCheckService(
+            configManager,
+            usenetClient,
+            new QueueWorkLaneCoordinator(),
+            new WebsocketManager());
+
+        await service.PerformHealthCheckAsync(
+            davItem,
+            dbClient,
+            concurrency: 1,
+            CancellationToken.None,
+            repairRunId: run.Id,
+            skipReleaseDateProbe: true,
+            automaticRepairEnabledOverride: automaticRepairEnabled);
+
+        dbContext.ChangeTracker.Clear();
+        var entry = await dbContext.RepairEntryHealth.AsNoTracking().SingleAsync();
+        Assert.Equal(RepairEntryHealth.RepairEntryState.Missing, entry.State);
+        Assert.Equal(
+            automaticRepairEnabled
+                ? PublicDiagnosticContract.HealthMissingRepairQueued
+                : PublicDiagnosticContract.HealthMissingReviewRequired,
+            entry.Message);
     }
 
     [Fact]
@@ -245,8 +410,75 @@ public class HealthCheckRepairPolicyTests
 
         var result = await dbContext.HealthCheckResults.SingleAsync();
         Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, result.RepairStatus);
-        Assert.Contains("disabled", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(PublicDiagnosticContract.HealthMissingReviewRequired, result.Message);
+        PublicFailureCanary.AssertSafe(result.Message);
         Assert.Empty(await dbContext.WorkerJobs.ToListAsync());
+    }
+
+    [Fact]
+    public async Task AcceptedArrRepairCommandPersistsRepairSearchInitiatedDiagnostics()
+    {
+        await using var arrServer = await SuccessfulRepairArrServer.StartAsync();
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var libraryRoot = _fixture.CreateLibraryDirectory();
+        var configManager = _fixture.CreateConfigManager(libraryRoot);
+        configManager.UpdateValues([
+            new ConfigItem
+            {
+                ConfigName = "arr.instances",
+                ConfigValue = JsonSerializer.Serialize(new ArrConfig
+                {
+                    RadarrInstances =
+                    [
+                        new ArrConfig.ConnectionDetails
+                        {
+                            Host = arrServer.Url,
+                            ApiKey = "fixture"
+                        }
+                    ]
+                })
+            }
+        ]);
+        var davItem = CreateDavItem("/content/Movie.mkv");
+        var now = DateTimeOffset.UtcNow;
+        var repairRun = new RepairRun
+        {
+            Id = Guid.NewGuid(),
+            Status = RepairRun.RepairRunStatus.Running,
+            Stage = "repairing",
+            StartedAt = now,
+            UpdatedAt = now
+        };
+        dbContext.Items.Add(davItem);
+        dbContext.RepairRuns.Add(repairRun);
+        await dbContext.SaveChangesAsync();
+        var linkPath = Path.Join(libraryRoot, "Movie.mkv");
+        File.CreateSymbolicLink(
+            linkPath,
+            DatabaseStoreSymlinkFile.GetTargetPath(davItem.Id, configManager.GetMountDir()));
+        arrServer.Configure(libraryRoot, linkPath);
+        var dbClient = new DavDatabaseClient(dbContext);
+        using var usenetClient = new RecordingSegmentCheckStreamingClient(
+            configManager,
+            new WebsocketManager());
+        var service = new HealthCheckService(
+            configManager,
+            usenetClient,
+            new QueueWorkLaneCoordinator(),
+            new WebsocketManager());
+
+        await InvokeRepairAsync(service, davItem, dbClient, repairRun.Id, CancellationToken.None);
+
+        Assert.Equal(1, arrServer.AcceptedSearchCommands);
+        dbContext.ChangeTracker.Clear();
+        var result = await dbContext.HealthCheckResults.AsNoTracking().SingleAsync();
+        var entry = await dbContext.RepairEntryHealth.AsNoTracking().SingleAsync();
+        Assert.Equal(HealthCheckResult.RepairAction.Repaired, result.RepairStatus);
+        Assert.Equal(RepairEntryHealth.RepairEntryState.Repaired, entry.State);
+        Assert.Equal(PublicDiagnosticContract.RepairSearchInitiated, result.Message);
+        Assert.Equal(PublicDiagnosticContract.RepairSearchInitiated, entry.Message);
+        PublicFailureCanary.AssertSafe(result.Message);
+        PublicFailureCanary.AssertSafe(entry.Message);
     }
 
     [Fact]
@@ -274,7 +506,8 @@ public class HealthCheckRepairPolicyTests
         Assert.Empty(usenetClient.CheckCalls);
         Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, result.Result);
         Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, result.RepairStatus);
-        Assert.Contains("metadata", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(PublicDiagnosticContract.HealthMetadataMissingRepairQueued, result.Message);
+        PublicFailureCanary.AssertSafe(result.Message);
         Assert.Equal(WorkerJob.JobKind.Repair, repairJob.Kind);
         Assert.Equal(davItem.Id, repairJob.TargetId);
     }
@@ -301,7 +534,8 @@ public class HealthCheckRepairPolicyTests
 
         var result = await dbContext.HealthCheckResults.SingleAsync();
         Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, result.RepairStatus);
-        Assert.Contains("disabled", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(PublicDiagnosticContract.HealthMetadataMissingReviewRequired, result.Message);
+        PublicFailureCanary.AssertSafe(result.Message);
         Assert.Empty(await dbContext.WorkerJobs.ToListAsync());
     }
 
@@ -837,7 +1071,8 @@ public class HealthCheckRepairPolicyTests
         var result = await dbContext.HealthCheckResults.SingleAsync(x => x.DavItemId == video.Id);
         Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, result.Result);
         Assert.Equal(HealthCheckResult.RepairAction.None, result.RepairStatus);
-        Assert.Contains("metadata", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(PublicDiagnosticContract.HealthMetadataUnavailable, result.Message);
+        PublicFailureCanary.AssertSafe(result.Message);
     }
 
     [Fact]
@@ -1111,8 +1346,14 @@ public class HealthCheckRepairPolicyTests
         {
             Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, result.Result);
             Assert.Equal(HealthCheckResult.RepairAction.None, result.RepairStatus);
-            Assert.Contains("could not prove articles are missing", result.Message);
+            PublicFailureCanary.AssertSafe(result.Message);
         });
+        Assert.Equal(
+            PublicDiagnosticContract.HealthProviderUnavailable,
+            Assert.Single(results, result => result.Path == first.Path).Message);
+        Assert.Equal(
+            PublicDiagnosticContract.HealthVerificationInconclusive,
+            Assert.Single(results, result => result.Path == second.Path).Message);
         Assert.Empty(await dbContext.WorkerJobs.ToListAsync());
     }
 
@@ -1167,7 +1408,8 @@ public class HealthCheckRepairPolicyTests
         var result = await dbContext.HealthCheckResults.SingleAsync();
         Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, result.Result);
         Assert.Equal(HealthCheckResult.RepairAction.None, result.RepairStatus);
-        Assert.Contains("could not prove articles are missing", result.Message);
+        Assert.Equal(PublicDiagnosticContract.HealthVerificationInconclusive, result.Message);
+        PublicFailureCanary.AssertSafe(result.Message);
         Assert.Empty(await dbContext.WorkerJobs.ToListAsync());
     }
 
@@ -1953,7 +2195,7 @@ public class HealthCheckRepairPolicyTests
         {
             var history = await assertionContext.HistoryItems.AsNoTracking().SingleAsync(x => x.Id == historyId);
             Assert.Equal(HistoryItem.DownloadStatusOption.Failed, history.DownloadStatus);
-            Assert.Contains("disabled", history.FailMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(PublicDiagnosticContract.PostDownloadVerificationFailure, history.FailMessage);
             var receipts = await assertionContext.ImportReceipts.AsNoTracking()
                 .Where(x => x.HistoryItemId == historyId)
                 .OrderBy(x => x.State)
@@ -1965,7 +2207,7 @@ public class HealthCheckRepairPolicyTests
             Assert.NotNull(command.VisibleAt);
             Assert.Null(command.LeaseToken);
             Assert.Null(command.LeaseExpiresAt);
-            Assert.Contains("disabled", command.LastError, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(PublicDiagnosticContract.Message(PublicDiagnosticKind.ArrImportFailure), command.LastError);
             var savedJob = await assertionContext.WorkerJobs.AsNoTracking().SingleAsync(x => x.Id == workerJob.Id);
             Assert.Equal(WorkerJob.JobStatus.Quarantined, savedJob.Status);
             Assert.Equal(WorkerJob.FailureClass.InvalidData, savedJob.FailureKind);
@@ -2050,7 +2292,7 @@ public class HealthCheckRepairPolicyTests
         dbContext.ChangeTracker.Clear();
         var history = await dbContext.HistoryItems.AsNoTracking().SingleAsync(x => x.Id == historyId);
         Assert.Equal(HistoryItem.DownloadStatusOption.Failed, history.DownloadStatus);
-        Assert.Contains("confirmed missing", history.FailMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(PublicDiagnosticContract.PostDownloadVerificationFailure, history.FailMessage);
         var savedReceipt = await dbContext.ImportReceipts.AsNoTracking()
             .SingleAsync(x => x.HistoryItemId == historyId);
         Assert.Equal(ImportReceiptState.VerificationQuarantined, savedReceipt.State);
@@ -2127,10 +2369,9 @@ public class HealthCheckRepairPolicyTests
         Assert.Equal(
             ImportReceiptState.Removed,
             (await assertionContext.ImportReceipts.AsNoTracking().SingleAsync(x => x.Id == receiptId)).State);
-        Assert.Contains(
-            "disabled",
-            (await assertionContext.HealthCheckResults.AsNoTracking().OrderByDescending(x => x.CreatedAt).FirstAsync()).Message,
-            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(
+            PublicDiagnosticContract.HealthMissingReviewRequired,
+            (await assertionContext.HealthCheckResults.AsNoTracking().OrderByDescending(x => x.CreatedAt).FirstAsync()).Message);
         var savedJob = await assertionContext.WorkerJobs.AsNoTracking().SingleAsync(x => x.Id == workerJob.Id);
         Assert.Equal(WorkerJob.JobStatus.Quarantined, savedJob.Status);
         Assert.Equal(WorkerJob.FailureClass.InvalidData, savedJob.FailureKind);
@@ -2203,7 +2444,10 @@ public class HealthCheckRepairPolicyTests
         await using var assertionContext = await _fixture.CreateMigratedContextAsync();
         var savedReceipt = await assertionContext.ImportReceipts.AsNoTracking().SingleAsync(x => x.Id == receiptId);
         Assert.Equal(ImportReceiptState.VerificationQuarantined, savedReceipt.State);
-        Assert.Contains("confirmed missing", savedReceipt.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(
+            PublicDiagnosticContract.ConfirmedMissingAfterDownloadOperatorReview,
+            savedReceipt.Detail);
+        PublicFailureCanary.AssertSafe(savedReceipt.Detail);
         Assert.Equal(
             WorkerJob.JobStatus.Quarantined,
             (await assertionContext.WorkerJobs.AsNoTracking().SingleAsync(x => x.Id == workerJob.Id)).Status);
@@ -3390,6 +3634,21 @@ public class HealthCheckRepairPolicyTests
         await task.ConfigureAwait(false);
     }
 
+    private static async Task InvokeRepairAsync(
+        HealthCheckService service,
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        Guid repairRunId,
+        CancellationToken ct)
+    {
+        var method = typeof(HealthCheckService).GetMethod(
+            "Repair",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        var task = (Task)method.Invoke(service, [davItem, dbClient, ct, repairRunId])!;
+        await task.ConfigureAwait(false);
+    }
+
     private static async Task<WorkerLease?> InvokeLeaseNextRepairJobAsync(
         HealthCheckService service,
         IReadOnlyCollection<Guid> activeHealthCheckIds,
@@ -3851,6 +4110,119 @@ public class HealthCheckRepairPolicyTests
         public void Report(int value)
         {
             Values.Add(value);
+        }
+    }
+
+    private sealed class SuccessfulRepairArrServer : IAsyncDisposable
+    {
+        private readonly HttpListener _listener;
+        private readonly CancellationTokenSource _cts = new();
+        private readonly Task _loop;
+        private string? _libraryRoot;
+        private string? _linkPath;
+        private int _acceptedSearchCommands;
+
+        private SuccessfulRepairArrServer(HttpListener listener, string url)
+        {
+            _listener = listener;
+            Url = url.TrimEnd('/');
+            _loop = Task.Run(HandleLoopAsync);
+        }
+
+        public string Url { get; }
+        public int AcceptedSearchCommands => Volatile.Read(ref _acceptedSearchCommands);
+
+        public static Task<SuccessfulRepairArrServer> StartAsync()
+        {
+            using var portReservation = new TcpListener(IPAddress.Loopback, 0);
+            portReservation.Start();
+            var port = ((IPEndPoint)portReservation.LocalEndpoint).Port;
+            portReservation.Stop();
+            var prefix = $"http://127.0.0.1:{port}/";
+            var listener = new HttpListener();
+            listener.Prefixes.Add(prefix);
+            listener.Start();
+            return Task.FromResult(new SuccessfulRepairArrServer(listener, prefix));
+        }
+
+        public void Configure(string libraryRoot, string linkPath)
+        {
+            _libraryRoot = libraryRoot;
+            _linkPath = linkPath;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await _cts.CancelAsync();
+            _listener.Close();
+            try
+            {
+                await _loop;
+            }
+            catch
+            {
+                // Listener shutdown races are expected in this disposable fixture.
+            }
+            _cts.Dispose();
+        }
+
+        private async Task HandleLoopAsync()
+        {
+            while (!_cts.IsCancellationRequested)
+            {
+                var context = await _listener.GetContextAsync();
+                _ = Task.Run(() => HandleAsync(context), _cts.Token);
+            }
+        }
+
+        private async Task HandleAsync(HttpListenerContext context)
+        {
+            var path = context.Request.Url?.AbsolutePath;
+            if (context.Request.HttpMethod == "GET" && path == "/api/v3/rootfolder")
+            {
+                await WriteJsonAsync(context, JsonSerializer.Serialize(new[]
+                {
+                    new { id = 1, path = _libraryRoot, accessible = true, freeSpace = 1024 }
+                }));
+                return;
+            }
+
+            if (context.Request.HttpMethod == "GET" && path == "/api/v3/movie")
+            {
+                await WriteJsonAsync(context, JsonSerializer.Serialize(new[]
+                {
+                    new { id = 7, title = "Movie", movieFile = new { id = 11, path = _linkPath } }
+                }));
+                return;
+            }
+
+            if (context.Request.HttpMethod == "DELETE" && path == "/api/v3/moviefile/11")
+            {
+                context.Response.StatusCode = (int)HttpStatusCode.OK;
+                context.Response.Close();
+                return;
+            }
+
+            if (context.Request.HttpMethod == "POST" && path == "/api/v3/command")
+            {
+                Interlocked.Increment(ref _acceptedSearchCommands);
+                await WriteJsonAsync(
+                    context,
+                    """{"id":42,"name":"MoviesSearch","commandName":"MoviesSearch","result":"started","status":"started","priority":"normal"}""");
+                return;
+            }
+
+            context.Response.StatusCode = (int)HttpStatusCode.NotFound;
+            context.Response.Close();
+        }
+
+        private static async Task WriteJsonAsync(HttpListenerContext context, string json)
+        {
+            var bytes = Encoding.UTF8.GetBytes(json);
+            context.Response.ContentType = "application/json";
+            context.Response.ContentLength64 = bytes.Length;
+            await context.Response.OutputStream.WriteAsync(bytes);
+            context.Response.Close();
         }
     }
 

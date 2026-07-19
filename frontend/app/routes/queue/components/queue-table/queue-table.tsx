@@ -13,7 +13,7 @@ import { WideViewport } from "../wide-viewport/wide-viewport"
 import { ThinViewport } from "../thin-viewport/thin-viewport"
 import { Pagination } from "../pagination/pagination"
 import type { QueueSortField, QueueSortOrder, QueueStatusFilter } from "~/clients/backend-client.server"
-import { getHttpErrorMessage, readJsonObjectOrEmpty } from "~/utils/http-response"
+import { readHttpActionResult } from "~/utils/http-response"
 
 export type QueueTableProps = {
     queueSlots: PresentationQueueSlot[],
@@ -137,18 +137,14 @@ export function QueueTable({
                 },
                 body: JSON.stringify({ nzo_ids: Array.from(queuedIds) }),
             });
-            if (response.ok) {
-                const data = await readJsonObjectOrEmpty(response);
-                if (data.status === true) {
-                    onRemoved(queuedIds);
-                    return;
-                }
-                setOperationError(typeof data.error === "string" ? data.error : "Failed to remove queue items.");
-            } else {
-                setOperationError(`Failed to remove queue items: ${await getHttpErrorMessage(response)}`);
+            const result = await readHttpActionResult(response);
+            if (result.success) {
+                onRemoved(queuedIds);
+                return;
             }
-        } catch (error) {
-            setOperationError(`Failed to remove queue items: ${error instanceof Error ? error.message : "unknown error"}.`);
+            setOperationError(`Failed to remove queue items: ${result.error}`);
+        } catch {
+            setOperationError("Failed to remove queue items: request failed.");
         }
         onIsRemovingChanged(queuedIds, false);
     }, [pendingRemoval, queueSlots, setPendingRemoval, setOperationError, onIsRemovingChanged, onRemoved]);
@@ -159,20 +155,16 @@ export function QueueTable({
         setOperationError(null);
         try {
             const mode = nextPausedState ? "pause" : "resume";
-            const response = await fetch(withUrlBase(`/api?mode=${mode}`));
-            if (response.ok) {
-                const data = await readJsonObjectOrEmpty(response);
-                if (data.status === true) {
-                    onPauseQueueChanged(nextPausedState);
-                    setIsPausingQueue(false);
-                    return;
-                }
-                setOperationError(typeof data.error === "string" ? data.error : `Failed to ${nextPausedState ? "pause" : "resume"} queue.`);
-            } else {
-                setOperationError(`Failed to ${nextPausedState ? "pause" : "resume"} queue: ${await getHttpErrorMessage(response)}`);
+            const response = await fetch(withUrlBase(`/api?mode=${mode}`), { method: 'POST' });
+            const result = await readHttpActionResult(response);
+            if (result.success) {
+                onPauseQueueChanged(nextPausedState);
+                setIsPausingQueue(false);
+                return;
             }
-        } catch (error) {
-            setOperationError(`Failed to ${nextPausedState ? "pause" : "resume"} queue: ${error instanceof Error ? error.message : "unknown error"}.`);
+            setOperationError(`Failed to ${nextPausedState ? "pause" : "resume"} queue: ${result.error}`);
+        } catch {
+            setOperationError(`Failed to ${nextPausedState ? "pause" : "resume"} queue: request failed.`);
         }
         setIsPausingQueue(false);
     }, [isQueuePaused, onPauseQueueChanged, setIsPausingQueue, setOperationError]);
@@ -383,19 +375,15 @@ export const QueueRow = memo(({
         try {
             const url = withUrlBase('/api?mode=queue&name=delete')
                 + `&value=${encodeURIComponent(slot.nzo_id)}`;
-            const response = await fetch(url);
-            if (response.ok) {
-                const data = await readJsonObjectOrEmpty(response);
-                if (data.status === true) {
-                    onRemoved(slot.nzo_id);
-                    return;
-                }
-                setOperationError(typeof data.error === "string" ? data.error : "Failed to remove queue item.");
-            } else {
-                setOperationError(`Failed to remove queue item: ${await getHttpErrorMessage(response)}`);
+            const response = await fetch(url, { method: 'POST' });
+            const result = await readHttpActionResult(response);
+            if (result.success) {
+                onRemoved(slot.nzo_id);
+                return;
             }
-        } catch (error) {
-            setOperationError(`Failed to remove queue item: ${error instanceof Error ? error.message : "unknown error"}.`);
+            setOperationError(`Failed to remove queue item: ${result.error}`);
+        } catch {
+            setOperationError("Failed to remove queue item: request failed.");
         }
         onIsRemovingChanged(slot.nzo_id, false);
     }, [canManage, slot.isUploading, slot.nzo_id, setIsConfirmingRemoval, setOperationError, onIsRemovingChanged, onRemoved]);
@@ -409,20 +397,16 @@ export const QueueRow = memo(({
             const url = withUrlBase('/api?mode=queue&name=priority')
                 + `&value=${encodeURIComponent(slot.nzo_id)}`
                 + `&value2=${encodeURIComponent(priorityValues[priority] ?? "0")}`;
-            const response = await fetch(url);
-            if (response.ok) {
-                const data = await readJsonObjectOrEmpty(response);
-                if (data.status === true) {
-                    onPriorityChanged(slot.nzo_id, priority);
-                    setIsChangingPriority(false);
-                    return;
-                }
-                setOperationError(typeof data.error === "string" ? data.error : "Failed to change queue item priority.");
-            } else {
-                setOperationError(`Failed to change queue item priority: ${await getHttpErrorMessage(response)}`);
+            const response = await fetch(url, { method: 'POST' });
+            const result = await readHttpActionResult(response);
+            if (result.success) {
+                onPriorityChanged(slot.nzo_id, priority);
+                setIsChangingPriority(false);
+                return;
             }
-        } catch (error) {
-            setOperationError(`Failed to change queue item priority: ${error instanceof Error ? error.message : "unknown error"}.`);
+            setOperationError(`Failed to change queue item priority: ${result.error}`);
+        } catch {
+            setOperationError("Failed to change queue item priority: request failed.");
         }
         setIsChangingPriority(false);
     }, [canManage, slot.isUploading, slot.priority, slot.nzo_id, onPriorityChanged, setIsChangingPriority, setOperationError]);

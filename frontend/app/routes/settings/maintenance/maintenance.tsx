@@ -1,9 +1,7 @@
 import { Accordion, Form, InputGroup } from "react-bootstrap";
 import styles from "./maintenance.module.css"
 import { RemoveUnlinkedFiles } from "./remove-unlinked-files/remove-unlinked-files";
-import { ConvertStrmToSymlinks } from "./strm-to-symlinks/strm-to-symlinks";
 import { MigrateDatabaseFilesToBlobstore } from "./migrate-database-files-to-blobstore/migrate-database-files-to-blobstore";
-import { RecreateStrmFiles } from "./recreate-strm-files/recreate-strm-files";
 import type { Dispatch, SetStateAction } from "react";
 
 type MaintenanceProps = {
@@ -101,22 +99,6 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
                         </Accordion.Header>
                         <Accordion.Body className={styles.accordionBody}>
                             <RemoveUnlinkedFiles savedConfig={savedConfig} />
-                        </Accordion.Body>
-                    </Accordion.Item>
-                    <Accordion.Item className={styles.accordionItem} eventKey="strm-to-symlinks">
-                        <Accordion.Header className={styles.accordionHeader}>
-                            Convert Strm Files to Symlnks
-                        </Accordion.Header>
-                        <Accordion.Body className={styles.accordionBody}>
-                            <ConvertStrmToSymlinks savedConfig={savedConfig} />
-                        </Accordion.Body>
-                    </Accordion.Item>
-                    <Accordion.Item className={styles.accordionItem} eventKey="recreate-strm-files">
-                        <Accordion.Header className={styles.accordionHeader}>
-                            Export all Available Media to Strm Files
-                        </Accordion.Header>
-                        <Accordion.Body className={styles.accordionBody}>
-                            <RecreateStrmFiles />
                         </Accordion.Body>
                     </Accordion.Item>
                     <Accordion.Item className={styles.accordionItem} eventKey="migrate-database-files-to-blobstore">

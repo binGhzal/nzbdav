@@ -4,18 +4,18 @@
 
 | Field | Value |
 | --- | --- |
-| Content verification cutoff | 2026-07-18T23:47:30+00:00 |
-| Handoff status | AUDITED WIP CHECKPOINT; V1 RELEASE NO-GO |
-| Repository | `pinrail` (NZBDav compatibility names remain until the post-freeze rebrand) |
+| Content verification cutoff | 2026-07-19T16:43:44Z |
+| Handoff status | TASK 2C-2E + CONTAINER HARDENING + FINAL AST GRAPH LOCAL GREEN; FORMAL SECURITY/SIGNED PUSH/REMOTE CI PENDING; V1 RELEASE NO-GO |
+| Repository | `pinrail` (NZBDav compatibility names remain until the post-Task-10 approved rebrand) |
 | Current branch | `pinrail/v1-backend-wip` |
 | Initial documentation baseline HEAD | `8c06d9caacd8c0d2ab5d69f47e3b230b75b16704`, HEAD immediately before authorized publication |
 | Initial handoff publication commit | The commit that first adds `AGENTS.md`. Resolve stably with `git log --diff-filter=A -1 --format=%H -- AGENTS.md` |
 | Upstream | `https://github.com/nzbdav-dev/nzbdav.git` |
 | Default remote branch | `origin/main` |
 | Base and merge base | `origin/main` at merge base `86af7b816c496aea2654c438be7fa553b98bb91c` |
-| Current relation | Signed SearchNudge checkpoint `88e05f87e37147bf60b7fad8b0914df43e219eab` is the direct child of externally added signed Graphify configuration `0e9e3583e6b26fedb26c222f06519a02853bc902`; before this documentation-only seal it matched `origin/pinrail/v1-backend-wip` and was 208 ahead, 0 behind `upstream/main` |
-| Worktree | Clean and synchronized with `origin/pinrail/v1-backend-wip` at `88e05f87e37147bf60b7fad8b0914df43e219eab` before staging this three-document seal. Generated Graphify output remains ignored and unstaged; ordinary ignored build/test outputs are not staged. |
-| Durability boundary | Carrier, gitleaks, externally added Graphify configuration, and SearchNudge incident checkpoints are signed, pushed, and exact-HEAD CI-verified; all locally authored code-bearing slices were independently accepted. This documentation-only child must also pass exact-HEAD CI before the task stops. None of these seals the production proxy, merge, deployment, image publication, or release. Private Phase 4 remains unreachable and post-V1. |
+| Current relation | Base HEAD `173b743c288f69f9f129e66a09dd4a6caed37023` matches `origin/pinrail/v1-backend-wip`. The combined Task 2C-2E plus container-hardening worktree is based directly on it; the formal security and release gates precede the signed checkpoint, push, and exact remote CI. |
+| Worktree | Intentionally dirty only for the current Task 2 checkpoint and its required handoff/plan/design/progress evidence. Generated compiler and Graphify output remain ignored and unstaged. No nested checkout exists. |
+| Durability boundary | Carrier, gitleaks, Graphify configuration, and SearchNudge are signed, pushed, and exact-HEAD CI-verified. Task 2A-2E, container hardening, the final AST graph, and an independent combined-diff review are locally green, but the checkpoint is not durable until the formal Codex Security scan, signed push, and exact remote CI pass. Nothing authorizes merge, deployment, image publication, tag/release, production mutation, or private Phase 4. |
 | Canonical active plan | [V1 backend release implementation plan](docs/superpowers/plans/2026-07-17-nzbdav-v1-backend-release-plan.md) |
 | Governing design | [V1 backend release design](docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md) |
 | Related pull request or issue | No pull request found for this branch by an authenticated read-only `gh pr view` query on 2026-07-16; no linked issue was identified from repository evidence |
@@ -28,9 +28,9 @@ not supplemented with another competing addendum.
 **VERIFIED DECISION:** The active mission is the clean-install-only V1 backend
 release. V1 supports Docker, SQLite, one control owner, and `role=all` only.
 PostgreSQL, Transfer-v3 Phase 4, split roles, pre-V1 upgrades, and in-place
-downgrade are post-V1. Full rebrand work remains blocked until the backend
-freeze and release-candidate gates pass. After those gates, every user-facing
-frontend/rebrand change must be designed and approved first in the existing
+downgrade are post-V1. Full rebrand work remains blocked until Task 10 GO and
+user review of the complete backend pass/risk report. After that gate, every
+user-facing frontend/rebrand change must be designed and approved first in the existing
 [Pinrail Figma file](https://www.figma.com/design/WxDUx3FJ9iINrtXn2GmkZC/Pinrail-%E2%80%94-Product-Design---Wireframes?m=auto&t=YBuWaX8ZhLg6aYZd-6); code-first visual implementation and substitute design
 tools are forbidden unless the user explicitly approves them.
 
@@ -145,33 +145,95 @@ The commit was pushed without force and exact-HEAD GitHub Actions run
 completed successfully: the main verifier and native Transfer glibc/musl on
 x64/arm64 passed with five successful jobs and zero failed steps.
 
+The 2026-07-19 combined Task 2C-2E checkpoint is based directly on
+`173b743c288f69f9f129e66a09dd4a6caed37023`. Task 2A authentication/session,
+Task 2B exact proxy plus hard-symlink-only runtime, Task 2C public failure/log/
+persistence sanitization, Task 2D internal-key plus normal-startup session/auth
+preflight, and Task 2E canonical protocol/operator contracts are locally green
+and independently accepted in their focused scopes.
+
+The production frontend enforces the exact raw-target HTTP matrix and pre-101
+WebSocket boundary; the backend binds explicit IPv4 loopback and rejects
+configured Kestrel endpoints. `/protocol` retains only reviewed SAB/ARR and
+WebDAV authority, while UI/admin relays require the selected principal.
+Private-hop credentials and response authority are stripped or injected by the
+lane contract. Mounted WebDAV uses one validated internal PathBase bridge so
+NWebDav emits mount-correct absolute hrefs while logical store paths remain
+unchanged. Reachable STRM configuration, migration seed, generation,
+conversion, maintenance, controller, and UI surfaces are removed.
+
+Task 2C final review found P0/P1/P2/P3 `0/0/0/0`. `Repaired` remains an ARR
+command-accepted term, not proof of external completion, and future
+maintenance `ExecuteUpdate` external-string expansion would require renewed
+review. Task 2D's initial startup-preflight review `0/0/3/0` closed exact-mode,
+ordering, and mixed-case preservation/export gaps; final review plus shell
+portability cleanup is `0/0/0/0`. Task 2E's initial code `0/0/3/1`, second code
+`0/0/2/0`, and operator `0/3/3/0` reviews were repaired RED-first; final code
+and operator reviews are each `0/0/0/0`.
+
+The canonical external client base is `<origin><URL_BASE>/protocol`; rclone
+mounts that full root, not `/protocol/content`, so `/.ids`,
+`/completed-symlinks`, `/content`, and `/nzbs` coexist. Browser
+`<origin><URL_BASE>/view` remains frontend-principal-only and outside every
+protocol bypass. Final focused counts are helper `4/4`, ARR `12/12`, benchmark
+`41/41`, grab-to-Plex `42/42`, operator `17/17`, request policy `158/158`, and
+complete Python `155/155`.
+
+Current combined local gates: NuGet audited restore plus direct/transitive
+vulnerable-package listings for both `backend/NzbWebDAV.csproj` and
+`backend.Tests/backend.Tests.csproj` are clean;
+backend Release `3,071` total: `2,986` passed, `85` deliberate PostgreSQL-only
+skips, and zero failures; production/test no-incremental warning-as-error builds
+have zero warnings/errors; affected formatting repair/regression passed `62/62`,
+and final formatter verification over all 106 added/modified C# files passed;
+`npm ci` audited 374 packages with zero vulnerabilities and the fresh
+`npm audit` result is also zero; frontend typecheck, 50 files/928 tests,
+client/server builds, packaged smoke, and Playwright `5/5` passed;
+entrypoint, shell syntax, severity-error ShellCheck, actionlint, PostgreSQL
+runtime refusal, Python `157/157`, and whitespace checks passed. Gitleaks found
+zero in the current tree (about 18.86 MB) and 639-commit history (about 11.90
+MB), using only one exact ephemeral exclusion for ignored generated
+`graphify-out/` content.
+
+Trivy/container hardening is now green. Npm vulnerability and Dockerfile
+misconfiguration findings are both zero. The combined image rejects zero and
+padded-zero `PUID`/`PGID`, normalizes valid nonzero IDs, invokes `su-exec` with
+the resolved user and group, and proves root PID 1 supervises two non-root
+children. The exact root `Dockerfile` DS-0002 exception covers only dynamic
+identity, owned-path preparation, and supervision. Legacy backend/frontend
+standalone image paths are retired. The exception does not cover the privileged
+DFS prototype, which remains post-gate; V1 uses the rclone sidecar.
+
+The first implementation review found P0/P1/P2/P3 `0/0/1/0`: the container
+smoke used client-host `/proc` and checked only real IDs. A tests-only RED
+required inspection inside the container PID namespace and all four real/
+effective/saved/filesystem UID and GID columns. Repair and re-review are
+`0/0/0/0`. Final focused gates passed Python `157/157`, packaged runtime `6/6`,
+shell contract, typecheck, `sh`/Dash/BusyBox syntax, full ShellCheck, actionlint,
+diff check, and exact Trivy scans. Local Docker was intentionally not run.
+
 All GHCR publication is deliberately disabled while V1 is NO-GO. Branch,
 Dependabot, main, and tag workflows now have read-only contents permission and
 run the reusable verification gate only. The gate fails closed on NuGet audit
 findings and includes the shell/container lifecycle contracts.
 
-Two independent whole-diff reviews found no P0. The carrier-parser conflict has
-since been resolved without wiring the production proxy. These remaining
-reachable P1 blockers make this branch WIP-only:
-
-1. The exact `/protocol` proxy policy is draft test-only code; production still
-   uses broad pre-auth forwarding and unrestricted WebSocket upgrade paths. The
-   frozen backend carrier parser does not close this production boundary.
-2. Raw exceptions remain exposed or persisted through public responses, logs,
-   queue history, and maintenance records.
-3. Missing-file repair still performs detached persistence mutation with
-   unbounded `Task.Run` work.
-4. STRM generation and maintenance/controller surfaces remain reachable despite
-   the V1 hard-symlink-only contract.
-5. Entrypoint treats process-only `/health` as readiness; dependency readiness
-   remains absent.
-6. Blob cleanup deletes the file before durable database commit.
-7. Safe-rclone records or trusts fingerprints without proving live container,
-   RC, mount, and traversal postconditions.
+Task 2 is not yet durable. Graphify 0.9.19 rebuilt the final AST-only graph at
+`15,770` nodes, `41,044` edges, and `728` communities; the external `pinrail`
+entry is current, and query/path/explain canaries passed. An independent
+combined-diff security review is `0/0/0/0`. The formal Codex Security workspace
+was opened, but its native setup wait expired without Start Scan being
+submitted, so no formal scan started and that external interaction remains the
+first exact blocker. The signed-off checkpoint, push, and exact remote
+CI/container/native matrix also remain pending. Prior successful container-
+smoke runs are historical only and do not prove the current diff.
+Task 2F reference archaeology may start only after that exact remote run is
+green. Later reachable blockers remain: detached repair lifecycle (Task 4),
+false readiness (Task 3), delete-before-commit blob cleanup (Task 6), and unsafe
+rclone state recording (Task 5).
 
 The existing Pinrail Figma file was authenticated and its metadata resolved on
-2026-07-18. No design was changed. Visual work stays blocked until backend freeze
-and release-candidate gates pass.
+2026-07-18. No design was changed. Visual/rebrand work stays blocked until Task
+10 GO and user review of the complete backend pass/risk report.
 
 ## Resume in 60 seconds
 
@@ -197,26 +259,27 @@ and release-candidate gates pass.
 5. Continue Task 2, `Secure sessions, proxying, errors, and logs`. Do not begin
    readiness, lifecycle, rclone, frontend rebrand, or release-candidate work
    first.
-6. Task 2A, the backend carrier parser, and deterministic gitleaks cleanup are
-   complete. Gitleaks checkpoint `c925ebc84dc8e8bdd3e10fb7f35ee3ee249bc622`
-   passed independent review and exact-HEAD run `29663552874`. External Graphify
-   configuration `0e9e3583e6b26fedb26c222f06519a02853bc902` is the pushed
-   parent of the current work; do not rerun or modify Graphify in this task.
-7. The SearchNudge report-mode regression is sealed at signed checkpoint
-   `88e05f87e37147bf60b7fad8b0914df43e219eab` and exact-HEAD run
-   `29664771054`. First exact next action: verify this documentation-only
-   child's exact CI, report the clean checkpoint, and stop.
-8. After the explicit continuation, finish the route/method/WebSocket inventory and Task 2B
-   council synthesis, then build the RED matrix beside `frontend/server/*.test.ts`:
-   anonymous,
-   local-authenticated, trusted Authentik, untrusted source, wrong application,
-   encoded/double-encoded separator, prefix-confusion, conflicting API-key, and
-   oversized-header cases. Do not wire production proxy code first.
-9. Preserve independently API-key-authenticated WebDAV/SAB clients while
-   proving browser UI-admin routes require the selected frontend principal and
-   client-supplied internal keys are stripped before server-side injection.
-10. Immediate acceptance criterion: the exact proxy authorization/header matrix
-   is green; then continue public-error and log sanitization.
+6. Read the live Task 2 order exactly: 2A authentication/session; 2B exact proxy
+   plus symlink-only runtime; 2C public failure/log/persistence sanitization; 2D
+   internal-key plus normal-startup auth preflight; 2E canonical protocol and
+   operator contract; 2F clean-room reference archaeology. Tasks 2A-2E are
+   locally green in their focused scopes.
+7. Container hardening is locally sealed: Trivy is zero, identity/child-user
+   contracts pass, and final review is `0/0/0/0`. The final AST-only Graphify
+   graph is current. The first exact action is to submit Start Scan in the
+   existing native Codex Security workspace and resume the formal diff scan
+   against the stable combined diff.
+8. Rerun final documentation/whitespace/hash checks after that evidence is
+   recorded. Keep any failure distinct from the known local buildx environment
+   blocker.
+9. Only when all local gates and reviews remain green, create one lowercase
+   imperative signed-off checkpoint, push without force to
+   `pinrail/v1-backend-wip`, and require exact-HEAD remote CI including container
+   lifecycle and native glibc/musl x64/arm64 jobs.
+10. Only after that exact remote run is green, begin Task 2F clean-room reference
+    archaeology in ephemeral clones outside `/opt/pinrail`. Do not copy GPL or
+    otherwise unclear-provenance code/assets; implement only approved V1 gaps
+    through independent tests and existing Pinrail abstractions.
 
 ## Mission and definition of done
 
@@ -244,8 +307,8 @@ and completes the six end-user journeys in the governing V1 design.
   counts, clean-install limitation, recovery contract, and residual risk;
 - PostgreSQL, Phase 4, split roles, upgrades, and in-place downgrade remain
   unreachable and unsupported;
-- the user receives the complete backend pass report before full rebrand work
-  begins.
+- Task 10 records GO and the user reviews the complete backend pass/risk report
+  before full rebrand work begins.
 
 ### Scope
 
@@ -257,7 +320,8 @@ release evidence, and documentation.
 
 PostgreSQL, Transfer-v3 Phase 4 completion, split roles, multi-owner/multi-host
 operation, pre-V1 upgrades, in-place downgrade, alternative packaging, full
-visual rebrand before backend freeze, and destructive/stress use of production.
+visual rebrand before Task 10 GO plus user review, and destructive/stress use
+of production.
 
 ### Inferred requirements
 
@@ -337,28 +401,31 @@ implementation file was edited, removed, staged, or cleaned by this pass.
 
 ## Current state summary
 
-The V1 boundary and implementation sequence are frozen. The current release is
-NO-GO. Release builds, disposable SQLite migration, frontend build gates,
-5/5 Playwright tests, 110/110 Python tests, npm and NuGet vulnerability scans,
-Docker image build, and entrypoint shell/container smoke are green in the
-checkpoint source.
+The V1 boundary and implementation sequence are frozen, and the release remains
+NO-GO. Task 1 is sealed. Task 2A-2E are locally green in their focused scopes:
+authentication/session, exact proxy and symlink-only reachability, public
+failure/log/persistence sanitization, internal/session startup preflight, and
+the canonical protocol/operator contract.
 
-Task 1 backend truth is green in the current checkpoint source:
+The current combined local baseline passed backend `3,071` total (`2,986`
+passed, 85 deliberate PostgreSQL-only skips), frontend 50 files/928 tests,
+Playwright `5/5`, Python `157/157`, warning-as-error builds, scoped format,
+npm audit with zero vulnerabilities, clean direct/transitive NuGet vulnerability
+listings for both production and test projects, shell/actionlint, PostgreSQL
+refusal, gitleaks current/history zero, and whitespace checks. The strict TRX validator is
+expectedly nonzero only because
+the local run deliberately skips external PostgreSQL; exact remote CI owns that
+matrix. Local Docker remains blocked by missing buildx.
 
-- the complete hermetic Release backend assembly passed 2,824 with 84
-  deliberate PostgreSQL-only skips and zero failures or exclusions;
-- the focused Usenet controller gate passed 4/4 and proves stalled-greeting
-  timeout, request cancellation, and partial-connection disposal;
-- the affected Usenet/cleanup/invalidation regression passed 85 with one
-  deliberate PostgreSQL-only skip;
-- the timing-sensitive subset passed ten consecutive audited iterations at
-  59 passed and one deliberate PostgreSQL-only skip per iteration;
-- production and test Release builds passed with warnings as errors, and scoped
-  format plus whitespace verification passed.
-
-The release remains NO-GO. Session defaults, full-proxy authentication and route
-abuse boundaries, readiness, public errors, detached repair lifecycle, safe
-rclone update, and immutable release provenance remain V1 blockers.
+Task 2 is not yet a durable checkpoint. Container identity and Trivy are green
+after RED-GREEN repair and final `0/0/0/0` review. The final AST graph is current
+and the independent combined-diff security review is `0/0/0/0`; the formal
+Codex Security scan is blocked only on the unsubmitted native Start Scan action.
+Signed push and exact remote CI then remain, followed by Task 2F reference
+archaeology.
+Later blockers remain readiness, host-owned repair lifecycle, safe-rclone
+postconditions, durable blob deletion, SQLite resilience, artifact provenance,
+and exact-candidate acceptance.
 
 One read-only production documentation search occurred after explicit user
 authorization. No production database, blob tree, service, container, ARR,
@@ -462,26 +529,33 @@ deliberate no-connection skips.
 
 ## Work in progress
 
-### V1 Task 1, deterministic backend test truth
+### V1 Task 2 combined checkpoint
 
 What exists:
 
-- exact reproduction of the Usenet testhost stack overflow;
-- exact reproduction of the three cleanup/visibility failures;
-- source tracing through cleanup, snapshot interceptor, database context,
-  rclone invalidation service, and rclone client;
-- a complete six-seat V1 council and approved backend release design/plan.
+- Task 2A authentication/session and the carrier parser are signed and exact-CI
+  sealed in earlier commits;
+- Task 2B production proxy, WebSocket, PathBase, hard-symlink-only, loopback,
+  and real disposable rclone/ASP.NET contracts are locally green;
+- Task 2C public failure/log/persistence boundaries are accepted `0/0/0/0`;
+- Task 2D internal-key and normal-startup session/auth preflight is accepted
+  `0/0/0/0` after review repair and shell portability cleanup;
+- Task 2E canonical protocol/operator behavior is accepted `0/0/0/0` for both
+  final code and operator reviews;
+- container identity/Trivy hardening is green after a `0/0/1/0` test-proof
+  review correction and final `0/0/0/0` re-review;
+- combined broad local gates are green except the local buildx environment
+  blocker, which exact remote CI owns.
 
 What remains, in order:
 
-1. separate the Usenet test's non-disposable collecting sink from logger
-   ownership and rerun the isolated class;
-2. prove whether the whole-cache sentinel intentionally subsumes narrower
-   invalidations or whether production violates a consumer contract;
-3. repair the correct test or runtime contract through red-green TDD;
-4. rerun the complete backend suite without an excluded class;
-5. repeat affected concurrency gates ten times;
-6. record exact results in the active V1 plan and this handoff.
+1. submit Start Scan in the existing native Codex Security workspace and
+   complete the formal diff scan against the stable combined diff;
+2. reconcile final security evidence and rerun documentation/hash checks;
+3. create one signed-off checkpoint, push without force, and verify exact-HEAD
+   remote CI/container/native jobs;
+4. only then start Task 2F clean-room reference archaeology and V1 gap
+   reconciliation.
 
 ### Deferred Transfer-v3 Phase 4
 
@@ -496,7 +570,8 @@ PostgreSQL remains disabled.
 ## Not started
 
 V1 Task 2 is `IN PROGRESS`; V1 Tasks 3-10 are `NOT STARTED`; V1 Task 11
-rebrand is `BLOCKED` pending the backend freeze and release-candidate evidence.
+rebrand is `BLOCKED` pending Task 10 GO and user review of the backend pass/risk
+report.
 Historical Phase 4 Tasks 9-21 remain `NOT STARTED` and post-V1:
 
 - Task 9: one-deadline MVCC-safe commit reconciliation;
@@ -528,7 +603,7 @@ Do not interpret either plan's future task text as implemented behavior.
 | `docs/superpowers/specs/2026-07-17-nzbdav-v1-backend-release-design.md` | Created by this V1 pivot | Governing V1 design | Freezes Docker/SQLite/one-owner/clean-install boundary and release definition of done | Implement active plan | Six-seat council plus current executable evidence | Durable in the signed WIP checkpoint |
 | `docs/superpowers/plans/2026-07-14-nzbdav-transfer-v3-phase-4.md` | Tracked, modified by this V1 pivot | Deferred post-V1 plan | Preserves Tasks 0-7 and unsealed Task 8 evidence without governing continuation | Resolve catalog-memory finding post-V1 | Current source/tests and conflicting reviews | Planned behavior remains private and non-shipped |
 | `docs/superpowers/specs/2026-07-14-nzbdav-transfer-v3-phase-4-design.md` | Tracked, unchanged by this V1 pivot | Deferred Phase 4 design | Preserves the private PostgreSQL design and memory contract | Post-V1 only | Source/design comparison | Do not broaden runtime reachability |
-| `.superpowers/sdd/progress.md` | Tracked, added by the carrier slice | Supplemental carrier execution ledger | Records the carrier base, RED/GREEN, accepted review-fix re-review, push, and exact remote CI | Historical/supporting only after carrier closure | Local and exact remote evidence plus canonical-document reconciliation | Noncanonical; no continuation step depends on it |
+| `.superpowers/sdd/progress.md` | Tracked, added by the carrier slice | Supplemental execution ledger | Records sealed carrier/gitleaks/SearchNudge history and current Task 2C-2F status, reviews, gates, and pending durability work | Reconcile after final graph/security evidence and exact CI | Local and exact remote evidence plus canonical-document reconciliation | Noncanonical; no continuation step depends on it |
 | `.superpowers/sdd/task-2-carrier-contract-brief.md` | Tracked, added by the carrier slice | Supplemental task-scoped brief | Freezes the narrow carrier contract, pinned evidence, scope, and TDD handback | Historical/supporting only after carrier re-review | Source review and canonical-document reconciliation | Noncanonical; canonical continuation remains in `AGENTS.md`, this handoff, the active plan, and design |
 
 ### Historical Task 8 implementation ledger, now deferred post-V1
@@ -577,7 +652,20 @@ High-risk groups:
 
 ## Relevant architecture and data flow
 
-Current Task 8 call path:
+Current V1 ingress is:
+
+`client -> frontend raw-target classifier -> exact UI/protocol/WebSocket lane -> loopback backend`
+
+UI/admin lanes require the selected frontend principal and receive only the
+server-owned internal key. Protocol lanes retain their independent SAB API-key
+or WebDAV Basic authentication. External clients start at
+`<origin><URL_BASE>/protocol`; the internal PathBase bridge is bounded,
+validated, and removed before logical store lookup. The combined entrypoint
+validates normal-startup auth/session configuration, then internal-key shape,
+before identity-system/filesystem/database/child work.
+
+The following Task 8 call path is historical deferred Phase 4 context, not the
+current V1 implementation sequence:
 
 `TransferV3PostgreSqlAdmissionValidator.ValidateFreshAndMarkImportingAsync`
 
@@ -652,16 +740,16 @@ CAS or destructive cleanup.
 
 | Document | Result |
 | --- | --- |
-| `HANDOFF.md` | Rewritten as sole canonical current handoff and included in the authorized documentation commit |
+| `HANDOFF.md` | Sole canonical live handoff; reconciled through the locally green Task 2C-2E, container hardening, final AST graph, and independent security review, with formal security, signed push, and exact CI pending |
 | `AGENTS.md` | Created as Hermes project context/resume pointer and included in the authorized documentation commit |
 | Phase 4 plan | Reconciled statuses, Task 8 scope/interfaces/failures/next action and included in the authorized documentation commit |
 | Phase 4 design | Updated exact same-budget canonical-buffer admission lifecycle and included in the authorized documentation commit |
 | Carrier progress and Task 2 carrier brief | Tracked as supplemental, noncanonical carrier evidence; historical local Phase 4 progress/brief artifacts are absent |
 | `CONTRIBUTING.md` | Updated declared runtimes and tracked verification surface, then included in the authorized documentation commit |
-| `README.md` | Reviewed, no Phase 4 change required |
-| `docs/setup-guide.md` | Reviewed, already correctly keeps SQLite supported and PostgreSQL disabled |
+| `README.md` | Current first-run Docker examples include the required local session/cookie contract and canonical protocol base |
+| `docs/setup-guide.md` | Current V1 setup keeps SQLite-only, uses the full rclone protocol root, and documents Sonarr/Radarr/Lidarr URL Base |
 | `backend/Database/Transfer/Contracts/README.md` | Reviewed, source-boundary description remains correct |
-| `frontend/README.md` | Reviewed as unrelated generic template; not changed |
+| `frontend/README.md` | Declares the standalone frontend image unsupported for V1 and points contributors to the root setup contract |
 | `CHANGELOG.md` | Not applicable. Phase 4 is not shipped. |
 
 No Markdown lint, documentation build, or repository link checker is configured.
@@ -767,6 +855,15 @@ container.
 | 2026-07-18 | Exact-HEAD GitHub Actions run [`29664771054`](https://github.com/binGhzal/pinrail/actions/runs/29664771054) | `.` | PASS | 0 | Signed SearchNudge checkpoint `88e05f87e37147bf60b7fad8b0914df43e219eab` matched the run head; main verifier and native Transfer glibc/musl x64/arm64 all passed in five successful jobs with 0 failed steps | SearchNudge incident gate sealed; V1 remains NO-GO |
 | 2026-07-18 | Initial documentation-seal validation wrapper | `.` | BLOCKED | unavailable | Command safety rejected the wrapper before process creation because it included temporary-report removal; no scan ran and no file changed | Rerun without temporary files or removal |
 | 2026-07-18 | Fail-fast handoff schema, relative-link, checkpoint-consistency, trailing-whitespace, `git diff --check`, and redacted gitleaks current/history gate | `.` | PASS | 0 | Documentation validation passed; gitleaks 8.30.1 reported current 0 and history 0 without printing candidates | Independent read-only review returned no findings before staging |
+| 2026-07-19 | `dotnet build backend/backend.csproj -c Release --no-restore --no-incremental -warnaserror` | `.` | FAIL | 1 | The named project does not exist; command exited before compilation and is not gate evidence | Corrected to `backend/NzbWebDAV.csproj` |
+| 2026-07-19 | Production `backend/NzbWebDAV.csproj` and test `backend.Tests/backend.Tests.csproj` Release no-restore/no-incremental warning-as-error builds | `.` | PASS | 0 | Both corrected exact builds completed with 0 warnings and 0 errors | None |
+| 2026-07-19 | Post-review complete backend/frontend/Python and packaged/browser regression | `.` | PASS | 0 | Backend 3,071 total: 2,986 passed, 85 deliberate PostgreSQL-only skips, 0 failed; frontend 50 files/928 tests; Python 157/157; packaged 6/6; client/server builds and Playwright 5/5 green | Exact remote PostgreSQL/container/native matrix remains pending |
+| 2026-07-19 | Trivy/container identity RED-GREEN and independent re-review | `.` | PASS | 0 | Npm vulnerabilities 0; Dockerfile misconfigurations 0; first review 0/0/1/0 was repaired with in-container all-column UID/GID proof; final re-review 0/0/0/0 | Local Docker intentionally not run; exact remote CI owns executable container proof |
+| 2026-07-19 | Repository-documented Ruby relative-link/handoff-schema validator | `.` | BLOCKED | 127 | Ruby is not installed; neither validation ran and no pass is claimed | Run the same read-only predicates with available Python, then rerun after the final ledger edit |
+| 2026-07-19 | Read-only Python relative-link/handoff-schema equivalent plus trailing-whitespace and `git diff --check` | `.` | PASS | 0 | Seven reconciled documents have resolving relative links, required handoff headings, exactly three changed-file ledger schemas, valid verification rows, no trailing whitespace, and a clean whole-worktree diff check | Rerun once after this final ledger row |
+| 2026-07-19 | Whole-project production/test `dotnet format --no-restore --verify-no-changes` | `.` | FAIL | nonzero | Findings were confined to pre-existing unchanged baseline formatting outside the Task 2 checkpoint; no formatter edit was made | Use the complete affected-file inventory; do not claim a whole-project pass |
+| 2026-07-19 | Production/test `dotnet format --no-restore --verify-no-changes` over all 106 added/modified C# files | `.` | PASS | 0 | Both affected-file commands completed with no diagnostic or edit | Scoped current-worktree formatting gate is green |
+| 2026-07-19 | Fresh npm and direct/transitive NuGet vulnerability audits | `.` | PASS | 0 | `npm audit` reported 0 vulnerabilities; `backend/NzbWebDAV.csproj` and `backend.Tests/backend.Tests.csproj` each reported no vulnerable direct or transitive package | Exact candidate rerun remains required after the signed checkpoint |
 
 The .NET commands refreshed only ordinary ignored build/test outputs. The final
 Git-visible set comparison found no generated path attributable to verification,
@@ -796,93 +893,35 @@ so nothing was cleaned. Documentation checks generated no files.
   traversal proof.
 - Current 108/108 Python result confirms the old unsafe contract is encoded in
   tests; green count does not close the defect.
-- Next action: V1 Task 5 after backend freeze prerequisites.
+- Next action: V1 Task 5 after Tasks 2-4 in canonical order.
 
-### 4. Session startup is hardened; proxy boundary remains release-blocking
+### 4. Task 2 implementation is local; combined durability gates remain
 
-- Task 2A removed the ephemeral session-key fallback, made secure cookies the
-  default, added one-step key rotation, and documented both supported modes in
-  `.env.example`.
-- Local login/onboarding/logout are unavailable in Authentik mode; absent or
-  invalid outpost identity fails closed without a local fallback.
-- The rebuilt container contract proves missing-key failure and explicit-key
-  success. Exact-HEAD GitHub Actions run
-  [`29658476416`](https://github.com/binGhzal/pinrail/actions/runs/29658476416)
-  also passed the container lifecycle smoke and every stated native Transfer
-  glibc/musl x64/arm64 job at the carrier-slice base.
-- Proxy route/header boundaries still need the Task 2B executable abuse matrix.
-- Verified topology decision: use the same frontend hostname/listener with a
-  dedicated mount-relative `/protocol` prefix for independently authenticated
-  SAB, ARR, and WebDAV clients. UI/admin, `/view`, and `/ws` remain outside
-  `/protocol`; backend 8080 remains private.
-- Verified public API-key scope: `/protocol` permits the complete SAB dispatcher,
-  read-only ARR validation/search-nudge/correlation reports, and `POST` event
-  ingestion for the three supported ARR kinds. ARR mutations and every other
-  admin route remain UI-principal-only.
-- Verified WebDAV scope: read/list methods on exact namespaces, `PUT` only
-  under `/protocol/nzbs/<category>/...`, and `DELETE` only under
-  `/protocol/nzbs`, `/protocol/content`, and
-  `/protocol/completed-symlinks`. Unsupported mutation/protocol methods fail
-  before proxying; any widening requires disposable client evidence and renewed
-  approval.
-- V1 WebDAV authentication is fail-closed. `DISABLE_WEBDAV_AUTH=true` now fails
-  startup, NWebDav always requires authentication, focused tests pass `8/8`,
-  and Release build/format gates are green. The carrier slice's affected gate
-  passed `91/91` initially and `96/96` with review characterization. Exact-HEAD
-  run `29661598011` subsequently passed the complete backend verifier and all
-  native Transfer jobs; final release-candidate regression remains future work.
-- Verified V1 import/media scope: hard symlink-only imports. Remove STRM/both
-  settings and generation/recreation/conversion surfaces. Plex/ARR use mounted
-  `/completed-symlinks` → `/.ids`; AIOStreams uses authenticated WebDAV; Dav
-  Explore `/view` remains frontend-principal-only. No `/protocol/view` route is
-  public.
-- Exact key-carrier compatibility is frozen. Accept one `x-api-key` header, one
-  lowercase query `apikey`, or one lowercase form `apikey`; additionally accept
-  only the equal header-plus-query AIOStreams pair under the existing
-  constant-time comparison. Reject every repeated single-location value, every
-  form-plus-other-location shape, an unequal header-plus-query pair,
-  noncanonical parameter casing, empty values, and values over 512 characters.
-  Missing carriers remain null and the internal parser remains header-only.
-  AIOStreams stable/main are byte-identical for this request builder; pinned
-  Sonarr, Radarr, and Lidarr use one lowercase query key, SABnzbd documents it,
-  and rclone uses WebDAV Basic authentication. Primary links and revisions are
-  recorded in the active plan and governing design.
-- The first independent carrier specification, quality, and bounded-security
-  reviews found no P0/P1/P2 and no functional parser defect. Their
-  documentation and characterization fixes are committed without a production
-  change. Independent review-fix re-review accepted signed checkpoint
-  `c550bc61a7d16df17278ec755fc2516015d95b1e`; exact-HEAD run `29661598011`
-  passed with zero failed jobs or steps. The carrier sub-slice is sealed; the
-  production proxy is not.
-- The adjacent ARR helper defect is GREEN locally, pending independent review.
-  `/api/arr/validation` now returns only derived configured-app/search-mode/
-  duplicate-policy fields and the helper no longer calls internal-only
-  `/api/get-config`. Focused service `1/1`, Python `7/7`, ARR service `27/27`,
-  all Python `110/110`, complete backend Release `2,825` passed with `84`
-  expected PostgreSQL skips, and build/format/compile/docs/diff gates exited
-  zero. Do not call it sealed before reading the reviewer report.
-- Product decision verified on 2026-07-17: V1 defaults to `AUTH_MODE=local` and
-  supports explicit `AUTH_MODE=authentik-proxy` using the official
-  Sonarr-style Authentik Proxy Provider pattern. Authentik mode disables local
-  login and never falls back to it.
-- Local mode requires an exact 64-hex `SESSION_KEY`; optional
-  `SESSION_KEY_PREVIOUS` provides one-step rotation. Authentik mode requires
-  trusted outpost source CIDRs and expected application metadata, and the app
-  port must not be exposed as a browser-auth bypass.
-- The eight deterministic test-fixture gitleaks findings are sealed at signed
-  checkpoint `c925ebc84dc8e8bdd3e10fb7f35ee3ee249bc622` and exact run
-  `29663552874`, without broad suppression or secret output. The SearchNudge
-  current-mode gate is sealed at signed checkpoint
-  `88e05f87e37147bf60b7fad8b0914df43e219eab` and exact run `29664771054`.
-  Stop at this clean checkpoint before returning to the Task 2B council
-  synthesis and RED proxy matrix.
+- Task 2A authentication/session and carrier parsing are sealed in earlier
+  signed exact-CI checkpoints.
+- Task 2B production proxy/WebSocket/PathBase/symlink-only boundaries are now
+  implemented and locally reviewed; they are no longer draft test-only code.
+- Task 2C public responses, logs, public persistence, and frontend displays are
+  bounded and sanitized; raw-error reachability is no longer an open Task 2 P1.
+- Task 2D validates internal-key shape and normal-startup auth/session before
+  side effects while preserving maintenance independence and argv precedence.
+- Task 2E freezes `<origin><URL_BASE>/protocol`, the full rclone root, exact ARR
+  URL Base, and frontend-only `/view`; focused code/operator reviews are clean.
+- Trivy/container identity is green after RED-GREEN repair and final
+  `0/0/0/0` review. The final AST graph is current and independent combined-diff
+  security review is `0/0/0/0`. The formal Codex Security scan, signed push, and
+  exact remote CI/container/native jobs remain mandatory. Historical exact runs
+  do not prove the current worktree.
 
-### 5. Liveness, public errors, and repair lifecycle
+### 5. Readiness and repair lifecycle remain later blockers
 
-- `/health` has no substantive registered checks.
-- base/SAB controllers and middleware can expose raw exception details.
-- missing-file repair scheduling uses detached persistence-affecting work.
-- Next actions: V1 Tasks 2-4 in order.
+- `/health` still does not prove the Task 3 dependency-readiness contract.
+- Missing-file repair scheduling still requires Task 4 host-owned bounded
+  lifecycle work.
+- Blob deletion durability and SQLite fault/restart proof remain Task 6.
+- Safe-rclone postcondition/state ownership remains Task 5.
+- Next action is to seal Task 2, then complete Task 2F archaeology before
+  advancing to Tasks 3-6 in canonical order.
 
 ### 6. Immutable release provenance is absent
 
@@ -934,41 +973,28 @@ fixtures only.
 
 ## Exact next actions
 
-1. **Stop and await explicit continuation.** SearchNudge checkpoint
-   `88e05f87e37147bf60b7fad8b0914df43e219eab` and exact-HEAD run
-   `29664771054` are sealed. Verify this documentation-only child's exact run
-   and clean synchronized worktree, report them, and do not begin another
-   implementation turn.
-2. **Do not rerun or modify Graphify in this task.** External signed commit
-   `0e9e3583e6b26fedb26c222f06519a02853bc902` already added the clone-local
-   configuration. Generated graph output must stay ignored and unstaged.
-3. **After the explicit continuation, finish the wider independent review.** Read every completed Task 2B council report,
-   bind it to the recorded file hashes, and synthesize consensus/conflicts. Do
-   not treat pending or truncated reports as approvals.
-4. **Freeze the matrix.** Enumerate exact UI-admin, `/protocol` SAB/ARR, WebDAV,
-   signed-media, health, and `/ws` path/method/credential classes. Include
-   `URL_BASE`, encoded/double-encoded paths, conflicting/oversized headers,
-   WebDAV `Destination`, and zero-upstream-call negatives.
-5. **Write RED tests before production code.** Use a pure classifier plus a
-   disposable capture backend; add a disposable ASP.NET/client integration gate
-   for normalization and protocol behavior. Do not use placeholders or weaken
-   existing frontend behavior.
-6. **Implement the symlink-only removal slice.** RED-first removal of STRM
-   settings, generation, maintenance, seed, UI, and docs, while preserving ARR,
-   rclone, DFS, cleanup, and organized-link symlink regressions.
-7. **Seal the ARR helper review.** Read the pending independent report, resolve
-   any material finding, and rerun its focused and affected gates before marking
-   the slice complete.
-8. **Only after RED is reviewed, implement minimal GREEN.** Then run frontend
-   unit/type/build/E2E, backend focused/full Release gates, container smoke,
-   documentation validation, independent security review, and `git diff --check`.
+1. **Finalize formal security evidence.** The AST-only Graphify update and
+   query/path/explain canaries are complete, and generated graph output remains
+   ignored. Submit Start Scan in the existing native Codex Security workspace,
+   then complete the formal scan against the exact combined Task 2 diff.
+2. **Reconcile and validate documentation.** Record exact final graph/security
+   facts, verify hashes/links/schema/whitespace, and keep the local buildx
+   environment blocker distinct from a product failure.
+3. **Create the durable checkpoint.** Create one
+   lowercase imperative signed-off commit, push without force, and require
+   exact-HEAD remote CI including container lifecycle and native Transfer
+   glibc/musl x64/arm64 jobs.
+4. **Start Task 2F only after exact CI is green.** Clone nzbdavex, streamnzb,
+   and altmount read-only outside `/opt/pinrail`; build AST-only graphs, audit
+   exact licenses/dependencies/history/source, and produce the source-cited gap
+   matrix before any clean-room TDD implementation.
 
 ## Do not redo
 
 - Do not reopen the V1 topology or upgrade policy. V1 is clean-install-only,
   Docker/SQLite/one-owner/`role=all`; PostgreSQL and upgrades are post-V1.
-- Do not start the full rebrand before the backend freeze, RC gates, and user
-  review of the pass report.
+- Do not start the full rebrand before Task 10 GO and user review of the
+  complete backend pass/risk report.
 - Do not treat the 108 passing Python tests as proof that safe-rclone is safe;
   current tests encode the false-success behavior.
 - Do not broaden the one equal header-plus-query AIOStreams exception, accept
@@ -995,7 +1021,8 @@ fixtures only.
 - PostgreSQL runtime, split roles, multi-owner/multi-host operation, and
   migration/cutover.
 - Pre-V1 upgrade support and in-place downgrade.
-- Full visual rebrand until the backend freeze and RC pass report.
+- Full visual rebrand until Task 10 GO and user review of the complete backend
+  pass/risk report.
 - General ARR/Plex expansion and grab-to-Plex performance beyond the six V1
   behavioral journeys.
 - n8n.
@@ -1005,14 +1032,14 @@ fixtures only.
 
 ## Open questions
 
-The V1 topology, `/protocol` same-host ingress, scoped public API-key authority,
-the exact carrier/conflict contract, path-scoped semantic WebDAV writes, hard
-symlink-only imports, and authenticated UI-only `/view` are fixed. No product
-question remains open for this carrier slice. Production proxy edits remain
-blocked on the independently reviewed RED route/method/credential matrix, not
-on a carrier-policy decision.
+The V1 topology, `<origin><URL_BASE>/protocol` ingress, scoped public API-key
+authority, exact carrier/conflict contract, path-scoped semantic WebDAV writes,
+hard-symlink-only imports, full-root rclone mount, and authenticated UI-only
+`/view` are fixed. No product question remains open for Task 2A-2E. Final
+formal security, signed-push, and exact-CI durability gates are implementation/
+evidence work, not a product decision.
 
-Full rebrand remains deferred until the backend passes.
+Full rebrand remains deferred until Task 10 GO and user review.
 
 - The two pre-Task-8 shared-test hashes are recovered from the Task 5
   after-snapshot: server-contract tests are
@@ -1028,16 +1055,19 @@ Full rebrand remains deferred until the backend passes.
   noncanonical. Historical Phase 4 local progress/brief artifacts previously
   described here are absent. Canonical continuation depends only on `AGENTS.md`,
   `HANDOFF.md`, the active V1 plan, and the V1 design.
-- Current V1 documentation and executable implementation are durable on
-  `pinrail/v1-backend-wip`. Continue there; never treat it as a release branch.
+- The latest durable base is `173b743c288f69f9f129e66a09dd4a6caed37023` on
+  `pinrail/v1-backend-wip`. The current Task 2C-2E plus Trivy-repair worktree is
+  not durable until its signed push and exact CI pass; never treat the branch as
+  a release branch.
 
 ## Recovery and rollback
 
-The current V1 state is anchored by signed review-fix checkpoint
-`c550bc61a7d16df17278ec755fc2516015d95b1e`, a descendant of consolidation
-checkpoint `fb03b0e6a247dfeaff9e9965f045a1fb1e6a11cc`. Recovery means returning to
-the latest accepted checkpoint or the external recovery bundle, never deleting
-unexplained work.
+The latest durable V1 base is signed documentation checkpoint
+`173b743c288f69f9f129e66a09dd4a6caed37023`, a descendant of the sealed
+SearchNudge implementation and consolidation checkpoint. The current Task 2
+worktree is intentionally uncommitted. Recovery means preserving it and using
+the latest accepted checkpoint or external recovery bundle for comparison,
+never deleting unexplained work.
 
 - Verify the handoff publication commit is an ancestor of `HEAD`, then compare
   branch and status with this handoff.

@@ -4,6 +4,8 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Logging;
+using NzbWebDAV.Security;
 using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using Serilog;
@@ -25,98 +27,125 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         }
         catch (Exception e) when (IsCausedByAbortedRequest(e, context))
         {
-            // If the response has not started, we can write our custom response
-            if (!context.Response.HasStarted)
-            {
-                context.Response.Clear();
-                context.Response.StatusCode = 499; // Non-standard status code for client closed request
-                await context.Response.WriteAsync("Client closed request.").ConfigureAwait(false);
-            }
+            if (context.Response.HasStarted) throw;
+            await PublicFailureContract.WriteAsync(
+                context,
+                499,
+                PublicFailureContract.ClientClosedRequest()).ConfigureAwait(false);
         }
         catch (UsenetArticleNotFoundException e)
         {
+            if (context.Response.HasStarted) throw;
             HealthCheckService.RememberMissingSegmentId(e.SegmentId);
-            if (!context.Response.HasStarted)
-            {
-                context.Response.Clear();
-                context.Response.StatusCode = 404;
-            }
-
-            var filePath = GetRequestFilePath(context);
-            Log.Error($"File `{filePath}` has missing articles: {e.Message}");
+            var failure = PublicFailureContract.ContentUnavailable();
+            await PublicFailureContract.WriteAsync(
+                context,
+                StatusCodes.Status404NotFound,
+                failure,
+                includeBody: false).ConfigureAwait(false);
+            Log.ForContext(
+                    V1SafeConsoleFormatter.EventIdPropertyName,
+                    V1OperationalEventId.ContentArticleMissing)
+                .Error(
+                "content_article_missing CorrelationId={CorrelationId} DavItemId={DavItemId}",
+                failure.CorrelationId,
+                GetDavItemId(context));
 
             if (context.Items["DavItem"] is DavItem davItem)
                 ScheduleRepair(davItem.Id);
         }
-        catch (RetryableDownloadException e) when (IsDavItemRequest(context))
+        catch (RetryableDownloadException) when (IsDavItemRequest(context))
         {
-            if (!context.Response.HasStarted)
-            {
-                context.Response.Clear();
-                context.Response.StatusCode = 503;
-                context.Response.Headers.RetryAfter = "30";
-            }
-
-            var filePath = GetRequestFilePath(context);
-            var seekPosition = HttpRangeHeader.GetSeekPositionForLog(context.Request.Headers.Range.FirstOrDefault());
-            Log.Warning(
-                "File `{FilePath}` could not be read from byte position {SeekPosition} because providers are temporarily unavailable: {Message}",
-                filePath,
-                seekPosition,
-                e.Message);
+            if (context.Response.HasStarted) throw;
+            var failure = PublicFailureContract.ContentTemporarilyUnavailable();
+            await PublicFailureContract.WriteAsync(
+                context,
+                StatusCodes.Status503ServiceUnavailable,
+                failure,
+                includeBody: false).ConfigureAwait(false);
+            context.Response.Headers.RetryAfter = "30";
+            Log.ForContext(
+                    V1SafeConsoleFormatter.EventIdPropertyName,
+                    V1OperationalEventId.ContentProviderTemporarilyUnavailable)
+                .Warning(
+                "content_provider_temporarily_unavailable CorrelationId={CorrelationId} DavItemId={DavItemId}",
+                failure.CorrelationId,
+                GetDavItemId(context));
         }
         catch (SeekPositionNotFoundException)
         {
-            if (!context.Response.HasStarted)
-            {
-                context.Response.Clear();
-                context.Response.StatusCode = 404;
-            }
-
-            var filePath = GetRequestFilePath(context);
-            var seekPosition = HttpRangeHeader.GetSeekPositionForLog(
-                context.Request.Headers.Range.FirstOrDefault(),
-                "unknown");
-            Log.Error($"File `{filePath}` could not seek to byte position: {seekPosition}");
+            if (context.Response.HasStarted) throw;
+            var failure = PublicFailureContract.ContentRangeUnavailable();
+            await PublicFailureContract.WriteAsync(
+                context,
+                StatusCodes.Status404NotFound,
+                failure,
+                includeBody: false).ConfigureAwait(false);
+            Log.ForContext(
+                    V1SafeConsoleFormatter.EventIdPropertyName,
+                    V1OperationalEventId.ContentRangeUnavailable)
+                .Error(
+                "content_range_unavailable CorrelationId={CorrelationId} DavItemId={DavItemId}",
+                failure.CorrelationId,
+                GetDavItemId(context));
         }
-        catch (FileNotFoundException e) when (IsDavItemRequest(context))
+        catch (FileNotFoundException) when (IsDavItemRequest(context))
         {
-            if (!context.Response.HasStarted)
-            {
-                context.Response.Clear();
-                context.Response.StatusCode = 404;
-            }
-
-            var filePath = GetRequestFilePath(context);
-            Log.Warning(
-                "File `{FilePath}` could not be opened because backing metadata is missing: {Message}",
-                filePath,
-                e.Message);
+            if (context.Response.HasStarted) throw;
+            var failure = PublicFailureContract.ContentUnavailable();
+            await PublicFailureContract.WriteAsync(
+                context,
+                StatusCodes.Status404NotFound,
+                failure,
+                includeBody: false).ConfigureAwait(false);
+            Log.ForContext(
+                    V1SafeConsoleFormatter.EventIdPropertyName,
+                    V1OperationalEventId.ContentMetadataMissing)
+                .Warning(
+                "content_metadata_missing CorrelationId={CorrelationId} DavItemId={DavItemId}",
+                failure.CorrelationId,
+                GetDavItemId(context));
 
             if (context.Items["DavItem"] is DavItem davItem)
                 ScheduleRepair(davItem.Id);
         }
-        catch (BadHttpRequestException e)
+        catch (BadHttpRequestException)
         {
-            if (!context.Response.HasStarted)
-            {
-                context.Response.Clear();
-                context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                await context.Response.WriteAsync(e.Message).ConfigureAwait(false);
-            }
+            if (context.Response.HasStarted) throw;
+            await PublicFailureContract.WriteAsync(
+                context,
+                StatusCodes.Status400BadRequest,
+                PublicFailureContract.InvalidRequest()).ConfigureAwait(false);
         }
-        catch (Exception e) when (IsDavItemRequest(context))
+        catch (Exception) when (IsDavItemRequest(context))
         {
-            if (!context.Response.HasStarted)
-            {
-                context.Response.Clear();
-                context.Response.StatusCode = 500;
-            }
-
-            var filePath = GetRequestFilePath(context);
-            var seekPosition = HttpRangeHeader.GetSeekPositionForLog(context.Request.Headers.Range.FirstOrDefault());
-            Log.Error($"File `{filePath}` could not be read from byte position: {seekPosition} " +
-                      $"due to unhandled {e.GetType()}: {e.Message}");
+            if (context.Response.HasStarted) throw;
+            var failure = PublicFailureContract.InternalError();
+            await PublicFailureContract.WriteAsync(
+                context,
+                StatusCodes.Status500InternalServerError,
+                failure,
+                includeBody: false).ConfigureAwait(false);
+            Log.ForContext(
+                    V1SafeConsoleFormatter.EventIdPropertyName,
+                    V1OperationalEventId.ContentReadFailure)
+                .Error(
+                "content_read_failed CorrelationId={CorrelationId} DavItemId={DavItemId}",
+                failure.CorrelationId,
+                GetDavItemId(context));
+        }
+        catch (Exception)
+        {
+            if (context.Response.HasStarted) throw;
+            var failure = PublicFailureContract.InternalError();
+            await PublicFailureContract.WriteAsync(
+                context,
+                StatusCodes.Status500InternalServerError,
+                failure).ConfigureAwait(false);
+            Log.ForContext(
+                    V1SafeConsoleFormatter.EventIdPropertyName,
+                    V1OperationalEventId.RequestFailure)
+                .Error("request_failed CorrelationId={CorrelationId}", failure.CorrelationId);
         }
 
         CleanupStaleEntries();
@@ -130,12 +159,8 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         return isAffectedException && isRequestAborted;
     }
 
-    private static string GetRequestFilePath(HttpContext context)
-    {
-        return context.Items["DavItem"] is DavItem davItem
-            ? davItem.Path
-            : context.Request.Path;
-    }
+    private static Guid? GetDavItemId(HttpContext context) =>
+        context.Items["DavItem"] is DavItem davItem ? davItem.Id : null;
 
     private static bool IsDavItemRequest(HttpContext context)
     {
@@ -188,11 +213,17 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
                         priority: 1,
                         now: DateTimeOffset.UtcNow)
                     .ConfigureAwait(false);
-                Log.Information("Scheduled dynamic repair for {FilePath}", item.Path);
+                Log.ForContext(
+                        V1SafeConsoleFormatter.EventIdPropertyName,
+                        V1OperationalEventId.DynamicRepairScheduled)
+                    .Information("dynamic_repair_scheduled DavItemId={DavItemId}", item.Id);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Log.Warning(ex, "Failed to schedule dynamic repair for DavItem {DavItemId}", davItemId);
+                Log.ForContext(
+                        V1SafeConsoleFormatter.EventIdPropertyName,
+                        V1OperationalEventId.DynamicRepairScheduleFailure)
+                    .Warning("dynamic_repair_schedule_failed DavItemId={DavItemId}", davItemId);
             }
         });
     }

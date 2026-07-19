@@ -19,8 +19,6 @@ public sealed class MaintenanceTaskExecutorTests
     [Theory]
     [InlineData(MaintenanceRunKind.RemoveUnlinkedFiles)]
     [InlineData(MaintenanceRunKind.RemoveUnlinkedFilesDryRun)]
-    [InlineData(MaintenanceRunKind.ConvertStrmToSymlinks)]
-    [InlineData(MaintenanceRunKind.RecreateStrmFiles)]
     public async Task ExecuteAsync_MapsEveryPersistedKindToARealMaintenanceTask(MaintenanceRunKind kind)
     {
         await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();

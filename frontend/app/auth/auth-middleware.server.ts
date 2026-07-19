@@ -1,5 +1,6 @@
 import type express from "express";
 import { AUTH_MODE, isAuthenticated } from "~/auth/authentication.server";
+import { sendExpressPublicFailure } from "../../server/public-failure-response.js";
 
 const ALWAYS_PUBLIC_PATHS = ["/__manifest"];
 const LOCAL_PUBLIC_PATHS = [
@@ -31,7 +32,7 @@ export async function authMiddleware(
 ): Promise<void> {
   const pathname = decodeURIComponent(req.path);
   if (AUTH_MODE === "authentik-proxy" && LOCAL_ONLY_PATHS.includes(pathname)) {
-    res.sendStatus(404);
+    sendExpressPublicFailure(req, res, 404, "route_not_found");
     return;
   }
   if (ALWAYS_PUBLIC_PATHS.includes(pathname)) return next();
@@ -41,7 +42,7 @@ export async function authMiddleware(
   if (await isAuthenticated(req)) return next();
 
   if (AUTH_MODE === "authentik-proxy") {
-    res.sendStatus(401);
+    sendExpressPublicFailure(req, res, 401, "authentication_required");
     return;
   }
 

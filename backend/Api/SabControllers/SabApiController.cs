@@ -25,6 +25,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Mount;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Security;
 using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
@@ -56,30 +57,30 @@ public class SabApiController(
             var controller = GetController();
             return await controller.HandleRequest().ConfigureAwait(false);
         }
-        catch (BadHttpRequestException e)
+        catch (BadHttpRequestException)
         {
-            return BadRequest(new SabBaseResponse()
-            {
-                Status = false,
-                Error = e.Message
-            });
+            return Failure(StatusCodes.Status400BadRequest, PublicFailureContract.InvalidRequest());
         }
-        catch (UnauthorizedAccessException e)
+        catch (UnauthorizedAccessException)
         {
-            return Unauthorized(new SabBaseResponse()
-            {
-                Status = false,
-                Error = e.Message
-            });
+            return Failure(StatusCodes.Status401Unauthorized, PublicFailureContract.AuthenticationRequired());
         }
-        catch (Exception e)
+        catch (Exception)
         {
-            return StatusCode(500, new SabBaseResponse()
-            {
-                Status = false,
-                Error = e.Message
-            });
+            return Failure(StatusCodes.Status500InternalServerError, PublicFailureContract.InternalError());
         }
+    }
+
+    private IActionResult Failure(int statusCode, PublicFailure failure)
+    {
+        PublicFailureContract.ApplyHeaders(HttpContext.Response, failure);
+        return StatusCode(statusCode, new SabBaseResponse
+        {
+            Status = false,
+            Error = failure.Message,
+            Code = failure.Code,
+            CorrelationId = failure.CorrelationId,
+        });
     }
 
     public BaseController GetController()

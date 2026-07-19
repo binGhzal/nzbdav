@@ -1,11 +1,13 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.DependencyInjection;
+using backend.Tests.Security;
+using backend.Tests.Services;
 using NzbWebDAV.Coordination;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 using NzbWebDAV.Services;
-using backend.Tests.Services;
 
 namespace backend.Tests.Coordination;
 
@@ -159,7 +161,9 @@ public sealed class DatabaseWorkerJobCoordinatorTests
         var job = await dbContext.WorkerJobs.AsNoTracking().SingleAsync();
         Assert.Equal(WorkerJob.JobStatus.Retry, job.Status);
         Assert.Equal(WorkerJob.FailureClass.Provider, job.FailureKind);
-        Assert.Equal("provider unavailable", job.LastError);
+        Assert.Equal(PublicDiagnosticContract.Message(PublicDiagnosticKind.WorkerFailure), job.LastError);
+        Assert.DoesNotContain("provider unavailable", job.LastError, StringComparison.Ordinal);
+        PublicFailureCanary.AssertSafe(job.LastError);
         Assert.Null(job.LeaseOwner);
         Assert.Null(job.LeaseToken);
     }
@@ -241,7 +245,7 @@ public sealed class DatabaseWorkerJobCoordinatorTests
     }
 
     [Fact]
-    public async Task FailureTruncationDoesNotSplitSurrogatePair()
+    public async Task FailurePersistenceUsesFixedDiagnosticInsteadOfTruncatedRawText()
     {
         await using var dbContext = await CreateContextWithJobAsync(WorkerJob.JobKind.Verify);
         var coordinator = CreateCoordinator(dbContext);
@@ -256,9 +260,9 @@ public sealed class DatabaseWorkerJobCoordinatorTests
 
         dbContext.ChangeTracker.Clear();
         var savedError = (await dbContext.WorkerJobs.AsNoTracking().SingleAsync()).LastError!;
-        Assert.Equal(1023, savedError.Length);
-        Assert.False(char.IsHighSurrogate(savedError[^1]));
-        Assert.True(savedError.All(character => !char.IsSurrogate(character)));
+        Assert.Equal(PublicDiagnosticContract.Message(PublicDiagnosticKind.WorkerFailure), savedError);
+        Assert.DoesNotContain(error, savedError, StringComparison.Ordinal);
+        PublicFailureCanary.AssertSafe(savedError);
     }
 
     [Fact]

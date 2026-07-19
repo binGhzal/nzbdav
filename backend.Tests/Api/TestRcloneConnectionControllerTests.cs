@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Primitives;
 using NzbWebDAV.Api.Controllers.TestRcloneConnection;
+using NzbWebDAV.Security;
 
 namespace backend.Tests.Api;
 
@@ -21,12 +22,14 @@ public sealed class TestRcloneConnectionControllerTests
             HttpStatusCode.InternalServerError,
             authorization => $$"""{"error":"compromised RC echoed {{authorization}}"}""");
 
-        var response = await InvokeAsync(server.Url, password);
+        var invocation = await InvokeAsync(server.Url, password);
+        var response = invocation.Response;
 
         Assert.False(response.Connected);
-        Assert.Equal("Rclone RC returned HTTP 500.", response.Error);
+        Assert.Equal("Rclone connection test failed.", response.Error);
         Assert.Equal("rclone_rc_http_500", response.ErrorCategory);
         Assert.Equal(500, response.ResponseStatusCode);
+        AssertStableFailure(invocation);
         AssertSecretMarkersAbsent(response, password);
     }
 
@@ -38,12 +41,14 @@ public sealed class TestRcloneConnectionControllerTests
             HttpStatusCode.OK,
             authorization => $"malformed RC response echoed {authorization}");
 
-        var response = await InvokeAsync(server.Url, password);
+        var invocation = await InvokeAsync(server.Url, password);
+        var response = invocation.Response;
 
         Assert.False(response.Connected);
-        Assert.Equal("Rclone RC returned a malformed response.", response.Error);
+        Assert.Equal("Rclone connection test failed.", response.Error);
         Assert.Equal("rclone_rc_malformed_response", response.ErrorCategory);
         Assert.Null(response.ResponseStatusCode);
+        AssertStableFailure(invocation);
         AssertSecretMarkersAbsent(response, password);
     }
 
@@ -52,12 +57,14 @@ public sealed class TestRcloneConnectionControllerTests
     {
         const string marker = "invalid-host-secret-marker";
 
-        var response = await InvokeAsync($"http://[{marker}", "unused-password-marker");
+        var invocation = await InvokeAsync($"http://[{marker}", "unused-password-marker");
+        var response = invocation.Response;
 
         Assert.False(response.Connected);
-        Assert.Equal("Rclone RC endpoint is invalid.", response.Error);
+        Assert.Equal("Rclone connection test failed.", response.Error);
         Assert.Equal("rclone_rc_invalid_endpoint", response.ErrorCategory);
         Assert.Null(response.ResponseStatusCode);
+        AssertStableFailure(invocation);
         AssertSecretMarkersAbsent(response, marker);
         AssertSecretMarkersAbsent(response, "unused-password-marker");
     }
@@ -71,7 +78,20 @@ public sealed class TestRcloneConnectionControllerTests
         Assert.DoesNotContain(Convert.ToBase64String(Encoding.UTF8.GetBytes($"benchmark-user:{marker}")), json);
     }
 
-    private static async Task<TestRcloneConnectionResponse> InvokeAsync(string host, string password)
+    private static void AssertStableFailure(RcloneInvocation invocation)
+    {
+        Assert.True(invocation.Response.Status);
+        Assert.Equal("rclone_connection_failure", invocation.Response.Code);
+        Assert.Matches("^[0-9a-f]{32}$", invocation.Response.CorrelationId);
+        Assert.Equal(
+            invocation.Response.CorrelationId,
+            invocation.Headers[PublicFailureContract.CorrelationHeaderName]);
+        Assert.Equal(
+            invocation.Response.Code,
+            invocation.Headers[PublicFailureContract.ErrorCodeHeaderName]);
+    }
+
+    private static async Task<RcloneInvocation> InvokeAsync(string host, string password)
     {
         var context = new DefaultHttpContext();
         context.Request.Headers["x-api-key"] = "test-api-key";
@@ -91,14 +111,20 @@ public sealed class TestRcloneConnectionControllerTests
         {
             Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", "test-api-key");
             var result = await controller.HandleApiRequest();
-            var ok = Assert.IsType<OkObjectResult>(result);
-            return Assert.IsType<TestRcloneConnectionResponse>(ok.Value);
+            var ok = Assert.IsAssignableFrom<ObjectResult>(result);
+            Assert.Equal(StatusCodes.Status200OK, ok.StatusCode);
+            var response = Assert.IsType<TestRcloneConnectionResponse>(ok.Value);
+            return new RcloneInvocation(response, context.Response.Headers);
         }
         finally
         {
             Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", previousApiKey);
         }
     }
+
+    private sealed record RcloneInvocation(
+        TestRcloneConnectionResponse Response,
+        IHeaderDictionary Headers);
 
     private sealed class AdversarialRcServer : IAsyncDisposable
     {

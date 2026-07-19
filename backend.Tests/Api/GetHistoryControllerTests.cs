@@ -477,8 +477,7 @@ public sealed class GetHistoryControllerTests
     {
         var configManager = new ConfigManager();
         configManager.UpdateValues([
-            new ConfigItem { ConfigName = "api.key", ConfigValue = "test-api-key" },
-            new ConfigItem { ConfigName = "api.strm-key", ConfigValue = "test-strm-key" }
+            new ConfigItem { ConfigName = "api.key", ConfigValue = "test-api-key" }
         ]);
         return configManager;
     }
@@ -499,14 +498,14 @@ public sealed class GetHistoryControllerTests
         Guid davItemId,
         Guid historyId,
         ImportReceiptState state) => new()
-    {
-        Id = Guid.NewGuid(),
-        DavItemId = davItemId,
-        HistoryItemId = historyId,
-        State = state,
-        CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
-        UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
-    };
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = davItemId,
+            HistoryItemId = historyId,
+            State = state,
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+        };
 
     private static DefaultHttpContext CreateHttpContext(string query = "?limit=10")
     {

@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Text.Json;
 using backend.Tests.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Primitives;
 using NzbWebDAV.Api.Controllers.TestUsenetConnection;
+using NzbWebDAV.Security;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
@@ -32,6 +34,11 @@ public sealed class TestUsenetConnectionControllerTests
         var ok = Assert.IsType<OkObjectResult>(result);
         var response = Assert.IsType<TestUsenetConnectionResponse>(ok.Value);
         Assert.True(response.Connected);
+        Assert.Null(response.Code);
+        Assert.Null(response.CorrelationId);
+        var json = JsonSerializer.Serialize(response, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.DoesNotContain("\"code\"", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"correlation_id\"", json, StringComparison.Ordinal);
         await server.Disconnected.Task.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
@@ -39,23 +46,37 @@ public sealed class TestUsenetConnectionControllerTests
     public async Task HandleApiRequest_LoginFailureNeverLogsProviderResponseOrPassword()
     {
         const string password = "provider-secret-log-marker";
+        const string user = "provider-user-log-marker";
         await using var server = await FakeNntpServer.StartAsync(rejectPassword: true);
         using var logger = new LoggerScope();
         var controller = new TestUsenetConnectionController
         {
             ControllerContext = new ControllerContext
             {
-                HttpContext = CreateContext(server.Port, password)
+                HttpContext = CreateContext(server.Port, password, user)
             }
         };
 
         var result = await HandleWithApiKeyAsync(controller);
 
-        var ok = Assert.IsType<OkObjectResult>(result);
+        var ok = Assert.IsAssignableFrom<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status200OK, ok.StatusCode);
         var response = Assert.IsType<TestUsenetConnectionResponse>(ok.Value);
         Assert.False(response.Connected);
-        Assert.Contains("login error", logger.Rendered, StringComparison.Ordinal);
+        Assert.True(response.Status);
+        Assert.Equal("Usenet connection test failed.", response.Error);
+        Assert.Equal("usenet_connection_failure", response.Code);
+        Assert.Matches("^[0-9a-f]{32}$", response.CorrelationId);
+        Assert.Equal(
+            response.CorrelationId,
+            controller.HttpContext.Response.Headers[PublicFailureContract.CorrelationHeaderName]);
+        Assert.Equal(
+            response.Code,
+            controller.HttpContext.Response.Headers[PublicFailureContract.ErrorCodeHeaderName]);
+        Assert.Contains("Usenet connection authentication failed.", logger.Rendered, StringComparison.Ordinal);
         Assert.DoesNotContain(password, logger.Rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain(user, logger.Rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("127.0.0.1", logger.Rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("AUTHINFO PASS", logger.Rendered, StringComparison.Ordinal);
     }
 
@@ -76,7 +97,17 @@ public sealed class TestUsenetConnectionControllerTests
         var timeout = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status504GatewayTimeout, timeout.StatusCode);
         var response = Assert.IsType<TestUsenetConnectionResponse>(timeout.Value);
+        Assert.True(response.Status);
         Assert.False(response.Connected);
+        Assert.Equal("connection_timeout", response.Code);
+        Assert.Equal("The connection test timed out.", response.Error);
+        Assert.Matches("^[0-9a-f]{32}$", response.CorrelationId);
+        Assert.Equal(
+            response.CorrelationId,
+            controller.HttpContext.Response.Headers[PublicFailureContract.CorrelationHeaderName]);
+        Assert.Equal(
+            "connection_timeout",
+            controller.HttpContext.Response.Headers[PublicFailureContract.ErrorCodeHeaderName]);
         await server.Disconnected.Task.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
@@ -104,14 +135,17 @@ public sealed class TestUsenetConnectionControllerTests
         await server.Disconnected.Task.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
-    private static DefaultHttpContext CreateContext(int port, string password = "pass")
+    private static DefaultHttpContext CreateContext(
+        int port,
+        string password = "pass",
+        string user = "user")
     {
         var context = new DefaultHttpContext();
         context.Request.Headers["x-api-key"] = "test-api-key";
         context.Request.Form = new FormCollection(new Dictionary<string, StringValues>
         {
             ["host"] = "127.0.0.1",
-            ["user"] = "user",
+            ["user"] = user,
             ["pass"] = password,
             ["port"] = port.ToString(),
             ["use-ssl"] = "false"

@@ -1,8 +1,8 @@
 # Hosting under a sub-path (`URL_BASE`)
 
-Out of the box nzbdav serves its UI, SABnzbd-compatible API, and WebDAV
-mount at the **root** of the configured port (e.g. `http://nzbdav:3000/`).
-That's fine if nzbdav lives on its own hostname, but if you want it to
+Out of the box nzbdav serves its UI at the **root** of the configured port
+(e.g. `http://nzbdav:3000/`). Public SAB-compatible and WebDAV clients enter
+through the exact `protocol` namespace. If you want the UI to
 share a domain with Sonarr/Radarr/Organizr/etc. — for example
 `https://example.com/nzbdav/` — you'll want native sub-path support.
 
@@ -18,6 +18,14 @@ proxy.
 | ----------------------- | ------------------------------------ | ------------- |
 | **Subfolder**           | `https://example.com/nzbdav/`        | `/nzbdav`     |
 | **Subdomain** (default) | `https://nzbdav.example.com/`        | *(unset)*     |
+
+The corresponding canonical client bases are
+`https://nzbdav.example.com/protocol` and
+`https://example.com/nzbdav/protocol`. A protocol base is an absolute HTTP(S)
+URL ending in the exact, case-sensitive segment `protocol`, without a trailing
+slash, query, fragment, credentials, dot segments, encoded separators, or
+ambiguous double encoding. Every public API/WebDAV path is appended below that
+base.
 
 Subfolder is the natural fit if you already run an
 Organizr/Heimdall/Homepage-style dashboard on one domain. Subdomain is
@@ -64,6 +72,37 @@ Nested paths (e.g. `/apps/nzbdav`) are supported.
 
 ### Docker Compose example
 
+An HTTPS reverse proxy still uses local application authentication. Generate a
+persistent session key once, capture and validate it without printing it, store
+it in your secret manager, and export the same value before every Compose
+start:
+
+```sh
+configure_nzbdav_session_key() {
+  nzbdav_session_key_candidate=
+  if ! nzbdav_session_key_candidate="$(hexdump -n 32 -ve '1/1 "%.2x"' /dev/urandom)"; then
+    printf '%s\n' 'Failed to generate SESSION_KEY.' >&2
+    unset nzbdav_session_key_candidate
+    return 1
+  fi
+  if [ "${#nzbdav_session_key_candidate}" -ne 64 ]; then
+    printf '%s\n' 'Failed to generate SESSION_KEY.' >&2
+    unset nzbdav_session_key_candidate
+    return 1
+  fi
+  case "$nzbdav_session_key_candidate" in
+    *[!0-9a-f]*)
+      printf '%s\n' 'Failed to generate SESSION_KEY.' >&2
+      unset nzbdav_session_key_candidate
+      return 1
+      ;;
+  esac
+  export SESSION_KEY="$nzbdav_session_key_candidate"
+  unset nzbdav_session_key_candidate
+}
+configure_nzbdav_session_key || exit 1
+```
+
 ```yaml
 services:
   nzbdav:
@@ -73,8 +112,11 @@ services:
         URL_BASE: /nzbdav
     environment:
       URL_BASE: /nzbdav
+      AUTH_MODE: local
+      SESSION_KEY: ${SESSION_KEY:?generate and export a persistent SESSION_KEY before starting Compose}
+      SECURE_COOKIES: "true"
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ./config:/config
 ```
@@ -83,8 +125,19 @@ services:
 
 ```sh
 docker build --build-arg URL_BASE=/nzbdav -t nzbdav-local .
-docker run --rm -p 3000:3000 -e URL_BASE=/nzbdav nzbdav-local
+docker run --rm \
+  -p 127.0.0.1:3000:3000 \
+  -e URL_BASE=/nzbdav \
+  -e AUTH_MODE=local \
+  -e SESSION_KEY \
+  -e SECURE_COOKIES=false \
+  -e ALLOW_INSECURE_COOKIES=true \
+  nzbdav-local
 ```
+
+That loopback command is a direct-HTTP development example. The Compose
+example above is the HTTPS reverse-proxy contract and deliberately keeps secure
+cookies enabled without the insecure-cookie opt-in.
 
 Skipping `--build-arg` while setting `-e URL_BASE` (or vice versa) is the
 single most common misconfiguration. If pages 404 or assets won't load,
@@ -99,7 +152,8 @@ into something you already maintain.
 ### Nginx — subfolder
 
 ```nginx
-location ^~ /nzbdav/ {
+# Authenticated WebUI and WebSocket location.
+location /nzbdav/ {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
     proxy_set_header Host              $host;
@@ -112,14 +166,27 @@ location ^~ /nzbdav/ {
     proxy_read_timeout 1h;
 }
 
-# Optional: open the SAB API and WebDAV mount to your *arrs without
-# triggering your proxy-level auth.
-location ^~ /nzbdav/api {
+# The only proxy-auth bypass: exact NzbDAV protocol segment boundary.
+location ~ ^/nzbdav/protocol(?:/|$) {
     auth_basic   off;
     auth_request off;
     proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_read_timeout 6h;
+    proxy_send_timeout 6h;
+    client_max_body_size 0;
 }
 ```
+
+Use `location ~ ^/protocol(?:/|$)` for the subdomain layout. Keep
+`proxy_pass` free of a URI suffix so Nginx preserves the complete request path.
+Do not forward WebSocket `Upgrade`/`Connection` headers in the protocol block;
+those belong only in the authenticated UI block. The `/view` route is a frontend-principal authenticated UI route and must not be added to the public protocol bypass.
 
 ### Nginx — subdomain
 
@@ -137,8 +204,12 @@ server {
 
 ```caddyfile
 example.com {
-    handle_path /nzbdav/* {
-        reverse_proxy 127.0.0.1:3000/nzbdav/*
+    @protocol path /nzbdav/protocol /nzbdav/protocol/*
+    handle @protocol {
+        reverse_proxy 127.0.0.1:3000
+    }
+    handle /nzbdav/* {
+        reverse_proxy 127.0.0.1:3000
     }
 }
 ```
@@ -153,10 +224,10 @@ labels:
   - "traefik.http.routers.nzbdav.tls=true"
   - "traefik.http.services.nzbdav.loadbalancer.server.port=3000"
 
-  # Open the SAB API and WebDAV to *arrs without your auth middleware.
-  - "traefik.http.routers.nzbdav-api.rule=Host(`example.com`) && (PathPrefix(`/nzbdav/api`) || PathPrefix(`/nzbdav/nzbs`) || PathPrefix(`/nzbdav/content`) || PathPrefix(`/nzbdav/completed-symlinks`) || PathPrefix(`/nzbdav/.ids`))"
-  - "traefik.http.routers.nzbdav-api.priority=20"
-  - "traefik.http.routers.nzbdav-api.service=nzbdav"
+  # Attach no proxy-auth middleware only to this exact protocol boundary.
+  - "traefik.http.routers.nzbdav-protocol.rule=Host(`example.com`) && (Path(`/nzbdav/protocol`) || PathPrefix(`/nzbdav/protocol/`))"
+  - "traefik.http.routers.nzbdav-protocol.priority=20"
+  - "traefik.http.routers.nzbdav-protocol.service=nzbdav"
 ```
 
 Don't add a `StripPrefix` middleware — nzbdav needs to see the
@@ -173,7 +244,7 @@ Settings → Download Clients → SABnzbd:
 | ------------ | ---------------------- | ---------------------- |
 | Host         | `example.com`          | `nzbdav.example.com`   |
 | Port         | `443`                  | `443`                  |
-| **URL Base** | `/nzbdav`              | *(leave blank)*        |
+| **URL Base** | `/nzbdav/protocol`     | `/protocol`            |
 | Use SSL      | ✓                      | ✓                      |
 | API Key      | nzbdav → Settings → SABnzbd | nzbdav → Settings → SABnzbd |
 
@@ -182,16 +253,17 @@ Settings → Download Clients → SABnzbd:
 ```ini
 [nzbdav]
 type = webdav
-url = https://example.com/nzbdav/content    # subfolder
-# url = https://nzbdav.example.com/content  # subdomain
+url = https://example.com/nzbdav/protocol    # subfolder
+# url = https://nzbdav.example.com/protocol  # subdomain
 vendor = other
 user = …
 pass = … (obscured)
 ```
 
-The internal mount paths (`/nzbs`, `/content`, `/completed-symlinks`,
-`/.ids`) inherit the prefix in subfolder mode — point rclone at whichever
-one you mount, with `/nzbdav` in front of it.
+The logical mount directories inherit the protocol base. Point rclone at the
+full protocol root so one mount exposes `/nzbs`, `/content`,
+`/completed-symlinks`, and `/.ids`; never append one of those child directories
+to the configured remote URL.
 
 ## What `URL_BASE` actually rewrites
 
@@ -211,7 +283,7 @@ that's a bug — please file it.
 | `<img src="/logo.svg">`, `<link rel="icon">` | `withUrlBase("/logo.svg")`                 |
 | `/assets/*.js`, `/assets/*.css`, modulepreload | Vite `base` config                       |
 | `url(/...)` in CSS                           | Vite `base` config                         |
-| WebDAV paths (`/nzbs`, `/content`, …)        | Inherited via Express router mount         |
+| Protocol API/WebDAV suffixes                 | Appended below `URL_BASE/protocol`          |
 | `window.__reactRouterContext.basename`       | React Router basename                      |
 
 ## Troubleshooting
@@ -242,14 +314,15 @@ other. Rebuild with the matching `--build-arg URL_BASE=…`.
 
 **Sonarr/Radarr says "Unable to connect" to nzbdav.** Three things to
 check:
-1. **URL Base** in the SABnzbd download-client settings matches `URL_BASE`
-   (without trailing slash).
+1. **URL Base** in the SABnzbd download-client settings is the app
+   `URL_BASE` plus `/protocol` (without a trailing slash).
 2. Your reverse proxy isn't applying basic-auth or forward-auth to the
-   `/nzbdav/api` block — the *arrs authenticate with the API key, not
-   with your proxy's auth.
-3. `curl -i 'https://example.com/nzbdav/api?mode=version&apikey=…'`
-   returns the version JSON. If you get a `401 WWW-Authenticate: Basic`,
-   that's the proxy intercepting — open the API block as in the examples.
+   exact `/nzbdav/protocol` boundary — the *arrs authenticate with the
+   NzbDAV API key, not with your proxy's auth.
+3. Set `PROTOCOL_BASE=https://example.com/nzbdav/protocol`, then run
+   `curl -i -H 'X-Api-Key: …' "${PROTOCOL_BASE}/api?mode=version"`. It should
+   return the version JSON. If you get a `401 WWW-Authenticate: Basic`, that's
+   the proxy intercepting — use the exact protocol block shown above.
 
 **WebSocket / live-update panels stay stuck on "connecting…"** The
 `Upgrade` and `Connection` headers need to be forwarded on the web-UI
@@ -258,7 +331,7 @@ trimmed them out, add them back.
 
 **rclone WebDAV connection works for listing but seeks fail or stall.**
 Set `proxy_buffering off` and a generous `proxy_read_timeout` (1h or more)
-on the WebDAV location block. Range requests need to reach nzbdav with
+on the exact protocol location block. Range requests need to reach nzbdav with
 their headers intact and the connection has to stay open long enough to
 stream the response.
 

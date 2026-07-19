@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Api.Controllers.Repair;
@@ -26,11 +27,7 @@ public sealed class CancelRepairRunController(
             .AnyAsync(x => x.Id == repairRunId, HttpContext.RequestAborted)
             .ConfigureAwait(false);
         if (!exists)
-            return NotFound(new BaseApiResponse
-            {
-                Status = false,
-                Error = $"Repair run {repairRunId} was not found."
-            });
+            return Failure(StatusCodes.Status404NotFound, PublicFailureContract.ResourceNotFound());
 
         var repairPayload = DavDatabaseClient.CreateRepairRunPayloadJson(repairRunId);
         var affectedDavItemIds = await dbClient.Ctx.WorkerJobs.AsNoTracking()

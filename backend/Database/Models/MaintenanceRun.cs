@@ -22,8 +22,6 @@ public enum MaintenanceRunKind
 {
     RemoveUnlinkedFiles = 0,
     RemoveUnlinkedFilesDryRun = 1,
-    ConvertStrmToSymlinks = 2,
-    RecreateStrmFiles = 3,
 }
 
 public enum MaintenanceRunStatus

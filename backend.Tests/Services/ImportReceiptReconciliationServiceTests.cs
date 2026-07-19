@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
+using NzbWebDAV.WebDav;
 
 namespace backend.Tests.Services;
 
@@ -36,7 +37,7 @@ public sealed class ImportReceiptReconciliationServiceTests
         }
         File.CreateSymbolicLink(
             Path.Join(libraryPath, "Linked.mkv"),
-            $"/mnt/nzbdav/.ids/{linked.Id}.mkv");
+            DatabaseStoreSymlinkFile.GetTargetPath(linked.Id, "/mnt/nzbdav"));
 
         await new ImportReceiptReconciliationService(config).RunOnceAsync(now, CancellationToken.None);
 
@@ -103,12 +104,12 @@ public sealed class ImportReceiptReconciliationServiceTests
         DavItem item,
         ImportReceiptState state,
         DateTimeOffset updatedAt) => new()
-    {
-        Id = Guid.NewGuid(),
-        DavItemId = item.Id,
-        HistoryItemId = item.HistoryItemId!.Value,
-        State = state,
-        CreatedAt = updatedAt,
-        UpdatedAt = updatedAt
-    };
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = item.Id,
+            HistoryItemId = item.HistoryItemId!.Value,
+            State = state,
+            CreatedAt = updatedAt,
+            UpdatedAt = updatedAt
+        };
 }

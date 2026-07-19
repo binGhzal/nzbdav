@@ -133,7 +133,7 @@ public sealed class ProviderContextBoundaryTests
         var sqliteAssembly = sqlite.GetService<IMigrationsAssembly>();
         var postgresAssembly = postgres.GetService<IMigrationsAssembly>();
 
-        Assert.Equal(49, sqliteAssembly.Migrations.Count);
+        Assert.Equal(48, sqliteAssembly.Migrations.Count);
         Assert.Equal(SqliteContractTestSupport.LatestMigrationId, sqliteAssembly.Migrations.Keys.Last());
         Assert.NotNull(sqliteAssembly.ModelSnapshot);
         Assert.Equal(

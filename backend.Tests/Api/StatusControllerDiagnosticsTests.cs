@@ -14,6 +14,7 @@ using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Websocket;
 using backend.Tests.Services;
+using NzbWebDAV.Security;
 
 namespace backend.Tests.Api;
 
@@ -197,7 +198,9 @@ public sealed class StatusControllerDiagnosticsTests
 
         Assert.Equal(1, stats.Quarantined);
         Assert.Equal(1, diagnostic.Quarantined);
-        Assert.Equal("automatic repair disabled after confirmed missing articles", diagnostic.LastQuarantineReason);
+        Assert.Equal(
+            PublicDiagnosticContract.Message(PublicDiagnosticKind.ArrImportFailure),
+            diagnostic.LastQuarantineReason);
     }
 
     [Fact]
@@ -288,39 +291,39 @@ public sealed class StatusControllerDiagnosticsTests
         string jobName,
         QueueItem.PriorityOption priority,
         DateTime createdAt) => new()
-    {
-        Id = Guid.NewGuid(),
-        CreatedAt = createdAt,
-        FileName = $"{jobName}.nzb",
-        JobName = jobName,
-        NzbFileSize = 100,
-        TotalSegmentBytes = 1024,
-        Category = "movies",
-        Priority = priority,
-        PostProcessing = QueueItem.PostProcessingOption.None
-    };
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = createdAt,
+            FileName = $"{jobName}.nzb",
+            JobName = jobName,
+            NzbFileSize = 100,
+            TotalSegmentBytes = 1024,
+            Category = "movies",
+            Priority = priority,
+            PostProcessing = QueueItem.PostProcessingOption.None
+        };
 
     private static WorkerJob CreateWorkerJob(
         WorkerJob.JobKind kind,
         WorkerJob.JobStatus status,
         Guid targetId,
         DateTimeOffset now) => new()
-    {
-        Id = Guid.NewGuid(),
-        Kind = kind,
-        Status = status,
-        TargetId = targetId,
-        Priority = 0,
-        Attempts = status == WorkerJob.JobStatus.Pending ? 0 : 1,
-        CreatedAt = now,
-        UpdatedAt = now,
-        AvailableAt = now.AddMinutes(-1),
-        LeaseExpiresAt = status == WorkerJob.JobStatus.Leased ? now.AddMinutes(5) : null,
-        LeaseOwner = status == WorkerJob.JobStatus.Leased ? "worker" : null,
-        LeaseToken = status == WorkerJob.JobStatus.Leased ? Guid.NewGuid() : null,
-        LeaseGeneration = status == WorkerJob.JobStatus.Leased ? 1 : 0,
-        LastError = status == WorkerJob.JobStatus.Retry ? "retry" : null
-    };
+        {
+            Id = Guid.NewGuid(),
+            Kind = kind,
+            Status = status,
+            TargetId = targetId,
+            Priority = 0,
+            Attempts = status == WorkerJob.JobStatus.Pending ? 0 : 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+            AvailableAt = now.AddMinutes(-1),
+            LeaseExpiresAt = status == WorkerJob.JobStatus.Leased ? now.AddMinutes(5) : null,
+            LeaseOwner = status == WorkerJob.JobStatus.Leased ? "worker" : null,
+            LeaseToken = status == WorkerJob.JobStatus.Leased ? Guid.NewGuid() : null,
+            LeaseGeneration = status == WorkerJob.JobStatus.Leased ? 1 : 0,
+            LastError = status == WorkerJob.JobStatus.Retry ? "retry" : null
+        };
 
     private static void AddInProgressDownload(
         QueueManager queueManager,

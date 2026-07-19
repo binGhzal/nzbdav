@@ -23,8 +23,8 @@ public sealed class ProviderMigrationOwnershipTests
         Assert.Equal(SqliteContractTestSupport.SnapshotRelativePath, actual.Snapshot.Path);
         Assert.Equal(SqliteContractTestSupport.SnapshotTypeName, actual.Snapshot.Type);
         Assert.Equal(SqliteContractTestSupport.ContextName, actual.Snapshot.Context);
-        Assert.Equal(49, actual.Migrations.Count);
-        Assert.Equal(34, actual.Migrations.Count(migration => migration.MetadataLayout == "designer"));
+        Assert.Equal(48, actual.Migrations.Count);
+        Assert.Equal(33, actual.Migrations.Count(migration => migration.MetadataLayout == "designer"));
         Assert.Equal(15, actual.Migrations.Count(migration => migration.MetadataLayout == "inline"));
         Assert.Equal(
             SqliteContractTestSupport.LatestMigrationId,
@@ -71,7 +71,7 @@ public sealed class ProviderMigrationOwnershipTests
         Assert.Equal(
             contract.Migrations.Select(migration => migration.Id),
             assemblyMigrations.Select(migration => migration.Key));
-        Assert.Equal(49, assemblyMigrations.Length);
+        Assert.Equal(48, assemblyMigrations.Length);
         Assert.Equal(SqliteContractTestSupport.LatestMigrationId, assemblyMigrations[^1].Key);
 
         foreach (var (expected, actual) in contract.Migrations.Zip(assemblyMigrations))
@@ -122,7 +122,7 @@ public sealed class ProviderMigrationOwnershipTests
             contract.Migrations.Where(migration => migration.MetadataLayout == "designer")
                 .Select(migration => migration.MetadataPath).Order(StringComparer.Ordinal),
             actualDesignerSources);
-        Assert.Equal(34, actualDesignerSources.Length);
+        Assert.Equal(33, actualDesignerSources.Length);
         Assert.Equal(15, contract.Migrations.Count(migration => migration.MetadataLayout == "inline"));
 
         foreach (var migration in contract.Migrations)

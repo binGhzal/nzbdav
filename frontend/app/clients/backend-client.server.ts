@@ -1,3 +1,10 @@
+import {
+    fallbackHttpFailure,
+    readPublicFailureBody,
+    renderPublicFailure,
+    resolvePublicFailureEnvelope,
+} from "~/utils/public-failure";
+
 class BackendClient {
     public async isOnboarding(): Promise<boolean> {
         const url = process.env.BACKEND_URL + "/api/is-onboarding";
@@ -384,36 +391,16 @@ class BackendClient {
 async function readBackendJson<T>(response: Response, description: string): Promise<T> {
     try {
         return await response.json() as T;
-    } catch (error) {
-        const message = error instanceof Error ? error.message : "unknown parse error";
-        throw new Error(`Failed to parse ${description} response: ${message}`);
+    } catch {
+        throw new Error(`Failed to parse ${description} response.`);
     }
 }
 
 async function getBackendErrorMessage(response: Response): Promise<string> {
-    let body = "";
-    try {
-        body = (await response.text()).trim();
-    } catch {
-        body = "";
-    }
+    const body = (await readPublicFailureBody(response))?.trim() ?? "";
 
-    if (body.length > 0) {
-        try {
-            const parsed = JSON.parse(body);
-            if (parsed && typeof parsed === "object" && "error" in parsed) {
-                const error = (parsed as { error?: unknown }).error;
-                if (typeof error === "string" && error.trim().length > 0) return error.trim();
-            }
-        } catch {
-            // Plain-text proxy/backend errors are common and should be shown as-is.
-        }
-
-        return body.length <= 500 ? body : `${body.slice(0, 500)}...`;
-    }
-
-    const statusText = response.statusText?.trim();
-    return statusText ? `${response.status} ${statusText}` : `HTTP ${response.status}`;
+    const envelope = resolvePublicFailureEnvelope(body, response.headers);
+    return envelope ? renderPublicFailure(envelope) : fallbackHttpFailure(response.status);
 }
 
 export const backendClient = new BackendClient();

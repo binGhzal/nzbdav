@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 
 namespace NzbWebDAV.Api.SabControllers.GetHistory;
 
@@ -77,7 +78,8 @@ public class GetHistoryResponse : SabBaseResponse
                 SizeInBytes = historyItem.TotalSegmentBytes,
                 DownloadPath = GetDownloadPath(historyItem, downloadFolder, configManager),
                 DownloadTimeSeconds = historyItem.DownloadTimeSeconds,
-                FailMessage = historyItem.FailMessage ?? "",
+                FailMessage = PublicDiagnosticContract.HistoryFailureDetail(
+                    historyItem.FailMessage) ?? "",
                 NzbBlobId = historyItem.NzbBlobId?.ToString(),
             };
         }
@@ -91,32 +93,13 @@ public class GetHistoryResponse : SabBaseResponse
         {
             // return null for null download folder
             if (downloadFolder == null) return null;
-            var importStrategy = configManager.GetImportStrategy();
-
-            // return completed-downloads path
-            if (importStrategy == "strm")
+            return Path.Join(new[]
             {
-                return Path.Join(new[]
-                {
-                    configManager.GetStrmCompletedDownloadDir(),
-                    historyItem.Category,
-                    downloadFolder.Name
-                });
-            }
-
-            // return completed-symlinks path
-            if (importStrategy == "symlinks")
-            {
-                return Path.Join(new[]
-                {
-                    configManager.GetMountDir(),
-                    DavItem.SymlinkFolder.Name,
-                    historyItem.Category,
-                    downloadFolder.Name
-                });
-            }
-
-            throw new Exception("Unknown import strategy");
+                configManager.GetMountDir(),
+                DavItem.SymlinkFolder.Name,
+                historyItem.Category,
+                downloadFolder.Name
+            });
         }
     }
 }

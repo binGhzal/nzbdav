@@ -455,14 +455,13 @@ public sealed class RemoveFromHistoryTransactionTests
         await SeedAsync(options, historyId, davItemId);
         var durableUpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
         var durableRemovedAt = DateTimeOffset.UtcNow.AddMinutes(-1);
-        const string durableDetail = "durable removed detail";
         await using (var setup = new DavDatabaseContext(options))
         {
             var receipt = await setup.ImportReceipts.SingleAsync(x => x.HistoryItemId == historyId);
             receipt.State = ImportReceiptState.Removed;
             receipt.UpdatedAt = durableUpdatedAt;
             receipt.RemovedAt = durableRemovedAt;
-            receipt.Detail = durableDetail;
+            receipt.Detail = "durable removed detail";
             await setup.SaveChangesAsync();
         }
 
@@ -492,7 +491,7 @@ public sealed class RemoveFromHistoryTransactionTests
         Assert.Equal(ImportReceiptState.Removed, durableReceipt.State);
         Assert.Equal(durableUpdatedAt, durableReceipt.UpdatedAt);
         Assert.Equal(durableRemovedAt, durableReceipt.RemovedAt);
-        Assert.Equal(durableDetail, durableReceipt.Detail);
+        Assert.Null(durableReceipt.Detail);
         Assert.Equal(importedAt, durableReceipt.ImportedAt);
     }
 

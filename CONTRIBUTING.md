@@ -14,9 +14,68 @@ ignored backend build-output tree:
 
 ```bash
 export CONFIG_PATH="$PWD/backend/bin/dev-config/"
-export FRONTEND_BACKEND_API_KEY=$(head -c 32 /dev/urandom | hexdump -ve '1/1 "%.2x"')
 export BACKEND_URL=http://localhost:5000
+
+configure_dev_internal_api_key() {
+  internal_api_key=
+  if ! internal_api_key="$(hexdump -n 32 -ve '1/1 "%.2x"' /dev/urandom)"; then
+    printf '%s\n' 'Failed to generate FRONTEND_BACKEND_API_KEY.' >&2
+    unset internal_api_key
+    return 1
+  fi
+  if [ "${#internal_api_key}" -ne 64 ]; then
+    printf '%s\n' 'Failed to generate FRONTEND_BACKEND_API_KEY.' >&2
+    unset internal_api_key
+    return 1
+  fi
+  case "$internal_api_key" in
+    *[!0-9a-f]*)
+      printf '%s\n' 'Failed to generate FRONTEND_BACKEND_API_KEY.' >&2
+      unset internal_api_key
+      return 1
+      ;;
+  esac
+  export FRONTEND_BACKEND_API_KEY="$internal_api_key"
+  unset internal_api_key
+}
+configure_dev_internal_api_key || exit 1
+
+configure_nzbdav_session_key() {
+  nzbdav_session_key_candidate=
+  if ! nzbdav_session_key_candidate="$(hexdump -n 32 -ve '1/1 "%.2x"' /dev/urandom)"; then
+    printf '%s\n' 'Failed to generate SESSION_KEY.' >&2
+    unset nzbdav_session_key_candidate
+    return 1
+  fi
+  if [ "${#nzbdav_session_key_candidate}" -ne 64 ]; then
+    printf '%s\n' 'Failed to generate SESSION_KEY.' >&2
+    unset nzbdav_session_key_candidate
+    return 1
+  fi
+  case "$nzbdav_session_key_candidate" in
+    *[!0-9a-f]*)
+      printf '%s\n' 'Failed to generate SESSION_KEY.' >&2
+      unset nzbdav_session_key_candidate
+      return 1
+      ;;
+  esac
+  export SESSION_KEY="$nzbdav_session_key_candidate"
+  unset nzbdav_session_key_candidate
+}
+configure_nzbdav_session_key || exit 1
+export AUTH_MODE=local
+export SECURE_COOKIES=false
+export ALLOW_INSECURE_COOKIES=true
 ```
+
+Split frontend/backend development requires both processes to share that exact
+independently generated 64-character hexadecimal value. Never reuse
+`SESSION_KEY` or a public API credential. The combined container instead
+generates a fresh internal key on every start when the variable is omitted.
+The frontend development server also needs the separately generated
+`SESSION_KEY` and the explicit insecure-cookie opt-in because its documented
+development endpoint is plain HTTP. Reuse the same session key across restarts
+when session continuity matters.
 
 Use the repository-declared tool families:
 
@@ -64,6 +123,11 @@ npm run dev
 
 ## Build Docker image
 
+The combined container defaults to local authentication. The setup block above
+exports the checked, nonprinted session key and direct-HTTP cookie policy used
+by both container examples. Keep the same `SESSION_KEY` for restarts of the
+same development instance.
+
 ### Using Docker CLI
 
 In the root directory, run:
@@ -85,7 +149,11 @@ docker run --rm -it \
   -v nzbdav-config:/config \
   -e PUID=1000 \
   -e PGID=1000 \
-  -p 3333:3000 \
+  -e AUTH_MODE=local \
+  -e SESSION_KEY \
+  -e SECURE_COOKIES=false \
+  -e ALLOW_INSECURE_COOKIES=true \
+  -p 127.0.0.1:3333:3000 \
   example/nzbdav:test_build
 ```
 
@@ -103,6 +171,10 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
+      - AUTH_MODE=local
+      - SESSION_KEY=${SESSION_KEY:?generate and export SESSION_KEY before starting Compose}
+      - SECURE_COOKIES=false
+      - ALLOW_INSECURE_COOKIES=true
 
 volumes:
   nzbdav-config:

@@ -17,7 +17,9 @@ using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
 using NzbWebDAV.Queue.FileAggregators;
 using NzbWebDAV.Queue.FileProcessors;
 using NzbWebDAV.Queue.PostProcessors;
+using NzbWebDAV.Logging;
 using NzbWebDAV.Services;
+using NzbWebDAV.Security;
 using NzbWebDAV.Telemetry;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
@@ -89,7 +91,10 @@ public class QueueItemProcessor(
                 dbClient.Ctx.ClearChangeTracker();
                 return ProcessingOutcome.Cancelled;
             }
-            Log.Error(
+            Log.ForContext(
+                    V1SafeConsoleFormatter.EventIdPropertyName,
+                    V1OperationalEventId.QueueTerminalFailure)
+                .Error(
                 exception,
                 "Could not persist initial lifecycle state for queue item {QueueItemId}; scheduling retry.",
                 queueItem.Id);
@@ -174,21 +179,26 @@ public class QueueItemProcessor(
         // when any other error is encountered,
         // we must still remove the queue-item and add
         // it to the history as a failed job.
-        catch (Exception e)
+        catch (Exception)
         {
+            var safeError = PublicDiagnosticContract.Message(PublicDiagnosticKind.QueueFailure);
+            Log.Error(
+                "{FailureSummary} Queue item {QueueItemId} reached a terminal failure.",
+                safeError,
+                queueItem.Id);
             try
             {
-                await MarkQueueItemCompleted(startTimestamp, error: e.Message).ConfigureAwait(false);
+                await MarkQueueItemCompleted(startTimestamp, error: safeError).ConfigureAwait(false);
                 return ProcessingOutcome.Completed;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Log.Error(
-                    ex,
-                    "Failed to record terminal queue outcome for {JobName} after processing error {ProcessingError}: {CompletionError}",
-                    queueItem.JobName,
-                    e.Message,
-                    ex.Message);
+                Log.ForContext(
+                        V1SafeConsoleFormatter.EventIdPropertyName,
+                        V1OperationalEventId.QueueTerminalCommitFailure)
+                    .Error(
+                    "Could not record the terminal outcome for queue item {QueueItemId}.",
+                    queueItem.Id);
                 dbClient.Ctx.ClearChangeTracker();
                 return ProcessingOutcome.RetryScheduled;
             }
@@ -352,11 +362,6 @@ public class QueueItemProcessor(
             if (configManager.IsEnsureImportableVideoEnabled())
                 new EnsureImportableVideoValidator(dbClient).ThrowIfValidationFails();
 
-            // create strm files, if necessary
-            if (configManager.GetImportStrategy() is "strm" or "both")
-                await new CreateStrmFilesPostProcessor(configManager, dbClient).CreateStrmFilesAsync(mountFolder)
-                    .ConfigureAwait(false);
-
             if (queuePostDownloadVerification)
             {
                 if (usenetClient is ArticleCachingNntpClient articleCachingClient)
@@ -457,12 +462,12 @@ public class QueueItemProcessor(
     private async Task<DavItem?> GetMountFolder()
     {
         var query = from mountFolder in dbClient.Ctx.Items
-            join categoryFolder in dbClient.Ctx.Items on mountFolder.ParentId equals categoryFolder.Id
-            where mountFolder.Name == queueItem.JobName
-                  && mountFolder.ParentId != null
-                  && categoryFolder.Name == queueItem.Category
-                  && categoryFolder.ParentId == DavItem.ContentFolder.Id
-            select mountFolder;
+                    join categoryFolder in dbClient.Ctx.Items on mountFolder.ParentId equals categoryFolder.Id
+                    where mountFolder.Name == queueItem.JobName
+                          && mountFolder.ParentId != null
+                          && categoryFolder.Name == queueItem.Category
+                          && categoryFolder.ParentId == DavItem.ContentFolder.Id
+                    select mountFolder;
 
         return await query.FirstOrDefaultAsync(ct).ConfigureAwait(false);
     }
@@ -573,6 +578,7 @@ public class QueueItemProcessor(
         Func<Task<DavItem?>>? databaseOperations = null
     )
     {
+        var safeError = PublicDiagnosticContract.FromOptional(error, PublicDiagnosticKind.QueueFailure);
         var completionStart = Stopwatch.GetTimestamp();
         var completionFailed = true;
         try
@@ -582,7 +588,7 @@ public class QueueItemProcessor(
             {
                 completion = await CommitQueueCompletionAsync(
                         startTimestamp,
-                        error,
+                        safeError,
                         databaseOperations)
                     .ConfigureAwait(false);
             }
@@ -594,7 +600,7 @@ public class QueueItemProcessor(
                 QueueCompletionReconciliation reconciliation;
                 try
                 {
-                    reconciliation = await ReconcileQueueCompletionAsync(error).ConfigureAwait(false);
+                    reconciliation = await ReconcileQueueCompletionAsync(safeError).ConfigureAwait(false);
                 }
                 catch (Exception reconciliationException)
                 {

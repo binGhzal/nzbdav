@@ -18,7 +18,8 @@ public class GetConfigController(DavDatabaseClient dbClient) : BaseApiController
                         && request.ConfigKeys.Contains(x.ConfigName))
             .ToListAsync(HttpContext.RequestAborted).ConfigureAwait(false);
         configItems = configItems
-            .Where(configItem => !TransferV3ReservedConfigPolicy.IsReserved(configItem.ConfigName))
+            .Where(configItem => !TransferV3ReservedConfigPolicy.IsReserved(configItem.ConfigName)
+                                 && !RetiredV1ConfigPolicy.IsRetired(configItem.ConfigName))
             .ToList();
 
         configItems = configItems.Select(ConfigSecretRedactor.RedactForDisplay).ToList();

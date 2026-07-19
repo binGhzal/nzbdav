@@ -10,6 +10,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Tasks;
+using NzbWebDAV.WebDav;
 using NzbWebDAV.Websocket;
 using backend.Tests.Services;
 
@@ -748,9 +749,9 @@ public sealed class RemoveUnlinkedFilesTaskTests
         {
             for (var referenceIndex = 0; referenceIndex < referencesPerItem; referenceIndex++)
             {
-                await File.WriteAllTextAsync(
-                    Path.Join(libraryPath, $"linked-{itemIndex}-{referenceIndex}.strm"),
-                    $"http://localhost/view/.ids/{linkedIds[itemIndex]:D}.mkv");
+                File.CreateSymbolicLink(
+                    Path.Join(libraryPath, $"linked-{itemIndex}-{referenceIndex}.mkv"),
+                    DatabaseStoreSymlinkFile.GetTargetPath(linkedIds[itemIndex], "/mnt/nzbdav"));
             }
         }
 

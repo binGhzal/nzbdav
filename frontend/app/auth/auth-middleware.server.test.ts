@@ -52,10 +52,15 @@ function authentikRequest(path: string): express.Request {
 }
 
 function responseDouble(): express.Response {
-  return {
+  const response = {
+    end: vi.fn(),
     redirect: vi.fn(),
     sendStatus: vi.fn(),
-  } as unknown as express.Response;
+    setHeader: vi.fn(),
+    status: vi.fn(),
+  };
+  response.status.mockReturnValue(response);
+  return response as unknown as express.Response;
 }
 
 describe("authentication middleware mode boundary", () => {
@@ -80,7 +85,7 @@ describe("authentication middleware mode boundary", () => {
 
       await authMiddleware(request, response, next);
 
-      expect(response.sendStatus).toHaveBeenCalledWith(404);
+      expectStableAuthFailure(response, 404, "route_not_found");
       expect(response.redirect).not.toHaveBeenCalled();
       expect(next).not.toHaveBeenCalled();
     },
@@ -96,7 +101,7 @@ describe("authentication middleware mode boundary", () => {
 
     await authMiddleware(request, response, next);
 
-    expect(response.sendStatus).toHaveBeenCalledWith(401);
+    expectStableAuthFailure(response, 401, "authentication_required");
     expect(response.redirect).not.toHaveBeenCalled();
     expect(next).not.toHaveBeenCalled();
   });
@@ -110,7 +115,7 @@ describe("authentication middleware mode boundary", () => {
     await authMiddleware(authentikRequest("/queue"), response, next);
 
     expect(next).toHaveBeenCalledOnce();
-    expect(response.sendStatus).not.toHaveBeenCalled();
+    expect(response.end).not.toHaveBeenCalled();
     expect(response.redirect).not.toHaveBeenCalled();
   });
 
@@ -130,7 +135,31 @@ describe("authentication middleware mode boundary", () => {
     protectedRequest.headers = {};
     await authMiddleware(protectedRequest, protectedResponse, protectedNext);
     expect(protectedResponse.redirect).toHaveBeenCalledWith(302, "/nzbdav/login");
-    expect(protectedResponse.sendStatus).not.toHaveBeenCalled();
+    expect(protectedResponse.end).not.toHaveBeenCalled();
     expect(protectedNext).not.toHaveBeenCalled();
   });
 });
+
+function expectStableAuthFailure(
+  response: express.Response,
+  status: number,
+  code: string,
+): void {
+  expect(response.status).toHaveBeenCalledWith(status);
+  expect(response.setHeader).toHaveBeenCalledWith("Content-Type", "application/json; charset=utf-8");
+  const correlationCall = vi.mocked(response.setHeader).mock.calls
+    .find(([name]) => name === "X-Correlation-ID");
+  expect(correlationCall?.[1]).toMatch(/^[0-9a-f]{32}$/u);
+  expect(response.setHeader).toHaveBeenCalledWith("X-Error-Code", code);
+  expect(response.end).toHaveBeenCalledOnce();
+  const body = vi.mocked(response.end).mock.calls[0][0];
+  expect(typeof body).toBe("string");
+  expect(JSON.parse(String(body))).toEqual({
+    status: false,
+    error: code === "route_not_found"
+      ? "The requested route was not found."
+      : "Authentication is required.",
+    code,
+    correlation_id: correlationCall?.[1],
+  });
+}

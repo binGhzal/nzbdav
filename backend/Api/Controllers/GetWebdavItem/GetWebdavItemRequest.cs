@@ -1,7 +1,6 @@
 ﻿using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Http;
-using NzbWebDAV.Config;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
 
@@ -30,8 +29,7 @@ public class GetWebdavItemRequest
 
         // authenticate the downloadKey
         var downloadKey = context.Request.Query["downloadKey"];
-        var configManager = (ConfigManager)context.Items["configManager"]!;
-        if (!VerifyDownloadKey(downloadKey, Item, configManager))
+        if (!VerifyDownloadKey(downloadKey, Item))
             throw new UnauthorizedAccessException("Invalid download key");
 
         // parse range header
@@ -42,17 +40,8 @@ public class GetWebdavItemRequest
         RangeSuffixLength = Range?.SuffixLength;
     }
 
-    private static bool VerifyDownloadKey(string? downloadKey, string path, ConfigManager configManager)
+    private static bool VerifyDownloadKey(string? downloadKey, string path)
     {
-        if (path.StartsWith(".ids"))
-        {
-            // strm streams link items by id and use a different download key
-            var strmKey = configManager.GetStrmKey();
-            var expectedDownloadKey = GenerateDownloadKey(strmKey, path);
-            if (downloadKey == expectedDownloadKey)
-                return true;
-        }
-
         var apiKey = EnvironmentUtil.GetRequiredVariable("FRONTEND_BACKEND_API_KEY");
         return downloadKey == GenerateDownloadKey(apiKey, path);
     }

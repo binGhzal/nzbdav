@@ -133,7 +133,7 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
                     </div>
                     <Form.Text id="cleanup-task-progress-help" muted>
                         <br />
-                        This task will scan your organized media library for all symlinked or *.strm linked files.
+                        This task will scan your organized media library for symlinked files.
                         Any file on the webdav that is not pointed to by your library will be deleted.
                         If you would like to see what would be deleted without running the task, you can {dryRunButton}.
                         The dry-run will not delete anything.
@@ -141,7 +141,7 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
                         <br />
                         Note: Files still present in the History table will not be removed when running this task.
                         It is assumed that files still present in the History table have not yet been imported by Arrs
-                        and they are expected to not yet have a corresponding symlink/strm in the Library folder.
+                        and they are expected to not yet have a corresponding symlink in the Library folder.
                         These files will remain intact until Arrs have a chance to process them and remove them from the
                         History table.
                     </Form.Text>

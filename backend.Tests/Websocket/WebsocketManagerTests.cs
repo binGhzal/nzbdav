@@ -2,10 +2,16 @@ using System.Net.WebSockets;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using backend.Tests.Security;
+using backend.Tests.Services;
 using NzbWebDAV.Websocket;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace backend.Tests.Websocket;
 
+[Collection(nameof(ContentIndexDatabaseCollection))]
 public sealed class WebsocketManagerTests
 {
     [Fact]
@@ -23,6 +29,22 @@ public sealed class WebsocketManagerTests
         Assert.Equal(2, healthySocket.SendCount);
         Assert.Equal(1, GetAuthenticatedSocketCount(manager));
         Assert.Equal(1, GetSocketSendStateCount(manager));
+    }
+
+    [Fact]
+    public async Task SendMessageFailureLogsOnlyStableEvent()
+    {
+        using var logger = new LoggerScope();
+        var manager = new WebsocketManager();
+        var failedSocket = new RecordingWebSocket(
+            failSends: true,
+            failureMessage: PublicFailureCanary.Composite);
+        AddAuthenticatedSockets(manager, failedSocket);
+
+        await manager.SendMessage(WebsocketTopic.QueueItemProgress, "message");
+
+        PublicFailureCanary.AssertSafe(logger.Rendered);
+        Assert.Contains("Failed to send message to websocket.", logger.Rendered, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -132,7 +154,8 @@ public sealed class WebsocketManagerTests
     private sealed class RecordingWebSocket(
         bool failSends,
         bool blockFirstSend = false,
-        bool rejectConcurrentSends = false) : WebSocket
+        bool rejectConcurrentSends = false,
+        string failureMessage = "send failed") : WebSocket
     {
         private readonly Lock _messagesLock = new();
         private readonly List<string> _messages = [];
@@ -220,7 +243,7 @@ public sealed class WebsocketManagerTests
                 if (rejectConcurrentSends && activeSends > 1)
                     throw new IOException("overlapping WebSocket sends are not supported");
                 if (failSends)
-                    throw new IOException("send failed");
+                    throw new IOException(failureMessage);
                 if (blockFirstSend && sendCount == 1)
                     await _releaseFirstSend.Task.ConfigureAwait(false);
             }
@@ -240,6 +263,46 @@ public sealed class WebsocketManagerTests
                 observed = original;
             }
         }
+    }
+
+    private sealed class LoggerScope : IDisposable
+    {
+        private readonly ILogger _previous = Log.Logger;
+        private readonly CollectingSink _sink = new();
+        private readonly ILogger _logger;
+
+        public LoggerScope()
+        {
+            _logger = new LoggerConfiguration()
+                .MinimumLevel.Verbose()
+                .WriteTo.Sink(_sink)
+                .CreateLogger();
+            Log.Logger = _logger;
+        }
+
+        public string Rendered => string.Join("\n", _sink.Events.Select(Render));
+
+        public void Dispose()
+        {
+            Log.Logger = _previous;
+            (_logger as IDisposable)?.Dispose();
+        }
+
+        private static string Render(LogEvent logEvent)
+        {
+            var properties = string.Join(" ", logEvent.Properties.Select(x => $"{x.Key}={x.Value}"));
+            return string.Join(" ",
+                logEvent.RenderMessage(),
+                logEvent.Exception?.ToString() ?? "",
+                properties);
+        }
+    }
+
+    private sealed class CollectingSink : ILogEventSink
+    {
+        public List<LogEvent> Events { get; } = [];
+
+        public void Emit(LogEvent logEvent) => Events.Add(logEvent);
     }
 
     private sealed class BlockingWebSocket : WebSocket

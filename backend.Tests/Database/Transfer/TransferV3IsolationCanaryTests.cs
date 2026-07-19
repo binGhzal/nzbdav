@@ -21,10 +21,10 @@ public sealed class TransferV3IsolationCanaryTests
     public void ProgramRefusesBothV3KindsBeforeProviderPathOrRuntimeIo()
     {
         var source = File.ReadAllText(SqliteContractTestSupport.AbsolutePath("backend/Program.cs"));
-        var mainStart = source.IndexOf("static async Task Main", StringComparison.Ordinal);
-        var mainEnd = source.IndexOf("private static void", mainStart, StringComparison.Ordinal);
-        Assert.True(mainStart >= 0 && mainEnd > mainStart);
-        var main = source[mainStart..mainEnd];
+        var runStart = source.IndexOf("private static async Task RunAsync", StringComparison.Ordinal);
+        var runEnd = source.IndexOf("private static void", runStart, StringComparison.Ordinal);
+        Assert.True(runStart >= 0 && runEnd > runStart);
+        var main = source[runStart..runEnd];
 
         var parse = main.IndexOf("MaintenanceCommandLine.Parse(args)", StringComparison.Ordinal);
         var exportRefusal = main.IndexOf(
@@ -50,6 +50,26 @@ public sealed class TransferV3IsolationCanaryTests
         Assert.True(providerGate < dotenv);
         Assert.True(dotenv < sqliteRuntime);
         Assert.True(sqliteRuntime < runtimeContext);
+    }
+
+    [Fact]
+    public void ProgramMainAwaitsRunAsyncAndUsesOnlyFixedStartupFailureBoundary()
+    {
+        var source = File.ReadAllText(SqliteContractTestSupport.AbsolutePath("backend/Program.cs"));
+        var mainStart = source.IndexOf("static async Task<int> Main", StringComparison.Ordinal);
+        var runStart = source.IndexOf("private static async Task RunAsync", StringComparison.Ordinal);
+        Assert.True(mainStart >= 0 && runStart > mainStart);
+        var main = source[mainStart..runStart];
+
+        var awaitRun = main.IndexOf("await RunAsync(args).ConfigureAwait(false)", StringComparison.Ordinal);
+        var failureCatch = main.IndexOf("catch (Exception exception)", StringComparison.Ordinal);
+        var fixedOutput = main.IndexOf(
+            "Console.Error.WriteLine(StartupFailureContract.Format(exception))",
+            StringComparison.Ordinal);
+        Assert.True(awaitRun >= 0 && awaitRun < failureCatch);
+        Assert.True(failureCatch < fixedOutput);
+        Assert.DoesNotContain("exception.Message", main, StringComparison.Ordinal);
+        Assert.DoesNotContain("exception.ToString", main, StringComparison.Ordinal);
     }
 
     [Fact]

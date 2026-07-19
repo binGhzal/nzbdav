@@ -154,15 +154,6 @@
       "buildTargetModelSha256": "18482a18289ad5d2a1cc6c635575696ca026cc376acc152bb07bfbf1d47b4102"
     },
     {
-      "id": "20251106165542_Ensure-Strm-Key-Exists",
-      "className": "EnsureStrmKeyExists",
-      "sourcePath": "backend/Database/Migrations/20251106165542_Ensure-Strm-Key-Exists.cs",
-      "metadataLayout": "designer",
-      "metadataPath": "backend/Database/Migrations/20251106165542_Ensure-Strm-Key-Exists.Designer.cs",
-      "upThroughEofSha256": "a0dd948b7ed6c52757ee5e7cc920c5a0aea2f52299a5ab3ff69ab8537976a52b",
-      "buildTargetModelSha256": "18482a18289ad5d2a1cc6c635575696ca026cc376acc152bb07bfbf1d47b4102"
-    },
-    {
       "id": "20251113081523_Populate-Usenet-Providers-Config",
       "className": "PopulateUsenetProvidersConfig",
       "sourcePath": "backend/Database/Migrations/20251113081523_Populate-Usenet-Providers-Config.cs",

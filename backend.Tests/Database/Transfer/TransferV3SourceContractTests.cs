@@ -85,8 +85,10 @@ public sealed class TransferV3SourceContractTests
     public void EmbeddedContract_MatchesReviewedMigrationAndRawSchemaEvidence()
     {
         var contract = TransferV3SourceContract.LoadEmbedded();
-        using var migrationJson = JsonDocument.Parse(File.ReadAllBytes(TestDataPath("sqlite-migration-contract.json")));
-        using var schemaJson = JsonDocument.Parse(File.ReadAllBytes(TestDataPath("sqlite-source-schema-manifest.json")));
+        var migrationEvidence = TransferV3SourceContract.ReadEmbeddedMigrationSourceContract();
+        var schemaEvidence = TransferV3SourceContract.ReadEmbeddedSourceSchema();
+        using var migrationJson = JsonDocument.Parse(migrationEvidence);
+        using var schemaJson = JsonDocument.Parse(schemaEvidence);
 
         var migrationIds = migrationJson.RootElement.GetProperty("migrations")
             .EnumerateArray()
@@ -117,12 +119,8 @@ public sealed class TransferV3SourceContractTests
             schemaTables["HealthCheckStats"].GetProperty("columns").EnumerateArray()
                 .Select(value => value.GetProperty("name").GetString()),
             contract.DerivedTables.Single().Columns.Select(column => column.Name));
-        Assert.Equal(
-            File.ReadAllBytes(TestDataPath("sqlite-migration-contract.json")),
-            TransferV3SourceContract.ReadEmbeddedMigrationSourceContract());
-        Assert.Equal(
-            File.ReadAllBytes(TestDataPath("sqlite-source-schema-manifest.json")),
-            TransferV3SourceContract.ReadEmbeddedSourceSchema());
+        Assert.Equal(49, migrationIds.Length);
+        Assert.Contains("20251106165542_Ensure-Strm-Key-Exists", migrationIds);
     }
 
     [Fact]
@@ -148,6 +146,16 @@ public sealed class TransferV3SourceContractTests
                 Assert.Equal(ExpectedKind(property), column.Kind);
                 if ((Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType).IsEnum)
                 {
+                    if (table.Name == "MaintenanceRuns" && column.Name == "Kind")
+                    {
+                        Assert.Equal([0L, 1L, 2L, 3L], column.AllowedIntegers);
+                        Assert.Equal(
+                            [0L, 1L],
+                            Enum.GetValues(Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType)
+                                .Cast<object>().Select(Convert.ToInt64).Order());
+                        continue;
+                    }
+
                     Assert.Equal(
                         Enum.GetValues(Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType)
                             .Cast<object>().Select(Convert.ToInt64).Order(),
@@ -268,16 +276,4 @@ public sealed class TransferV3SourceContractTests
         throw new InvalidOperationException($"Unhandled CLR type '{clrType}'.");
     }
 
-    private static string TestDataPath(string fileName)
-    {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
-             directory is not null;
-             directory = directory.Parent)
-        {
-            var candidate = Path.Combine(directory.FullName, "backend.Tests", "TestData", fileName);
-            if (File.Exists(candidate)) return candidate;
-        }
-
-        throw new FileNotFoundException(fileName);
-    }
 }

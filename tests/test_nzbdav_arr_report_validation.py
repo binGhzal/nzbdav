@@ -1,11 +1,25 @@
 import importlib.util
+import json
 import pathlib
 import sys
+import tempfile
+import traceback
 import unittest
 from unittest import mock
 
 
 SCRIPT_PATH = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "nzbdav_arr_report_validation.py"
+TESTS_DIR = pathlib.Path(__file__).resolve().parent
+for import_path in (TESTS_DIR, SCRIPT_PATH.parent):
+    if str(import_path) not in sys.path:
+        sys.path.insert(0, str(import_path))
+
+from protocol_base_contract_cases import (  # noqa: E402
+    INVALID_PROTOCOL_BASES,
+    SAFE_BASE_ERROR,
+    VALID_PROTOCOL_BASES,
+)
+
 SPEC = importlib.util.spec_from_file_location("nzbdav_arr_report_validation", SCRIPT_PATH)
 nzbdav_arr_report_validation = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -30,7 +44,10 @@ class ArrReportValidationTests(unittest.TestCase):
                 side_effect=AssertionError("general config must not be requested with the public API key"),
             ),
         ):
-            documents = nzbdav_arr_report_validation.fetch_documents("https://nzbdav.example", "public-key")
+            documents = nzbdav_arr_report_validation.fetch_documents(
+                "https://nzbdav.example/protocol",
+                "public-key",
+            )
 
         self.assertNotIn("config", documents)
         self.assertEqual(
@@ -42,6 +59,152 @@ class ArrReportValidationTests(unittest.TestCase):
             ],
             requested_paths,
         )
+
+    def test_root_and_nested_protocol_bases_construct_every_request_below_protocol(self):
+        expected_suffixes = (
+            "/api/arr/validation",
+            "/api/arr/search-nudges?limit=500",
+            "/api/arr/correlations?limit=500",
+            "/api?mode=fullstatus",
+        )
+
+        for configured, canonical in VALID_PROTOCOL_BASES:
+            requested_urls = []
+
+            def request_json(base_url, path, _api_key):
+                requested_urls.append(nzbdav_arr_report_validation.join_url(base_url, path))
+                return {}
+
+            with self.subTest(configured=configured), mock.patch.object(
+                nzbdav_arr_report_validation,
+                "request_json",
+                side_effect=request_json,
+            ):
+                nzbdav_arr_report_validation.fetch_documents(configured, "x")
+
+            self.assertEqual(
+                requested_urls,
+                [f"{canonical}{suffix}" for suffix in expected_suffixes],
+            )
+
+    def test_invalid_protocol_base_fails_before_fetch_or_artifact_creation(self):
+        clean_documents = documents(
+            sonarr=True,
+            radarr=True,
+            search_mode="report",
+            duplicate_behavior="increment",
+            coverage=100,
+            failed_nudges=0,
+            issues=[],
+        )
+
+        for name, configured in INVALID_PROTOCOL_BASES:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                output_dir = pathlib.Path(directory) / "artifacts"
+                with mock.patch.object(
+                    nzbdav_arr_report_validation,
+                    "fetch_documents",
+                    return_value=clean_documents,
+                ) as fetch_documents:
+                    with self.assertRaisesRegex(SystemExit, rf"^{SAFE_BASE_ERROR}$"):
+                        nzbdav_arr_report_validation.main([
+                            "--base-url",
+                            configured,
+                            "--api-key",
+                            "x",
+                            "--output-dir",
+                            str(output_dir),
+                        ])
+
+                fetch_documents.assert_not_called()
+                self.assertFalse(output_dir.exists())
+
+    def test_artifact_labels_the_canonical_value_and_preserves_the_deprecated_alias(self):
+        clean_documents = documents(
+            sonarr=True,
+            radarr=True,
+            search_mode="report",
+            duplicate_behavior="increment",
+            coverage=100,
+            failed_nudges=0,
+            issues=[],
+        )
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            nzbdav_arr_report_validation,
+            "fetch_documents",
+            return_value=clean_documents,
+        ):
+            output_dir = pathlib.Path(directory)
+            result = nzbdav_arr_report_validation.main([
+                "--base-url",
+                "https://example.test/nzbdav/protocol/",
+                "--api-key",
+                "x",
+                "--output-dir",
+                str(output_dir),
+            ])
+            artifact_path = next(output_dir.glob("*.json"))
+            artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            artifact["nzbdav_protocol_base"],
+            "https://example.test/nzbdav/protocol",
+        )
+        self.assertEqual(artifact["base_url"], artifact["nzbdav_protocol_base"])
+
+    def test_ipv6_artifact_preserves_the_normalized_protocol_base_unchanged(self):
+        clean_documents = documents(
+            sonarr=True,
+            radarr=True,
+            search_mode="report",
+            duplicate_behavior="increment",
+            coverage=100,
+            failed_nudges=0,
+            issues=[],
+        )
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            nzbdav_arr_report_validation,
+            "fetch_documents",
+            return_value=clean_documents,
+        ):
+            output_dir = pathlib.Path(directory)
+            result = nzbdav_arr_report_validation.main([
+                "--base-url",
+                "http://[::1]:3000/protocol/",
+                "--api-key",
+                "x",
+                "--output-dir",
+                str(output_dir),
+            ])
+            artifact_path = next(output_dir.glob("*.json"))
+            artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            artifact["nzbdav_protocol_base"],
+            "http://[::1]:3000/protocol",
+        )
+        self.assertEqual(artifact["base_url"], artifact["nzbdav_protocol_base"])
+
+    def test_cli_traceback_suppresses_invalid_port_input_and_helper_exception(self):
+        configured = "https://example.test:arr-port-trace-canary/protocol"
+
+        with self.assertRaises(SystemExit) as captured:
+            nzbdav_arr_report_validation.main([
+                "--base-url",
+                configured,
+                "--api-key",
+                "x",
+            ])
+
+        rendered = "".join(traceback.format_exception(captured.exception))
+        self.assertEqual(str(captured.exception), SAFE_BASE_ERROR)
+        self.assertEqual(rendered.count(SAFE_BASE_ERROR), 1)
+        self.assertNotIn(configured, rendered)
+        self.assertNotIn("arr-port-trace-canary", rendered)
+        self.assertNotIn("ValueError", rendered)
+        self.assertNotIn("direct cause", rendered)
 
     def test_validate_documents_reads_non_secret_policy_from_validation(self):
         checks = nzbdav_arr_report_validation.validate_documents(

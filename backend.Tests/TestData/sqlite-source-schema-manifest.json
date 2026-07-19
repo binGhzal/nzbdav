@@ -20,7 +20,6 @@
     "20251030163510_Add-QueueNzbContents-Table",
     "20251105050845_Add-HealthCheckStats-Table",
     "20251105200722_Add-CreatedAt-Index-To-HealthCheckResults-Table",
-    "20251106165542_Ensure-Strm-Key-Exists",
     "20251113081523_Populate-Usenet-Providers-Config",
     "20251220004937_Fix-Empty-Categories",
     "20260108054841_Add-BlobCleanupItems-Table",

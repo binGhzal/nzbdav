@@ -26,7 +26,7 @@ public class GetHealthCheckHistoryController(DavDatabaseClient dbClient) : BaseA
         return new GetHealthCheckHistoryResponse()
         {
             Stats = stats,
-            Items = items
+            Items = items.Select(GetHealthCheckHistoryResponse.Project).ToList()
         };
     }
 

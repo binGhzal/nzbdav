@@ -81,3 +81,12 @@ export default function App({ loaderData }: Route.ComponentProps) {
 
   return <Outlet />;
 }
+
+export function ErrorBoundary(_props: Route.ErrorBoundaryProps) {
+  return (
+    <main role="alert" aria-live="assertive">
+      <h1>Request failed</h1>
+      <p>The page could not be loaded. Please try again.</p>
+    </main>
+  );
+}

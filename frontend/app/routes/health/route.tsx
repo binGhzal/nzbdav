@@ -11,6 +11,14 @@ import { useNavigation, useRevalidator } from "react-router";
 import { OperationsStatus } from "./components/operations-status/operations-status";
 import { useHealthQueueTopUp } from "./health-queue-top-up";
 import { createHealthRefreshController } from "./health-refresh-controller";
+import {
+    createPublicFailureResponse,
+    projectPublicFailureIdentityHeaders,
+} from "~/utils/public-failure";
+
+export function headers({ actionHeaders }: Route.HeadersArgs) {
+    return projectPublicFailureIdentityHeaders(actionHeaders);
+}
 
 const healthRefreshIntervalMs = 5_000;
 
@@ -71,7 +79,7 @@ export async function action({ request }: Route.ActionArgs) {
     try {
         return await performHealthAction(request);
     } catch (error) {
-        return Response.json({ error: getErrorMessage(error) }, { status: 502 });
+        return createPublicFailureResponse(request, 502, "upstream_unavailable");
     }
 }
 
@@ -86,7 +94,7 @@ async function performHealthAction(request: Request) {
 
     if (intent === "cancel") {
         const runId = formData.get("runId")?.toString();
-        if (!runId) return badRequest("Repair run id is required.");
+        if (!runId) return badRequest(request);
         await backendClient.cancelRepairRun(runId);
         return { ok: true };
     }
@@ -98,7 +106,7 @@ async function performHealthAction(request: Request) {
 
     if (intent === "retry-arr-nudge") {
         const id = formData.get("id")?.toString();
-        if (!id) return badRequest("ARR search nudge id is required.");
+        if (!id) return badRequest(request);
         await backendClient.retryArrSearchNudge(id);
         return { ok: true };
     }
@@ -134,12 +142,12 @@ async function performHealthAction(request: Request) {
 
     if (intent === "delete-arr-correlation") {
         const id = formData.get("id")?.toString();
-        if (!id) return badRequest("ARR correlation id is required.");
+        if (!id) return badRequest(request);
         await backendClient.deleteArrCorrelation(id);
         return { ok: true };
     }
 
-    return badRequest("Unsupported repair action.");
+    return badRequest(request);
 }
 
 export default function Health({ loaderData }: Route.ComponentProps) {
@@ -316,21 +324,17 @@ function numberOrUndefined(value: string | undefined) {
     return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function badRequest(error: string) {
-    return Response.json({ error }, { status: 400 });
-}
-
-function getErrorMessage(error: unknown) {
-    return error instanceof Error ? error.message : String(error);
+function badRequest(request: Request) {
+    return createPublicFailureResponse(request, 400, "invalid_request");
 }
 
 async function loadOptional<T>(load: () => Promise<T>): Promise<{ data: T | null; error: string | null }> {
     try {
         return { data: await load(), error: null };
-    } catch (error) {
+    } catch {
         return {
             data: null,
-            error: error instanceof Error ? error.message : String(error)
+            error: "Health data is unavailable."
         };
     }
 }

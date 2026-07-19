@@ -1,18 +1,39 @@
-const MaxErrorBodyLength = 500;
+import {
+    fallbackHttpFailure,
+    readPublicFailureBody,
+    renderPublicFailure,
+    resolvePublicFailureEnvelope,
+} from "./public-failure";
 
 export async function getHttpErrorMessage(response: Response): Promise<string> {
-    const text = (await readTextSafely(response)).trim();
-    if (text.length === 0)
-        return formatStatus(response);
+    const text = (await readPublicFailureBody(response))?.trim() ?? "";
+    const envelope = resolvePublicFailureEnvelope(text, response.headers);
+    return envelope ? renderPublicFailure(envelope) : fallbackHttpFailure(response.status);
+}
 
-    const parsed = parseJsonObject(text);
-    const structuredMessage = getStructuredErrorMessage(parsed);
-    if (structuredMessage)
-        return structuredMessage;
+export type HttpActionResult = {
+    success: boolean;
+    data: Record<string, unknown>;
+    error: string;
+};
 
-    return text.length > MaxErrorBodyLength
-        ? `${text.slice(0, MaxErrorBodyLength)}...`
-        : text;
+// Queue/history mutation endpoints have a deliberately tiny `{ status: true }`
+// success contract. This helper must not be used for general response payloads.
+export async function readHttpActionResult(response: Response): Promise<HttpActionResult> {
+    const text = (await readPublicFailureBody(response))?.trim() ?? "";
+    const envelope = resolvePublicFailureEnvelope(text, response.headers);
+    let data: Record<string, unknown> = {};
+    try {
+        const value: unknown = JSON.parse(text);
+        if (isRecord(value)) data = value;
+    } catch {
+        // Invalid and oversized action bodies have a fixed status-only fallback.
+    }
+    return {
+        success: response.ok && data.status === true,
+        data,
+        error: envelope ? renderPublicFailure(envelope) : fallbackHttpFailure(response.status),
+    };
 }
 
 export async function readJsonObjectOrEmpty<T extends Record<string, unknown> = Record<string, unknown>>(
@@ -24,40 +45,6 @@ export async function readJsonObjectOrEmpty<T extends Record<string, unknown> = 
     } catch {
         return {} as T;
     }
-}
-
-function formatStatus(response: Response): string {
-    return response.statusText
-        ? `${response.status} ${response.statusText}`
-        : `${response.status}`;
-}
-
-async function readTextSafely(response: Response): Promise<string> {
-    try {
-        return await response.text();
-    } catch {
-        return "";
-    }
-}
-
-function parseJsonObject(text: string): Record<string, unknown> | null {
-    try {
-        const data = JSON.parse(text);
-        return isRecord(data) ? data : null;
-    } catch {
-        return null;
-    }
-}
-
-function getStructuredErrorMessage(data: Record<string, unknown> | null): string | null {
-    if (!data) return null;
-    for (const key of ["error", "message", "detail"]) {
-        const value = data[key];
-        if (typeof value === "string" && value.trim())
-            return value.trim();
-    }
-
-    return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

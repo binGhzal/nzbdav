@@ -6,7 +6,7 @@ namespace NzbWebDAV.Clients.RadarrSonarr;
 
 public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 {
-    private static readonly Dictionary<string, int> SymlinkOrStrmToMovieIdCache = new();
+    private static readonly Dictionary<string, int> SymlinkToMovieIdCache = new();
 
     public Task<RadarrMovie> GetMovieAsync(int id, CancellationToken ct = default) =>
         Get<RadarrMovie>($"/movie/{id}", ct);
@@ -37,26 +37,26 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     public Task<ArrCommand> SearchMoviesAsync(List<int> ids, CancellationToken ct = default) =>
         CommandAsync(new { name = "MoviesSearch", movieIds = ids }, ct);
 
-    public override async Task<bool> RemoveAndSearch(string symlinkOrStrmPath, CancellationToken ct = default)
+    public override async Task<bool> RemoveAndSearch(string symlinkPath, CancellationToken ct = default)
     {
-        var mediaIds = await GetMediaIds(symlinkOrStrmPath, ct).ConfigureAwait(false);
+        var mediaIds = await GetMediaIds(symlinkPath, ct).ConfigureAwait(false);
         if (mediaIds == null) return false;
 
         if (await DeleteMovieFile(mediaIds.Value.movieFileId, ct).ConfigureAwait(false) != HttpStatusCode.OK)
-            throw new Exception($"Failed to delete movie file `{symlinkOrStrmPath}` from radarr instance `{Host}`.");
+            throw new Exception($"Failed to delete movie file `{symlinkPath}` from radarr instance `{Host}`.");
 
         await SearchMovieAsync(mediaIds.Value.movieId, ct).ConfigureAwait(false);
         return true;
     }
 
-    private async Task<(int movieFileId, int movieId)?> GetMediaIds(string symlinkOrStrmPath, CancellationToken ct)
+    private async Task<(int movieFileId, int movieId)?> GetMediaIds(string symlinkPath, CancellationToken ct)
     {
         // if we already have the movie-id cached
         // then let's use it to find and return the corresponding movie-file-id
-        if (SymlinkOrStrmToMovieIdCache.TryGetValue(symlinkOrStrmPath, out var movieId))
+        if (SymlinkToMovieIdCache.TryGetValue(symlinkPath, out var movieId))
         {
             var movie = await GetMovieAsync(movieId, ct).ConfigureAwait(false);
-            if (movie.MovieFile?.Path == symlinkOrStrmPath)
+            if (movie.MovieFile?.Path == symlinkPath)
                 return (movie.MovieFile.Id!, movieId);
         }
 
@@ -68,8 +68,8 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         {
             var movieFile = movie.MovieFile;
             if (movieFile?.Path != null)
-                SymlinkOrStrmToMovieIdCache[movieFile.Path] = movie.Id;
-            if (movieFile?.Path == symlinkOrStrmPath)
+                SymlinkToMovieIdCache[movieFile.Path] = movie.Id;
+            if (movieFile?.Path == symlinkPath)
                 result = (movieFile.Id!, movie.Id);
         }
 

@@ -1674,6 +1674,11 @@ internal sealed class TransferV3ValidationSource : IAsyncDisposable
             await using (var context = database.CreateContext())
             {
                 await context.Database.MigrateAsync();
+                var historicalKey = string.Concat(Enumerable.Repeat('2', 32));
+                await context.Database.ExecuteSqlInterpolatedAsync(
+                    $"INSERT INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES ({"20251106165542_Ensure-Strm-Key-Exists"}, {"9.0.4"})");
+                await context.Database.ExecuteSqlInterpolatedAsync(
+                    $"INSERT INTO ConfigItems (ConfigName, ConfigValue) VALUES ({"api.strm-key"}, {historicalKey})");
                 migratedPath = context.Database.GetDbConnection().DataSource;
             }
             var databasePath = Path.Combine(root, "source.sqlite");

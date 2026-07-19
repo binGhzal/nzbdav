@@ -35,4 +35,19 @@ describe("onboarding action", () => {
         expect(response).toEqual({ error: "passwords must match" });
         expect(backendClient.createAccount).not.toHaveBeenCalled();
     });
+
+    it("does not render a hostile backend failure", async () => {
+        vi.mocked(backendClient.createAccount).mockRejectedValueOnce(
+            new Error("credential-marker|http://backend-secret\r\n"));
+        const form = new FormData();
+        form.append("username", "admin");
+        form.append("password", "matching-secret");
+        form.append("confirmPassword", "matching-secret");
+
+        const response = await action({
+            request: new Request("https://example.test/onboarding", { method: "POST", body: form }),
+        } as never);
+
+        expect(response).toEqual({ error: "Unable to create the account." });
+    });
 });

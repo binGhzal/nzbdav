@@ -61,7 +61,7 @@ public sealed class SqliteSourceSchemaManifestTests
         Assert.Equal("Microsoft.EntityFrameworkCore.Sqlite", first.Provider);
         Assert.Equal(SqliteContractTestSupport.ContextName, first.Context);
         Assert.Equal(SqliteContractTestSupport.HistoryTableName, first.HistoryTable);
-        Assert.Equal(49, first.AppliedMigrations.Count);
+        Assert.Equal(48, first.AppliedMigrations.Count);
         Assert.Equal(SqliteContractTestSupport.LatestMigrationId, first.AppliedMigrations[^1]);
         var migrationContract = SqliteContractTestSupport.ReadFixture<SqliteMigrationContract>(
             SqliteContractTestSupport.MigrationContractRelativePath);

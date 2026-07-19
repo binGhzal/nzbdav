@@ -14,6 +14,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from nzbdav_protocol_base import normalize_nzbdav_protocol_base
+
 
 DEFAULT_OUTPUT_DIR = Path("artifacts/arr-validation")
 SECRET_KEY_PARTS = ("api_key", "apikey", "password", "token", "secret", "authorization")
@@ -21,7 +23,11 @@ SECRET_KEY_PARTS = ("api_key", "apikey", "password", "token", "secret", "authori
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", default=os.environ.get("NZBDAV_BASE_URL"), help="NZBDav base URL")
+    parser.add_argument(
+        "--base-url",
+        default=os.environ.get("NZBDAV_BASE_URL"),
+        help="NzbDAV protocol base URL ending in /protocol",
+    )
     parser.add_argument("--api-key", default=os.environ.get("NZBDAV_API_KEY"), help="NZBDav API key")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--min-correlation", type=int, default=90)
@@ -35,8 +41,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if not args.base_url:
-        raise SystemExit("NZBDAV_BASE_URL or --base-url is required.")
+    try:
+        args.base_url = normalize_nzbdav_protocol_base(args.base_url or "")
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
     if not args.api_key:
         raise SystemExit("NZBDAV_API_KEY or --api-key is required.")
 
@@ -48,7 +56,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     artifact = {
         "generated_at": utc_now(),
-        "base_url": redact_url(args.base_url),
+        "nzbdav_protocol_base": args.base_url,
+        "base_url": args.base_url,
         "min_correlation": args.min_correlation,
         "low_correlation_reason": args.low_correlation_reason,
         "checks": checks,
@@ -68,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def fetch_documents(base_url: str, api_key: str) -> dict[str, Any]:
+    base_url = normalize_nzbdav_protocol_base(base_url)
     return {
         "validation": request_json(base_url, "/api/arr/validation", api_key),
         "search_nudges": request_json(base_url, "/api/arr/search-nudges?limit=500", api_key),

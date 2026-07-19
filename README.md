@@ -28,23 +28,62 @@ https://github.com/user-attachments/assets/f14a0cf7-b19c-4b36-a909-59ca2a3771ef
 
 # Getting Started
 
-The easiest way to get started is by using the personal GHCR image.
+The easiest way to get started is by using the personal GHCR image. Local
+authentication requires a private 64-character lowercase hexadecimal session
+key. Generate and validate it without printing it, then keep the same value in
+your secret manager when you want sessions to survive container restarts:
+
+```bash
+configure_nzbdav_session_key() {
+  nzbdav_session_key_candidate=
+  if ! nzbdav_session_key_candidate="$(hexdump -n 32 -ve '1/1 "%.2x"' /dev/urandom)"; then
+    printf '%s\n' 'Failed to generate SESSION_KEY.' >&2
+    unset nzbdav_session_key_candidate
+    return 1
+  fi
+  if [ "${#nzbdav_session_key_candidate}" -ne 64 ]; then
+    printf '%s\n' 'Failed to generate SESSION_KEY.' >&2
+    unset nzbdav_session_key_candidate
+    return 1
+  fi
+  case "$nzbdav_session_key_candidate" in
+    *[!0-9a-f]*)
+      printf '%s\n' 'Failed to generate SESSION_KEY.' >&2
+      unset nzbdav_session_key_candidate
+      return 1
+      ;;
+  esac
+  export SESSION_KEY="$nzbdav_session_key_candidate"
+  unset nzbdav_session_key_candidate
+}
+configure_nzbdav_session_key || exit 1
+```
 
 To try it out, run the following command to pull and run the image with port `3000` exposed:
 
 ```bash
-docker run --rm -it -p 3000:3000 ghcr.io/binghzal/nzbdav:latest
+docker run --rm -it \
+  -e AUTH_MODE=local \
+  -e SESSION_KEY \
+  -e SECURE_COOKIES=false \
+  -e ALLOW_INSECURE_COOKIES=true \
+  -p 127.0.0.1:3000:3000 \
+  ghcr.io/binghzal/nzbdav:latest
 ```
 
 And if you would like to persist saved settings, attach a volume at `/config`
 
-```
-mkdir -p $(pwd)/nzbdav && \
+```bash
+mkdir -p "$(pwd)/nzbdav" && \
 docker run --rm -it \
-  -v $(pwd)/nzbdav:/config \
+  -v "$(pwd)/nzbdav:/config" \
   -e PUID=1000 \
   -e PGID=1000 \
-  -p 3000:3000 \
+  -e AUTH_MODE=local \
+  -e SESSION_KEY \
+  -e SECURE_COOKIES=false \
+  -e ALLOW_INSECURE_COOKIES=true \
+  -p 127.0.0.1:3000:3000 \
   ghcr.io/binghzal/nzbdav:latest
 ```
 After starting the container, be sure to navigate to the Settings page on the UI to finish setting up your usenet connection settings.
@@ -75,6 +114,13 @@ env var, see the guide). The [reverse-proxy guide](docs/url-base.md) covers
 the layout choices, downstream client settings (Sonarr/Radarr/rclone), and
 common pitfalls. Drop-in nginx configs for subfolder and subdomain layouts
 live under [`examples/nginx/`](examples/nginx/).
+
+External SAB/WebDAV clients use one canonical **NzbDAV protocol base**, never
+the UI root: `https://nzbdav.example.com/protocol` for a dedicated subdomain,
+or `https://example.com/nzbdav/protocol` when `URL_BASE=/nzbdav`. Client API
+and WebDAV paths are suffixes below that base. Keep UI routes behind the
+frontend authentication principal; the reverse proxy examples bypass proxy
+authentication only for the exact `protocol` path segment.
 
 # More Screenshots
 <img width="300" alt="onboarding" src="https://github.com/user-attachments/assets/4ca1bfed-3b98-4ff2-8108-59ed07a25591" />

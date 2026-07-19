@@ -24,14 +24,15 @@ Use the tuned rclone command from `docs/setup-guide.md`:
 * `--use-cookies`.
 * `--allow-other`.
 * `--rc` with authenticated RC access configured in NZBDav Settings > Rclone.
-* `--vfs-cache-mode=writes`.
+* `--vfs-cache-mode=full`.
+* `--vfs-cache-max-size=20G`.
+* `--vfs-cache-max-age=6h`.
+* `--vfs-cache-poll-interval=1m`.
 * `--buffer-size=0M`.
-* `--vfs-read-ahead=0`.
-* `--vfs-read-chunk-size=256K`.
-* `--vfs-read-chunk-size-limit=8M`.
-* `--vfs-read-chunk-streams=0`.
-* `--vfs-cache-poll-interval=30s`.
-* short `--dir-cache-time`, plus NZBDav `vfs/forget` invalidations.
+* `--vfs-read-ahead=512M`.
+* `--vfs-read-chunk-size=4M`.
+* `--vfs-read-chunk-streams=16`.
+* `--dir-cache-time=20s`, plus NZBDav `vfs/forget` invalidations.
 
 Record:
 
@@ -53,8 +54,8 @@ Required input:
 
 * `NZBDAV_BENCH_TRANSPORT`: `filesystem` for mounted-path benchmarks or `http` for WebDAV range checks. Use `filesystem` for the DFS-vs-rclone acceptance gate because Plex/ARR consume mounted paths.
 * `NZBDAV_BENCH_MOUNT_ROOT`: mount root for filesystem benchmarks, for example `/mnt/media/gateways/nzbdav`.
-* `NZBDAV_BENCH_BASE_URL`: NZBDav WebDAV base URL, for example `http://localhost:3000/`. Required for HTTP benchmarks and optional for filesystem benchmarks; when present it is used to collect `status/fullstatus` resource, cache, provider, and mount snapshots.
-* `NZBDAV_BENCH_PATHS`: comma-separated mounted paths, WebDAV paths, or absolute URLs to large media-like files. For filesystem benchmarks with `NZBDAV_BENCH_MOUNT_ROOT`, paths are logical mount-root paths and are always resolved below that root. Parent-directory escapes are rejected.
+* `NZBDAV_BENCH_BASE_URL`: canonical NzbDAV protocol base, for example `http://localhost:3000/protocol`. Required for HTTP benchmarks and optional for filesystem benchmarks; when supplied it is validated before probes and used to collect `status/fullstatus` resource, cache, provider, and mount snapshots.
+* `NZBDAV_BENCH_PATHS`: in HTTP mode, comma-separated logical suffixes below the NzbDAV protocol base. Absolute URLs, authorities, dot segments, and other base-reset forms are rejected. In filesystem mode these are mounted paths; with `NZBDAV_BENCH_MOUNT_ROOT` they are always resolved below that root, while the existing no-root mode may use absolute filesystem or `file://` paths. Parent-directory escapes are rejected.
 
 Optional input:
 
@@ -81,7 +82,7 @@ Example rclone baseline:
 ```bash
 NZBDAV_BENCH_TRANSPORT=filesystem \
 NZBDAV_BENCH_MOUNT_ROOT=/mnt/media/gateways/nzbdav \
-NZBDAV_BENCH_BASE_URL=http://localhost:3000/ \
+NZBDAV_BENCH_BASE_URL=http://localhost:3000/protocol \
 NZBDAV_BENCH_PATHS=/content/example-large-file.mkv \
 NZBDAV_BENCH_API_KEY=replace-with-api-key \
 NZBDAV_BENCH_NZBDAV_PID=$(pgrep -f NzbWebDAV | head -1) \
@@ -105,7 +106,7 @@ python3 scripts/nzbdav_benchmark.py run \
   --scenario dfs \
   --transport filesystem \
   --mount-root /mnt/media/gateways/nzbdav-dfs \
-  --base-url http://localhost:3000/ \
+  --base-url http://localhost:3000/protocol \
   --nzbdav-pid "$(pgrep -f /tmp/nzbdav-dfs-selfcontained/NzbWebDAV | head -1)" \
   --path /content/example-large-file.mkv
 python3 scripts/nzbdav_benchmark.py evaluate --baseline artifacts/benchmarks/rclone-YYYYMMDDTHHMMSSZ.json --candidate artifacts/benchmarks/dfs-YYYYMMDDTHHMMSSZ.json --gate
@@ -152,9 +153,12 @@ Follow-up remediation moved DFS reads onto direct `IFileRangeReader` handles, ex
 
 The patched production benchmark on 2026-07-02 still kept rclone as the accepted backend:
 
-* rclone baseline artifact: `/opt/media-stack/artifacts/nzbdav-bench/rclone-20260702T203750Z.json`.
-* patched DFS candidate artifact: `/opt/media-stack/artifacts/nzbdav-bench/dfs-patched-20260702T210018Z.json`.
-* evaluation artifact: `/opt/media-stack/artifacts/nzbdav-bench/evaluation-20260702T210030Z.json`.
+* rclone baseline artifact: `rclone-20260702T203750Z.json` (host-local and not
+  durable repository evidence).
+* patched DFS candidate artifact: `dfs-patched-20260702T210018Z.json`
+  (host-local and not durable repository evidence).
+* evaluation artifact: `evaluation-20260702T210030Z.json` (host-local and not
+  durable repository evidence).
 * DFS correctness, fail-closed, CPU, and RSS checks passed.
 * DFS p95 seek latency failed the gate at `6025.497ms` versus rclone `0.610ms`.
 

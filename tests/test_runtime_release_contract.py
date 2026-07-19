@@ -1,6 +1,7 @@
 import json
 import pathlib
 import re
+import subprocess
 import unittest
 
 
@@ -38,14 +39,60 @@ class RuntimeReleaseContractTests(unittest.TestCase):
         self.assertTrue(image_references)
         self.assertTrue(all("@sha256:" in image for image in image_references))
 
-    def test_frontend_image_uses_the_same_pinned_node_lts(self):
-        dockerfile = (REPOSITORY_ROOT / "frontend" / "Dockerfile").read_text(encoding="utf-8")
-        from_lines = [line for line in dockerfile.splitlines() if line.startswith("FROM ")]
+    def test_root_dockerfile_is_the_only_tracked_container_build_surface(self):
+        tracked_dockerfiles = subprocess.run(
+            ["git", "ls-files", "*Dockerfile"],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            capture_output=True,
+            encoding="utf-8",
+        ).stdout.splitlines()
+        tracked_dockerfiles = [
+            path for path in tracked_dockerfiles if (REPOSITORY_ROOT / path).is_file()
+        ]
 
-        self.assertEqual(
-            [f"FROM {NODE_IMAGE} AS build-env", f"FROM {NODE_IMAGE}"],
-            from_lines,
+        self.assertEqual(["Dockerfile"], tracked_dockerfiles)
+        self.assertFalse((REPOSITORY_ROOT / "backend" / "entrypoint.sh").exists())
+
+        dependabot = (REPOSITORY_ROOT / ".github" / "dependabot.yml").read_text(
+            encoding="utf-8"
         )
+        self.assertEqual(1, dependabot.count('package-ecosystem: "docker"'))
+        self.assertRegex(
+            dependabot,
+            r'package-ecosystem: "docker"\n\s+directory: "/"',
+        )
+        self.assertRegex(
+            dependabot,
+            r'package-ecosystem: "npm"\n\s+directory: "/frontend"',
+        )
+
+    def test_root_supervisor_exception_is_single_and_instruction_scoped(self):
+        dockerfile = (REPOSITORY_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+        self.assertEqual(1, dockerfile.count("# trivy:ignore:DS-0002"))
+        self.assertIn(
+            "# trivy:ignore:DS-0002\nUSER root\n"
+            'ENTRYPOINT ["/entrypoint.sh"]',
+            dockerfile,
+        )
+        self.assertIn(
+            "# PID 1 needs root solely to create the configured nonzero PUID/PGID",
+            dockerfile,
+        )
+        self.assertIn("Both network workloads drop their", dockerfile)
+        self.assertIn("not an exception for privileged DFS access", dockerfile)
+
+    def test_container_identity_smoke_uses_the_container_pid_namespace(self):
+        smoke = (REPOSITORY_ROOT / "tests" / "test_entrypoint_container.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn('"/proc/$container_pid', smoke)
+        self.assertIn('docker exec -i', smoke)
+        self.assertIn('"/proc/1/status"', smoke)
+        self.assertIn('"/proc/1/task/1/children"', smoke)
+        self.assertIn('$2 " " $3 " " $4 " " $5', smoke)
 
     def test_frontend_package_and_lock_target_node_24_only(self):
         package = json.loads(
@@ -97,7 +144,7 @@ class RuntimeReleaseContractTests(unittest.TestCase):
         self.assertNotIn("node_modules/typed-css-modules", package_lock["packages"])
 
     def test_dockerfiles_have_no_floating_runtime_from_reference(self):
-        for relative_path in ("Dockerfile", "frontend/Dockerfile"):
+        for relative_path in ("Dockerfile",):
             dockerfile = (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8")
             with self.subTest(dockerfile=relative_path):
                 for line in dockerfile.splitlines():

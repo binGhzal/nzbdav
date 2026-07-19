@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { classifyBackendRequest } from "./request-policy";
+import {
+  classifyBackendRequest,
+  MAX_FRONTEND_ACTION_BODY_BYTES,
+  validateFrontendActionBodyFraming,
+} from "./request-policy";
 
 const proxy = (
   lane: "ui-admin" | "ui-view" | "protocol-sab" | "protocol-arr" | "protocol-webdav",
@@ -62,6 +66,15 @@ describe("classifyBackendRequest", () => {
       expect(classifyBackendRequest("GET", target))
         .toEqual(reject(404, "route_not_found"));
     });
+
+    it.each([
+      ["GET", "/protocol/api/"],
+      ["GET", "/protocol/api/arr/validation/"],
+      ["POST", "/protocol/api/arr/events/sonarr/"],
+    ])("rejects the non-exact trailing-slash API target %s %s", (method, target) => {
+      expect(classifyBackendRequest(method, target))
+        .toEqual(reject(404, "route_not_found"));
+    });
   });
 
   describe("path-scoped WebDAV", () => {
@@ -73,6 +86,7 @@ describe("classifyBackendRequest", () => {
       ["PROPFIND", "/protocol/content/Movies", "/content/Movies"],
       ["GET", "/protocol/content/My%20Movie/file.mkv", "/content/My%20Movie/file.mkv"],
       ["GET", "/protocol/content/%E6%98%A0%E7%94%BB/file.mkv", "/content/%E6%98%A0%E7%94%BB/file.mkv"],
+      ["GET", "/protocol/content/encoded%C2%80name.mkv", "/content/encoded%C2%80name.mkv"],
     ])("preserves %s %s while stripping only /protocol", (method, target, backendTarget) => {
       expect(classifyBackendRequest(method, target))
         .toEqual(proxy("protocol-webdav", backendTarget, false, false));
@@ -89,16 +103,28 @@ describe("classifyBackendRequest", () => {
     });
 
     it.each([
+      ["DELETE", "/protocol"],
+      ["PUT", "/protocol/README"],
+      ["DELETE", "/protocol/README"],
       ["PUT", "/protocol/content/movies/file.mkv"],
       ["PUT", "/protocol/nzbs/release.nzb"],
+      ["PUT", "/protocol/nzbs/movies/nested/release.nzb"],
+      ["DELETE", "/protocol/nzbs"],
+      ["DELETE", "/protocol/nzbs/movies"],
+      ["PUT", "/protocol/.ids/a/b/file.mkv"],
+      ["PUT", "/protocol/completed-symlinks/movies/file.mkv.rclonelink"],
       ["DELETE", "/protocol/.ids/a/b/file.mkv"],
       ["DELETE", "/protocol/content"],
+      ["DELETE", "/protocol/completed-symlinks"],
       ["COPY", "/protocol/content/movies/file.mkv"],
       ["MOVE", "/protocol/content/movies/file.mkv"],
       ["MKCOL", "/protocol/content/new"],
       ["PROPPATCH", "/protocol/content/movies"],
       ["LOCK", "/protocol/content/movies/file.mkv"],
       ["UNLOCK", "/protocol/content/movies/file.mkv"],
+      ["POST", "/protocol/content/movies/file.mkv"],
+      ["PATCH", "/protocol/content/movies/file.mkv"],
+      ["TRACE", "/protocol/content/movies/file.mkv"],
     ])("rejects unsupported WebDAV mutation %s %s before proxying", (method, target) => {
       expect(classifyBackendRequest(method, target)).toMatchObject({
         kind: "reject",
@@ -164,6 +190,16 @@ describe("classifyBackendRequest", () => {
         .toEqual(reject(404, "route_not_found"));
     });
 
+    it.each([
+      ["GET", "/api"],
+      ["POST", "/api"],
+      ["GET", "/api?mode=version"],
+      ["POST", "/api?mode=unknown"],
+    ])("never treats direct UI SAB target %s %s as a protocol lane", (method, target) => {
+      expect(classifyBackendRequest(method, target))
+        .toEqual(reject(404, "route_not_found"));
+    });
+
     it.each(["GET", "HEAD"])("keeps %s /view behind the frontend principal", (method) => {
       const target = "/view/content/movies/file.mkv?downloadKey=capability";
       expect(classifyBackendRequest(method, target))
@@ -180,6 +216,8 @@ describe("classifyBackendRequest", () => {
     });
 
     it.each([
+      "/view?downloadKey=capability",
+      "/view/?downloadKey=capability",
       "/view/content/file.mkv",
       "/view/content/file.mkv?extension=mkv",
       "/view/content/file.mkv?downloadKey=key&unexpected=true",
@@ -200,11 +238,14 @@ describe("classifyBackendRequest", () => {
       "/protocol/api%252Fget-config",
       "/protocol/content%5Csecret",
       "/protocol/content/%2e%2e/secret",
+      "/protocol/content/%252e%252e/secret",
       "/protocol/content/../secret",
       "/protocol//api",
       "/protocol/api/%",
       "/protocol/api/%00",
       "/protocol/api/line%0Abreak",
+      "/protocol/content/encoded%7Fname.mkv",
+      "/protocol/content/%25AB",
       "/%70rotocol/api",
     ])("returns stable 400 for ambiguous target %s", (target) => {
       expect(classifyBackendRequest("GET", target))
@@ -224,6 +265,14 @@ describe("classifyBackendRequest", () => {
     });
 
     it.each([
+      ["GET", "/protocol/private/file"],
+      ["PROPFIND", "/protocol/private"],
+    ])("returns 404 for unknown WebDAV root %s %s", (method, target) => {
+      expect(classifyBackendRequest(method, target))
+        .toEqual(reject(404, "route_not_found"));
+    });
+
+    it.each([
       "/apiary",
       "/contention/file",
       "/nzbs-old/file",
@@ -233,9 +282,73 @@ describe("classifyBackendRequest", () => {
       expect(classifyBackendRequest("GET", target)).toEqual({ kind: "frontend" });
     });
 
+    it.each([
+      ["PROPFIND", "/.ids/a"],
+      ["PUT", "/nzbs/movies/file.nzb"],
+      ["DELETE", "/nzbs/movies/file.nzb"],
+      ["DELETE", "/content/movie.mkv"],
+      ["DELETE", "/completed-symlinks/a"],
+    ])("never treats legacy root WebDAV surface %s %s as protocol ingress", (method, target) => {
+      expect(classifyBackendRequest(method, target)).toEqual({ kind: "frontend" });
+    });
+
     it.each(["TRACE", "CONNECT", "PATCH"])("rejects unsupported reserved-route method %s", (method) => {
       expect(classifyBackendRequest(method, "/protocol/api"))
         .toMatchObject({ kind: "reject", status: 405, code: "method_not_allowed" });
     });
+
+    it("enforces the raw request-target length boundary", () => {
+      const prefix = "/protocol/content/";
+      const maximum = prefix + "a".repeat(8192 - prefix.length);
+      const oversized = `${maximum}a`;
+
+      expect(classifyBackendRequest("GET", maximum))
+        .toEqual(proxy("protocol-webdav", maximum.slice("/protocol".length), false, false));
+      expect(classifyBackendRequest("GET", oversized))
+        .toEqual(reject(400, "invalid_request_target"));
+    });
+  });
+});
+
+describe("validateFrontendActionBodyFraming", () => {
+  it.each(["GET", "HEAD"])("does not impose action framing on %s", (method) => {
+    expect(validateFrontendActionBodyFraming(method, "/settings/update", [], ["chunked"]))
+      .toBe(true);
+  });
+
+  it.each([
+    ["POST", "/protocol/api", [], ["chunked"]],
+    ["POST", "/api/test-arr-connection", [], ["chunked"]],
+    ["PUT", "/protocol/nzbs/movies/release.nzb", [], ["chunked"]],
+    ["DELETE", "/protocol/content/movies/release.mkv", [], []],
+  ])("does not alter backend or protocol framing for %s %s", (method, target, lengths, encodings) => {
+    expect(validateFrontendActionBodyFraming(method, target, lengths, encodings)).toBe(true);
+  });
+
+  it.each([
+    ["POST", "/login", "0"],
+    ["POST", "/onboarding", "128"],
+    ["POST", "/settings/update", String(MAX_FRONTEND_ACTION_BODY_BYTES)],
+    ["DELETE", "/ordinary-ui-resource", "1"],
+  ])("accepts one bounded strict Content-Length for %s %s", (method, target, length) => {
+    expect(validateFrontendActionBodyFraming(method, target, [length], [])).toBe(true);
+  });
+
+  it.each([
+    [[], []],
+    [["1", "1"], []],
+    [["1"], ["chunked"]],
+    [["1"], ["identity"]],
+    [[""], []],
+    [["01"], []],
+    [["+1"], []],
+    [[" 1"], []],
+    [["1 "], []],
+    [["1.0"], []],
+    [["9007199254740992"], []],
+    [[String(MAX_FRONTEND_ACTION_BODY_BYTES + 1)], []],
+  ])("rejects ambiguous or unbounded frontend action framing %#", (lengths, encodings) => {
+    expect(validateFrontendActionBodyFraming("POST", "/settings/update", lengths, encodings))
+      .toBe(false);
   });
 });

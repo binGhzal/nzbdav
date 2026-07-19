@@ -12,7 +12,7 @@ import { PageSection } from "../page-section/page-section"
 import { DropdownOptions } from "~/routes/explore/dropdown-options/dropdown-options"
 import { ExportNzb, Remove } from "~/routes/explore/item-menu/item-menu"
 import { Pagination } from "../pagination/pagination"
-import { getHttpErrorMessage, readJsonObjectOrEmpty } from "~/utils/http-response"
+import { readHttpActionResult } from "~/utils/http-response"
 
 export type HistoryTableProps = {
     historySlots: PresentationHistorySlot[],
@@ -71,18 +71,14 @@ export function HistoryTable({
                 },
                 body: JSON.stringify({ nzo_ids: Array.from(nzo_ids) }),
             });
-            if (response.ok) {
-                const data = await readJsonObjectOrEmpty(response);
-                if (data.status === true) {
-                    onRemoved(nzo_ids);
-                    return;
-                }
-                setOperationError(typeof data.error === "string" ? data.error : "Failed to remove history items.");
-            } else {
-                setOperationError(`Failed to remove history items: ${await getHttpErrorMessage(response)}`);
+            const result = await readHttpActionResult(response);
+            if (result.success) {
+                onRemoved(nzo_ids);
+                return;
             }
-        } catch (error) {
-            setOperationError(`Failed to remove history items: ${error instanceof Error ? error.message : "unknown error"}.`);
+            setOperationError(`Failed to remove history items: ${result.error}`);
+        } catch {
+            setOperationError("Failed to remove history items: request failed.");
         }
         onIsRemovingChanged(nzo_ids, false);
     }, [historySlots, setIsConfirmingRemoval, setOperationError, onIsRemovingChanged, onRemoved]);
@@ -159,19 +155,15 @@ export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onR
             const url = withUrlBase('/api?mode=history&name=delete')
                 + `&value=${encodeURIComponent(slot.nzo_id)}`
                 + `&del_completed_files=${deleteCompletedFiles ? 1 : 0}`;
-            const response = await fetch(url);
-            if (response.ok) {
-                const data = await readJsonObjectOrEmpty(response);
-                if (data.status === true) {
-                    onRemoved(slot.nzo_id);
-                    return;
-                }
-                setOperationError(typeof data.error === "string" ? data.error : "Failed to remove history item.");
-            } else {
-                setOperationError(`Failed to remove history item: ${await getHttpErrorMessage(response)}`);
+            const response = await fetch(url, { method: 'POST' });
+            const result = await readHttpActionResult(response);
+            if (result.success) {
+                onRemoved(slot.nzo_id);
+                return;
             }
-        } catch (error) {
-            setOperationError(`Failed to remove history item: ${error instanceof Error ? error.message : "unknown error"}.`);
+            setOperationError(`Failed to remove history item: ${result.error}`);
+        } catch {
+            setOperationError("Failed to remove history item: request failed.");
         }
         onIsRemovingChanged(slot.nzo_id, false);
     }, [slot.nzo_id, setIsConfirmingRemoval, setOperationError, onIsRemovingChanged, onRemoved]);

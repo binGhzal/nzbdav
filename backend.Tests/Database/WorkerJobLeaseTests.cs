@@ -12,6 +12,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
+using NzbWebDAV.Security;
 using NzbWebDAV.Websocket;
 
 namespace backend.Tests.Database;
@@ -239,7 +240,7 @@ public sealed class WorkerJobLeaseTests
         Assert.Null(saved.LeaseOwner);
         Assert.Null(saved.LeaseToken);
         Assert.Equal(WorkerJob.FailureClass.Retryable, saved.FailureKind);
-        Assert.Equal("retry after transient failure", saved.LastError);
+        Assert.Equal(PublicDiagnosticContract.Message(PublicDiagnosticKind.WorkerFailure), saved.LastError);
         Assert.Equal(nextAttemptAt, saved.AvailableAt);
     }
 
@@ -817,7 +818,7 @@ public sealed class WorkerJobLeaseTests
             maxAttempts: 2);
 
         Assert.Equal(WorkerJob.JobStatus.Quarantined, secondLease.Status);
-        Assert.Equal("second failure", secondLease.LastError);
+        Assert.Equal(PublicDiagnosticContract.Message(PublicDiagnosticKind.WorkerFailure), secondLease.LastError);
         Assert.Null(secondLease.LeaseOwner);
         Assert.Null(secondLease.LeaseExpiresAt);
     }
@@ -2228,7 +2229,8 @@ public sealed class WorkerJobLeaseTests
     private sealed class RecordingWorkerJobCoordinator : IWorkerJobCoordinator
     {
         public Func<WorkerJob.JobKind, string, int, DateTimeOffset, CancellationToken,
-            Task<IReadOnlyList<WorkerLease>>>? LeaseHandler { get; init; }
+            Task<IReadOnlyList<WorkerLease>>>? LeaseHandler
+        { get; init; }
         public bool CompleteResult { get; init; } = true;
         public bool FailResult { get; init; } = true;
         public int CompleteExceptionsRemaining { get; set; }

@@ -1,7 +1,12 @@
 import WebSocket, { type WebSocketServer } from 'ws';
-import { isAuthenticated } from "../app/auth/authentication.server";
-import type { IncomingMessage } from 'http';
 import { createReconnectBackoff, parseTopicMessage } from "../app/utils/websocket-util";
+import {
+    FRONTEND_TOPIC_MODES,
+    MAX_FRONTEND_TOPIC_KEY_BYTES,
+    MAX_FRONTEND_TOPIC_MESSAGE_BYTES,
+    MAX_FRONTEND_TOPIC_MODE_BYTES,
+    MAX_FRONTEND_TOPICS,
+} from "./websocket-policy";
 
 type FrontendTopicSubscription = Record<string, string>;
 
@@ -17,17 +22,10 @@ function initializeWebsocketServer(wss: WebSocketServer) {
         () => clients.size > 0
     );
 
-    // authenticate new websocket sessions
-    wss.on("connection", async (ws: WebSocket, request: IncomingMessage) => {
+    // server.ts authenticates every upgrade before emitting this post-auth connection.
+    wss.on("connection", (ws: WebSocket) => {
         try {
-            // ensure user is logged in
-            if (!await isAuthenticated(request)) {
-                ws.close(1008, "Unauthorized");
-                return;
-            }
-
             clients.add(ws);
-            backendWebsocket.ensureConnected();
 
             // handle topic subscription
             ws.onmessage = (event: WebSocket.MessageEvent) => {
@@ -56,24 +54,40 @@ function initializeWebsocketServer(wss: WebSocketServer) {
                 websockets.delete(ws);
                 backendWebsocket.disconnectIfIdle();
             };
-        } catch (error) {
-            console.error("Error authenticating websocket session:", error);
+
+            backendWebsocket.ensureConnected();
+        } catch {
+            clients.delete(ws);
+            console.error("WebSocket initialization failed");
             ws.close(1011, "Internal server error");
-            return;
         }
     });
 }
 
-function parseFrontendTopicSubscription(rawMessage: string): FrontendTopicSubscription {
+export function parseFrontendTopicSubscription(rawMessage: string): FrontendTopicSubscription {
+    if (Buffer.byteLength(rawMessage, "utf8") > MAX_FRONTEND_TOPIC_MESSAGE_BYTES) {
+        throw new Error("Websocket topic subscription exceeded its byte bound");
+    }
     const topics = JSON.parse(rawMessage);
     if (!topics || typeof topics !== "object" || Array.isArray(topics)) {
         throw new Error("Expected websocket topic subscription object");
     }
 
-    const normalized: FrontendTopicSubscription = {};
-    for (const [topic, mode] of Object.entries(topics)) {
-        if (!topic || typeof mode !== "string") {
-            throw new Error("Expected websocket topic modes to be strings");
+    const entries = Object.entries(topics);
+    if (entries.length > MAX_FRONTEND_TOPICS) {
+        throw new Error("Websocket topic subscription exceeded its topic bound");
+    }
+    const normalized: FrontendTopicSubscription = Object.create(null) as FrontendTopicSubscription;
+    for (const [topic, mode] of entries) {
+        if (
+            !topic
+            || Buffer.byteLength(topic, "utf8") > MAX_FRONTEND_TOPIC_KEY_BYTES
+            || typeof mode !== "string"
+            || Buffer.byteLength(mode, "utf8") > MAX_FRONTEND_TOPIC_MODE_BYTES
+            || !Object.prototype.hasOwnProperty.call(FRONTEND_TOPIC_MODES, topic)
+            || FRONTEND_TOPIC_MODES[topic as keyof typeof FRONTEND_TOPIC_MODES] !== mode
+        ) {
+            throw new Error("Expected a supported websocket topic and mode pair");
         }
         normalized[topic] = mode;
     }
@@ -113,9 +127,9 @@ export function initializeWebsocketClient(
         const newSocket = new WebSocket(url);
         socket = newSocket;
 
-        newSocket.on('error', (error: Error) => {
+        newSocket.on('error', () => {
             if (!isCurrentSocket(newSocket)) return;
-            console.error('WebSocket error:', error.message);
+            console.error('Backend WebSocket transport error');
         });
 
         newSocket.onopen = () => {
@@ -150,7 +164,7 @@ export function initializeWebsocketClient(
 
         newSocket.onclose = (event: WebSocket.CloseEvent) => {
             if (!isCurrentSocket(newSocket)) return;
-            console.info(`WebSocket closed (code: ${event.code}, reason: ${event.reason})`);
+            console.info("Backend WebSocket closed", event.code);
             socket = null;
             if (shouldStayConnected()) scheduleReconnect();
         };

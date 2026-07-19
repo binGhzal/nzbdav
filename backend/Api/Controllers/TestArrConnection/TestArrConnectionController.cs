@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Config;
+using NzbWebDAV.Security;
 
 namespace NzbWebDAV.Api.Controllers.TestArrConnection;
 
@@ -22,14 +23,15 @@ public class TestArrConnectionController(ConfigManager? configManager = null) : 
                 Connected = apiInfo.Current?.Length > 0
             };
         }
-        catch (Exception e)
+        catch
         {
-            return new TestArrConnectionResponse
-            {
-                Status = true,
-                Connected = false,
-                Error = e.Message
-            };
+            return CompatibilityFailure(
+                PublicFailureContract.ArrConnectionFailure(),
+                new TestArrConnectionResponse
+                {
+                    Status = true,
+                    Connected = false
+                });
         }
     }
 

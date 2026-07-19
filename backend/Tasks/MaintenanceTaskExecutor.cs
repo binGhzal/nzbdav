@@ -35,30 +35,6 @@ public sealed class MaintenanceTaskExecutor(
                     .Execute(cancellationToken)
                     .ConfigureAwait(false);
                 return;
-            case MaintenanceRunKind.ConvertStrmToSymlinks:
-                await using (var dbContext = DavDatabaseContextRuntimeFactory.Create())
-                {
-                    await new StrmToSymlinksTask(
-                            configManager,
-                            new DavDatabaseClient(dbContext),
-                            websocketManager,
-                            report)
-                        .Execute(cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                return;
-            case MaintenanceRunKind.RecreateStrmFiles:
-                await using (var dbContext = DavDatabaseContextRuntimeFactory.Create())
-                {
-                    await new RecreateStrmFilesTask(
-                            configManager,
-                            new DavDatabaseClient(dbContext),
-                            websocketManager,
-                            report)
-                        .Execute(cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                return;
             default:
                 throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unsupported maintenance run kind.");
         }

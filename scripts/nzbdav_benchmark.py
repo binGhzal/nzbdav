@@ -23,6 +23,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from nzbdav_protocol_base import (
+    SAFE_PROTOCOL_BASE_ERROR,
+    normalize_nzbdav_protocol_base,
+)
+
 
 DEFAULT_OUTPUT_DIR = Path("artifacts/benchmarks")
 DEFAULT_RUNS = 5
@@ -32,6 +37,8 @@ DEFAULT_RANGE_PROBE_BYTES = 1 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 30.0
 TRANSPORT_HTTP = "http"
 TRANSPORT_FILESYSTEM = "filesystem"
+SAFE_PROTOCOL_PATH_ERROR = "NzbDAV protocol path is invalid."
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
 
 @dataclass(frozen=True)
@@ -94,9 +101,73 @@ def round_value(value: float | None) -> float | None:
 
 
 def join_url(base_url: str, path: str) -> str:
-    if urllib.parse.urlparse(path).scheme:
-        return path
-    return urllib.parse.urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+    return urllib.parse.urljoin(
+        base_url.rstrip("/") + "/",
+        _validated_protocol_path(path).lstrip("/"),
+    )
+
+
+def _validated_protocol_path(path: str) -> str:
+    if not isinstance(path, str) or not path or "\\" in path:
+        _invalid_protocol_path()
+    if any(character.isspace() for character in path) or _has_frontend_control_character(path):
+        _invalid_protocol_path()
+    try:
+        parsed = urllib.parse.urlsplit(path)
+    except (TypeError, ValueError, UnicodeError):
+        _invalid_protocol_path()
+    if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
+        _invalid_protocol_path()
+
+    raw_path = parsed.path
+    if "//" in raw_path:
+        _invalid_protocol_path()
+    raw_segments = raw_path.lstrip("/").split("/")
+    if not raw_segments or any(not segment for segment in raw_segments):
+        _invalid_protocol_path()
+    for raw_segment in raw_segments:
+        _decode_protocol_path_segment(raw_segment)
+    return raw_path
+
+
+def _decode_protocol_path_segment(raw_segment: str) -> str:
+    candidate = raw_segment
+    for _ in range(5):
+        index = 0
+        while index < len(candidate):
+            if candidate[index] != "%":
+                index += 1
+                continue
+            if (
+                index + 2 >= len(candidate)
+                or candidate[index + 1] not in _HEX_DIGITS
+                or candidate[index + 2] not in _HEX_DIGITS
+            ):
+                _invalid_protocol_path()
+            index += 3
+
+        try:
+            decoded = urllib.parse.unquote_to_bytes(candidate).decode("utf-8", errors="strict")
+        except (UnicodeError, ValueError):
+            _invalid_protocol_path()
+
+        if decoded in {".", ".."} or "/" in decoded or "\\" in decoded:
+            _invalid_protocol_path()
+        if _has_frontend_control_character(decoded):
+            _invalid_protocol_path()
+        if decoded == candidate or not re.search(r"%[0-9A-Fa-f]{2}", decoded):
+            return decoded
+        candidate = decoded
+
+    _invalid_protocol_path()
+
+
+def _invalid_protocol_path() -> None:
+    raise ValueError(SAFE_PROTOCOL_PATH_ERROR) from None
+
+
+def _has_frontend_control_character(value: str) -> bool:
+    return any(ord(character) <= 0x1F or ord(character) == 0x7F for character in value)
 
 
 def join_filesystem_path(mount_root: str | None, path: str) -> Path:
@@ -876,12 +947,43 @@ def rclone_cat_enabled(args: argparse.Namespace) -> bool:
     return bool(getattr(args, "rclone_cat", False))
 
 
+def prevalidate_benchmark_paths(args: argparse.Namespace) -> None:
+    effective_paths = [*args.paths, *args.fail_closed_paths]
+    if args.parallel_count > 1:
+        effective_paths.extend((args.parallel_paths or args.paths)[: args.parallel_count])
+
+    if args.transport == TRANSPORT_HTTP:
+        try:
+            for path in effective_paths:
+                _validated_protocol_path(path)
+        except ValueError:
+            raise SystemExit(SAFE_PROTOCOL_PATH_ERROR) from None
+        return
+
+    for path in effective_paths:
+        file_path = join_filesystem_path(args.mount_root, path)
+        if not args.mount_root and not file_path.is_absolute():
+            raise SystemExit("--mount-root is required for relative filesystem benchmark paths")
+
+
 def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
+    transport = args.transport
+    if args.base_url is not None:
+        try:
+            args.base_url = normalize_nzbdav_protocol_base(args.base_url)
+        except ValueError:
+            raise SystemExit(SAFE_PROTOCOL_BASE_ERROR) from None
+    elif transport == TRANSPORT_HTTP:
+        raise SystemExit(SAFE_PROTOCOL_BASE_ERROR) from None
+
+    paths = args.paths
+    if not paths:
+        raise SystemExit("At least one benchmark path is required")
+    prevalidate_benchmark_paths(args)
+
     include_rclone_cat = rclone_cat_enabled(args)
     headers = auth_headers(args.webdav_user, args.webdav_pass)
     rc_headers = auth_headers(args.rclone_rc_user, args.rclone_rc_pass)
-    paths = args.paths
-    transport = args.transport
     checks: list[dict[str, Any]] = []
     first_byte_samples: list[float] = []
     seek_samples: list[float] = []
@@ -889,17 +991,6 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     operation_samples: list[dict[str, Any]] = []
     resource_snapshots: list[dict[str, Any]] = []
     production_probes: dict[str, Any] = {}
-
-    if not paths:
-        raise SystemExit("At least one benchmark path is required")
-
-    if transport == TRANSPORT_HTTP and not args.base_url:
-        raise SystemExit("--base-url or NZBDAV_BENCH_BASE_URL is required for HTTP benchmark runs")
-
-    if transport == TRANSPORT_FILESYSTEM and not args.mount_root:
-        for path in paths:
-            if not urllib.parse.urlparse(path).scheme and not Path(path).is_absolute():
-                raise SystemExit("--mount-root is required for relative filesystem benchmark paths")
 
     for path in paths:
         head_result = probe_path(args, path, headers)
@@ -1026,7 +1117,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         }
 
     if args.parallel_count > 1:
-        parallel_paths = args.parallel_paths or paths
+        parallel_paths = (args.parallel_paths or paths)[: args.parallel_count]
         parallel_probe = run_parallel_range_probe(args, parallel_paths, headers, args.range_probe_bytes)
         if parallel_probe:
             production_probes["parallel_range"] = parallel_probe
@@ -1043,7 +1134,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "scenario": args.scenario,
         "inputs": {
             "transport": transport,
-            "base_url": redact_url(args.base_url) if args.base_url else None,
+            "nzbdav_protocol_base": args.base_url,
+            "base_url": args.base_url,
             "mount_root_configured": bool(args.mount_root),
             "paths": [redact_path(path) for path in paths],
             "runs": args.runs,
@@ -1437,9 +1529,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.getenv("NZBDAV_BENCH_TRANSPORT", TRANSPORT_HTTP),
         help="http measures WebDAV URLs; filesystem measures mounted paths through rclone or DFS",
     )
-    run_parser.add_argument("--base-url", default=os.getenv("NZBDAV_BENCH_BASE_URL"))
+    run_parser.add_argument(
+        "--base-url",
+        default=os.getenv("NZBDAV_BENCH_BASE_URL"),
+        help="NzbDAV protocol base URL ending in /protocol",
+    )
     run_parser.add_argument("--mount-root", default=os.getenv("NZBDAV_BENCH_MOUNT_ROOT"))
-    run_parser.add_argument("--path", action="append", default=[], help="WebDAV path or absolute URL; repeat or comma-separate")
+    run_parser.add_argument(
+        "--path",
+        action="append",
+        default=[],
+        help=(
+            "HTTP: logical suffix below the NzbDAV protocol base; filesystem: "
+            "mounted or absolute filesystem path; repeat or comma-separate"
+        ),
+    )
     run_parser.add_argument("--webdav-user", default=os.getenv("NZBDAV_BENCH_WEBDAV_USER"))
     run_parser.add_argument("--webdav-pass", default=os.getenv("NZBDAV_BENCH_WEBDAV_PASS"))
     run_parser.add_argument("--api-key", default=os.getenv("NZBDAV_BENCH_API_KEY"))

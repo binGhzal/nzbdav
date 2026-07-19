@@ -64,8 +64,8 @@ export function initializeQueueHistoryWebsocket(
 function parseJsonMessage<T>(message: string): T | null {
     try {
         return JSON.parse(message) as T;
-    } catch (error) {
-        console.warn("Ignored invalid websocket message body", error);
+    } catch {
+        console.warn("Ignored invalid websocket message body");
         return null;
     }
 }

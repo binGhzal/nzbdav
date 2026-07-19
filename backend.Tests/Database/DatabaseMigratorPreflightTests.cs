@@ -69,7 +69,7 @@ public sealed class DatabaseMigratorPreflightTests
 
         await DatabaseMigrator.MigrateAsync(context, cancellationToken: CancellationToken.None);
 
-        Assert.Equal(49, (await context.Database.GetAppliedMigrationsAsync()).Count());
+        Assert.Equal(48, (await context.Database.GetAppliedMigrationsAsync()).Count());
     }
 
     [Fact]

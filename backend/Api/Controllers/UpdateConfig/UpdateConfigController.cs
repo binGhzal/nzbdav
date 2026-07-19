@@ -17,6 +17,9 @@ public class UpdateConfigController(DavDatabaseClient dbClient, ConfigManager co
 
     private async Task<UpdateConfigResponse> UpdateConfig(UpdateConfigRequest request)
     {
+        if (request.ConfigItems.Any(item => RetiredV1ConfigPolicy.IsRetired(item.ConfigName)))
+            throw new BadHttpRequestException(RetiredV1ConfigPolicy.RetiredConfigMessage);
+
         if (request.ConfigItems.Any(item =>
                 TransferV3ReservedConfigPolicy.IsReserved(item.ConfigName)))
             throw new BadHttpRequestException(TransferV3ReservedConfigPolicy.ReservedConfigMessage);

@@ -144,9 +144,9 @@ public class WebsocketManager
             if (socket.State == WebSocketState.Open)
                 await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server shutting down", CancellationToken.None).ConfigureAwait(false);
         }
-        catch (Exception e)
+        catch (Exception)
         {
-            Log.Warning(e.Message);
+            Log.Warning("Websocket receive failed.");
         }
     }
 
@@ -204,9 +204,9 @@ public class WebsocketManager
             Log.Debug("Timed out sending message to websocket.");
             return false;
         }
-        catch (Exception e)
+        catch (Exception)
         {
-            Log.Debug($"Failed to send message to websocket. {e.Message}");
+            Log.Debug("Failed to send message to websocket.");
             return false;
         }
     }

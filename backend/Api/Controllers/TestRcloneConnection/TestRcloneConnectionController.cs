@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Clients.Rclone;
 using NzbWebDAV.Config;
+using NzbWebDAV.Security;
 
 namespace NzbWebDAV.Api.Controllers.TestRcloneConnection;
 
@@ -23,26 +24,29 @@ public class TestRcloneConnectionController(ConfigManager? configManager = null)
                     request.CancellationToken)
                 .ConfigureAwait(false);
 
-            return new TestRcloneConnectionResponse
+            var response = new TestRcloneConnectionResponse
             {
                 Status = true,
                 Connected = result.Success,
-                Error = result.Error,
                 ErrorCategory = result.Success
                     ? null
                     : RcloneClient.GetSafeFailureCategory(result),
                 ResponseStatusCode = result.ResponseStatusCode
             };
+            return result.Success
+                ? response
+                : CompatibilityFailure(PublicFailureContract.RcloneConnectionFailure(), response);
         }
         catch
         {
-            return new TestRcloneConnectionResponse
-            {
-                Status = true,
-                Connected = false,
-                Error = "Rclone RC request failed.",
-                ErrorCategory = "rclone_rc_request_failed"
-            };
+            return CompatibilityFailure(
+                PublicFailureContract.RcloneConnectionFailure(),
+                new TestRcloneConnectionResponse
+                {
+                    Status = true,
+                    Connected = false,
+                    ErrorCategory = "rclone_rc_request_failed"
+                });
         }
     }
 

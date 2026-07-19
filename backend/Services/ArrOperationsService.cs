@@ -5,6 +5,7 @@ using NzbWebDAV.Api.Controllers.Arr;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Security;
 
 namespace NzbWebDAV.Services;
 
@@ -130,13 +131,22 @@ public sealed class ArrOperationsService(ConfigManager configManager, TimeProvid
         if (!string.IsNullOrWhiteSpace(search))
         {
             var term = search.Trim();
+            var isLegacyNetworkFailureAlias = term.Equals("network", StringComparison.OrdinalIgnoreCase);
+            var canonicalSearchNudgeFailure =
+                PublicDiagnosticContract.Message(PublicDiagnosticKind.SearchNudgeFailure);
+            var canonicalFailureMatchesTerm = canonicalSearchNudgeFailure.Contains(
+                term,
+                StringComparison.OrdinalIgnoreCase);
             query = query.Where(x =>
                 x.InstanceKey.Contains(term)
                 || x.InstanceHost.Contains(term)
                 || x.CommandName.Contains(term)
                 || x.TargetsJson.Contains(term)
                 || x.ReasonsJson.Contains(term)
-                || (x.Error != null && x.Error.Contains(term)));
+                || (canonicalFailureMatchesTerm && x.Error == canonicalSearchNudgeFailure)
+                || (isLegacyNetworkFailureAlias
+                    && x.Status == "failed"
+                    && x.Error == canonicalSearchNudgeFailure));
         }
 
         var commands = await query
@@ -503,7 +513,9 @@ public sealed class ArrOperationsService(ConfigManager configManager, TimeProvid
             Status = command.Status,
             Score = command.Score,
             Reasons = DeserializeList<string>(command.ReasonsJson),
-            Error = command.Error,
+            Error = PublicDiagnosticContract.FromOptional(
+                command.Error,
+                PublicDiagnosticKind.SearchNudgeFailure),
             CreatedAt = command.CreatedAt,
             CompletedAt = command.CompletedAt,
             NextAllowedAt = command.NextAllowedAt

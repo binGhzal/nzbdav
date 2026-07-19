@@ -15,6 +15,7 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.PostProcessors;
+using NzbWebDAV.Security;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -39,7 +40,7 @@ public class HealthCheckService : BackgroundService
     private const int MaxDeduplicatedVerificationSegments = 20_000;
     private const int MaxProviderVerificationBatchSegments = 2_000;
     private const string PostDownloadVerificationQuarantineReason =
-        "Confirmed missing articles after download; automatic repair is disabled and operator review is required.";
+        PublicDiagnosticContract.ConfirmedMissingAfterDownloadOperatorReview;
 
     [Flags]
     public enum VerificationOutcome
@@ -567,7 +568,8 @@ public class HealthCheckService : BackgroundService
         string reason,
         CancellationToken ct)
     {
-        var boundedReason = reason.Length <= 1024 ? reason : reason[..1024];
+        var postDownloadVerificationFailure = PublicDiagnosticContract.PostDownloadVerificationFailure;
+        var arrImportFailure = PublicDiagnosticContract.Message(PublicDiagnosticKind.ArrImportFailure);
         var historyItemIds = await dbContext.HistoryItems
             .AsNoTracking()
             .Where(x => x.DownloadDirId == target.Id
@@ -604,10 +606,10 @@ public class HealthCheckService : BackgroundService
                             && x.DownloadStatus == HistoryItem.DownloadStatusOption.Completed)
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(x => x.DownloadStatus, HistoryItem.DownloadStatusOption.Failed)
-                    .SetProperty(x => x.FailMessage, boundedReason), ct)
+                    .SetProperty(x => x.FailMessage, postDownloadVerificationFailure), ct)
                 .ConfigureAwait(false);
             await importReceipts
-                .MarkVerificationQuarantineAsync(historyItemId, now, boundedReason, ct)
+                .MarkVerificationQuarantineAsync(historyItemId, now, reason, ct)
                 .ConfigureAwait(false);
             await dbContext.ArrImportCommands
                 .Where(x => x.HistoryItemId == historyItemId
@@ -620,7 +622,7 @@ public class HealthCheckService : BackgroundService
                     .SetProperty(x => x.LeaseToken, (Guid?)null)
                     .SetProperty(x => x.LeaseExpiresAt, (DateTimeOffset?)null)
                     .SetProperty(x => x.CompletedAt, now)
-                    .SetProperty(x => x.LastError, boundedReason), ct)
+                    .SetProperty(x => x.LastError, arrImportFailure), ct)
                 .ConfigureAwait(false);
         }
     }
@@ -1073,8 +1075,8 @@ public class HealthCheckService : BackgroundService
 
             var utcNow = DateTimeOffset.UtcNow;
             var message = automaticRepairEnabled
-                ? "File had missing articles. Queued automatic repair."
-                : "File had missing articles. Automatic repair is disabled; operator review is required.";
+                ? PublicDiagnosticContract.HealthMissingRepairQueued
+                : PublicDiagnosticContract.HealthMissingReviewRequired;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = utcNow + AutoRepairRetryDelay;
             var healthResult = new HealthCheckResult()
@@ -1700,8 +1702,8 @@ public class HealthCheckService : BackgroundService
     {
         var utcNow = DateTimeOffset.UtcNow;
         var message = automaticRepairEnabled
-            ? "File metadata is missing or contains no article segments. Queued automatic repair."
-            : "File metadata is missing or contains no article segments. Automatic repair is disabled; operator review is required.";
+            ? PublicDiagnosticContract.HealthMetadataMissingRepairQueued
+            : PublicDiagnosticContract.HealthMetadataMissingReviewRequired;
         davItem.LastHealthCheck = utcNow;
         davItem.NextHealthCheck = utcNow + AutoRepairRetryDelay;
         var healthResult = new HealthCheckResult()
@@ -1752,11 +1754,7 @@ public class HealthCheckService : BackgroundService
     )
     {
         var utcNow = DateTimeOffset.UtcNow;
-        var message = string.Join(" ", [
-            "File metadata could not be read because the blob store is temporarily unavailable.",
-            "Will retry before automatic repair.",
-            string.IsNullOrWhiteSpace(error) ? "" : $"Error: {error}"
-        ]).Trim();
+        var message = PublicDiagnosticContract.HealthMetadataUnavailable;
         davItem.LastHealthCheck = utcNow;
         davItem.NextHealthCheck = utcNow + ProviderErrorRetryDelay;
         var healthResult = new HealthCheckResult()
@@ -1822,15 +1820,12 @@ public class HealthCheckService : BackgroundService
                     ct: ct)
                 .ConfigureAwait(false);
         }
-        var message = automaticRepairEnabled
-            ? $"File had {checkBatch.Missing} missing articles. Queued automatic repair."
-            : $"File had {checkBatch.Missing} missing articles. Automatic repair is disabled; operator review is required.";
         await MarkRepairEntryAsync(
                 dbClient,
                 repairRunId,
                 davItem,
                 RepairEntryHealth.RepairEntryState.Missing,
-                message,
+                healthResult.Message,
                 ct)
             .ConfigureAwait(false);
         if (!deferSave
@@ -1850,14 +1845,15 @@ public class HealthCheckService : BackgroundService
     {
         var utcNow = DateTimeOffset.UtcNow;
         var healthResult = ApplyUnknownVerificationPolicy(davItem, dbClient, checkBatch, utcNow);
+        var providerUnavailable = checkBatch.ProviderErrors > 0;
         await MarkRepairEntryAsync(
                 dbClient,
                 repairRunId,
                 davItem,
-                checkBatch.ProviderErrors > 0
+                providerUnavailable
                     ? RepairEntryHealth.RepairEntryState.ProviderError
                     : RepairEntryHealth.RepairEntryState.Unknown,
-                $"Verification inconclusive: provider_errors={checkBatch.ProviderErrors}, unknown={checkBatch.Unknown}.",
+                healthResult.Message,
                 ct)
             .ConfigureAwait(false);
         if (await SaveHealthResultsForObservableCommitAsync(dbClient, ct).ConfigureAwait(false))
@@ -1937,8 +1933,8 @@ public class HealthCheckService : BackgroundService
             Result = HealthCheckResult.HealthResult.Unhealthy,
             RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
             Message = automaticRepairEnabled
-                ? $"File had {checkBatch.Missing} missing articles. Queued automatic repair."
-                : $"File had {checkBatch.Missing} missing articles. Automatic repair is disabled; operator review is required."
+                ? PublicDiagnosticContract.HealthMissingRepairQueued
+                : PublicDiagnosticContract.HealthMissingReviewRequired
         };
         var storedResult = onResult?.Invoke(result) ?? result;
         dbClient.Ctx.HealthCheckResults.Add(storedResult);
@@ -1964,11 +1960,9 @@ public class HealthCheckService : BackgroundService
             CreatedAt = utcNow,
             Result = HealthCheckResult.HealthResult.Unhealthy,
             RepairStatus = HealthCheckResult.RepairAction.None,
-            Message = string.Join(" ", [
-                "File verification could not prove articles are missing.",
-                $"checked={checkBatch.Checked}, provider_errors={checkBatch.ProviderErrors}, unknown={checkBatch.Unknown}.",
-                "Will retry before automatic repair."
-            ])
+            Message = checkBatch.ProviderErrors > 0
+                ? PublicDiagnosticContract.HealthProviderUnavailable
+                : PublicDiagnosticContract.HealthVerificationInconclusive
         };
         var storedResult = onResult?.Invoke(result) ?? result;
         dbClient.Ctx.HealthCheckResults.Add(storedResult);
@@ -2348,12 +2342,12 @@ public class HealthCheckService : BackgroundService
 
             // if the unhealthy item is unlinked/orphaned,
             // then we can simply delete it.
-            var symlinkOrStrmPath = OrganizedLinksUtil.GetLink(davItem, _configManager);
-            if (symlinkOrStrmPath == null)
+            var symlinkPath = OrganizedLinksUtil.GetLink(davItem, _configManager);
+            if (symlinkPath == null)
             {
                 var message = string.Join(" ", [
                     "File had missing articles.",
-                    "Could not find corresponding symlink or strm-file within Library Dir.",
+                    "Could not find corresponding symlink within Library Dir.",
                     "Deleted file."
                 ]);
                 dbClient.Ctx.Items.Remove(davItem);
@@ -2381,26 +2375,21 @@ public class HealthCheckService : BackgroundService
 
             // if the unhealthy item is linked within the organized media-library
             // then we must find the corresponding arr instance and trigger a new search.
-            var linkType = symlinkOrStrmPath.ToLower().EndsWith("strm") ? "strm-file" : "symlink";
             var arrErrors = new List<string>();
             var matchingArrHosts = new List<string>();
             foreach (var arrClient in _configManager.GetArrConfig().GetArrClients())
             {
                 var rootFolders = await GetArrRootFolders(arrClient, arrErrors, ct).ConfigureAwait(false);
-                if (!rootFolders.Any(x => IsPathInsideRoot(symlinkOrStrmPath, x.Path))) continue;
+                if (!rootFolders.Any(x => IsPathInsideRoot(symlinkPath, x.Path))) continue;
                 matchingArrHosts.Add(arrClient.Host);
 
                 // if we found a corresponding arr instance,
                 // then remove and search.
                 try
                 {
-                    if (await arrClient.RemoveAndSearch(symlinkOrStrmPath, ct).ConfigureAwait(false))
+                    if (await arrClient.RemoveAndSearch(symlinkPath, ct).ConfigureAwait(false))
                     {
-                        var message = string.Join(" ", [
-                            "File had missing articles.",
-                            $"Corresponding {linkType} found within Library Dir.",
-                            $"Triggered new Arr search through `{arrClient.Host}`."
-                        ]);
+                        var message = PublicDiagnosticContract.RepairSearchInitiated;
                         dbClient.Ctx.Items.Remove(davItem);
                         dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
                         {
@@ -2438,7 +2427,7 @@ public class HealthCheckService : BackgroundService
                 : "Could not find a configured Arr root folder for this link.";
             var needsActionMessage = string.Join(" ", [
                 "File had missing articles.",
-                $"Corresponding {linkType} found within Library Dir.",
+                "Corresponding symlink found within Library Dir.",
                 repairFailureMessage,
                 "Left the webdav-file and link in place and will retry automatic repair.",
                 arrErrorText

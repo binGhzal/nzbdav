@@ -391,8 +391,8 @@ function ProviderModal({ show, provider, pipeliningMasterEnabled, onClose, onSav
             } else {
                 setTestError(`Connection test failed: ${await getHttpErrorMessage(response)}`);
             }
-        } catch (error) {
-            setTestError("Network error: " + (error instanceof Error ? error.message : "Unknown error"));
+        } catch {
+            setTestError("Connection test failed: request failed.");
         } finally {
             setIsTestingConnection(false);
         }

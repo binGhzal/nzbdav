@@ -32,30 +32,30 @@ public class LidarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     public Task SearchArtistAsync(int artistId, CancellationToken ct = default) =>
         CommandAsync(new { name = "ArtistSearch", artistId }, ct);
 
-    public override async Task<bool> RemoveAndSearch(string symlinkOrStrmPath, CancellationToken ct = default)
+    public override async Task<bool> RemoveAndSearch(string symlinkPath, CancellationToken ct = default)
     {
-        var mediaIds = await GetMediaIds(symlinkOrStrmPath, ct).ConfigureAwait(false);
+        var mediaIds = await GetMediaIds(symlinkPath, ct).ConfigureAwait(false);
         if (mediaIds == null) return false;
 
         if (await DeleteTrackFile(mediaIds.Value.trackFileId, ct).ConfigureAwait(false) != HttpStatusCode.OK)
-            throw new Exception($"Failed to delete track file `{symlinkOrStrmPath}` from Lidarr instance `{Host}`.");
+            throw new Exception($"Failed to delete track file `{symlinkPath}` from Lidarr instance `{Host}`.");
 
         await SearchArtistAsync(mediaIds.Value.artistId, ct).ConfigureAwait(false);
         return true;
     }
 
-    private async Task<(int trackFileId, int artistId)?> GetMediaIds(string symlinkOrStrmPath, CancellationToken ct)
+    private async Task<(int trackFileId, int artistId)?> GetMediaIds(string symlinkPath, CancellationToken ct)
     {
         // if track-file-id is cached, verify and return it
-        if (TrackFilePathToTrackFileIdCache.TryGetValue(symlinkOrStrmPath, out var cachedTrackFileId))
+        if (TrackFilePathToTrackFileIdCache.TryGetValue(symlinkPath, out var cachedTrackFileId))
         {
             var trackFile = await GetTrackFile(cachedTrackFileId, ct).ConfigureAwait(false);
-            if (trackFile.Path == symlinkOrStrmPath)
+            if (trackFile.Path == symlinkPath)
                 return (cachedTrackFileId, trackFile.ArtistId);
         }
 
         // find the artist whose root path is a prefix of the given file path
-        var artistId = await GetArtistId(symlinkOrStrmPath, ct).ConfigureAwait(false);
+        var artistId = await GetArtistId(symlinkPath, ct).ConfigureAwait(false);
         if (artistId == null) return null;
 
         // scan all track files for that artist and populate the cache
@@ -64,17 +64,17 @@ public class LidarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         {
             if (trackFile.Path != null)
                 TrackFilePathToTrackFileIdCache[trackFile.Path] = trackFile.Id;
-            if (trackFile.Path == symlinkOrStrmPath)
+            if (trackFile.Path == symlinkPath)
                 result = trackFile.Id;
         }
 
         return result == null ? null : (result.Value, artistId.Value);
     }
 
-    private async Task<int?> GetArtistId(string symlinkOrStrmPath, CancellationToken ct)
+    private async Task<int?> GetArtistId(string symlinkPath, CancellationToken ct)
     {
         // check cache first using all parent directories
-        var cachedArtistId = PathUtil.GetAllParentDirectories(symlinkOrStrmPath)
+        var cachedArtistId = PathUtil.GetAllParentDirectories(symlinkPath)
             .Where(p => ArtistPathToArtistIdCache.ContainsKey(p))
             .Select(p => ArtistPathToArtistIdCache[p])
             .Select(id => (int?)id)
@@ -83,7 +83,7 @@ public class LidarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         if (cachedArtistId != null)
         {
             var artist = await GetArtist(cachedArtistId.Value, ct).ConfigureAwait(false);
-            if (artist.Path != null && symlinkOrStrmPath.StartsWith(artist.Path))
+            if (artist.Path != null && symlinkPath.StartsWith(artist.Path))
                 return cachedArtistId;
         }
 
@@ -93,7 +93,7 @@ public class LidarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         {
             if (artist.Path != null)
                 ArtistPathToArtistIdCache[artist.Path] = artist.Id;
-            if (artist.Path != null && symlinkOrStrmPath.StartsWith(artist.Path))
+            if (artist.Path != null && symlinkPath.StartsWith(artist.Path))
                 result = artist.Id;
         }
 

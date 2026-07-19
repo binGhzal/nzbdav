@@ -9,104 +9,7 @@ namespace backend.Tests.Utils;
 
 public sealed class OrganizedLinksUtilTests
 {
-    [Fact]
-    public void GetLibraryDavItemLinks_SkipsMalformedStrmUrls()
-    {
-        var libraryRoot = CreateTempDirectory();
-        try
-        {
-            var validId = Guid.NewGuid();
-            File.WriteAllText(Path.Join(libraryRoot, "Broken.strm"), "not a url");
-            File.WriteAllText(
-                Path.Join(libraryRoot, "Valid.strm"),
-                $"http://localhost:3000/view/.ids/{validId}.mkv?downloadKey=test&extension=mkv");
-            var configManager = CreateConfigManager(libraryRoot);
-
-            var links = OrganizedLinksUtil.GetLibraryDavItemLinks(configManager).ToList();
-
-            var link = Assert.Single(links);
-            Assert.Equal(validId, link.DavItemId);
-        }
-        finally
-        {
-            Directory.Delete(libraryRoot, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void GetLibraryDavItemLinks_SkipsMalformedDavItemIds()
-    {
-        var libraryRoot = CreateTempDirectory();
-        try
-        {
-            var validId = Guid.NewGuid();
-            File.WriteAllText(
-                Path.Join(libraryRoot, "Broken.strm"),
-                "http://localhost:3000/view/.ids/not-a-guid.mkv?downloadKey=test&extension=mkv");
-            File.WriteAllText(
-                Path.Join(libraryRoot, "Valid.strm"),
-                $"http://localhost:3000/view/.ids/{validId}.mkv?downloadKey=test&extension=mkv");
-            var configManager = CreateConfigManager(libraryRoot);
-
-            var links = OrganizedLinksUtil.GetLibraryDavItemLinks(configManager).ToList();
-
-            var link = Assert.Single(links);
-            Assert.Equal(validId, link.DavItemId);
-        }
-        finally
-        {
-            Directory.Delete(libraryRoot, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void GetLibraryDavItemLinks_MapsStrmUrlsBehindUrlBase()
-    {
-        var libraryRoot = CreateTempDirectory();
-        try
-        {
-            var validId = Guid.NewGuid();
-            File.WriteAllText(
-                Path.Join(libraryRoot, "Valid.strm"),
-                $"http://localhost:3000/nzbdav/view/.ids/{validId}.mkv?downloadKey=test&extension=mkv");
-            var configManager = CreateConfigManager(libraryRoot);
-
-            var links = OrganizedLinksUtil.GetLibraryDavItemLinks(configManager).ToList();
-
-            var link = Assert.Single(links);
-            Assert.Equal(validId, link.DavItemId);
-        }
-        finally
-        {
-            Directory.Delete(libraryRoot, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void GetLibraryDavItemLinks_UsesFirstStrmLine()
-    {
-        var libraryRoot = CreateTempDirectory();
-        try
-        {
-            var validId = Guid.NewGuid();
-            File.WriteAllText(
-                Path.Join(libraryRoot, "Valid.strm"),
-                string.Join(Environment.NewLine, [
-                    $"http://localhost:3000/view/.ids/{validId}.mkv?downloadKey=test&extension=mkv",
-                    "partial trailing write that should not be part of the target url"
-                ]));
-            var configManager = CreateConfigManager(libraryRoot);
-
-            var links = OrganizedLinksUtil.GetLibraryDavItemLinks(configManager).ToList();
-
-            var link = Assert.Single(links);
-            Assert.Equal(validId, link.DavItemId);
-        }
-        finally
-        {
-            Directory.Delete(libraryRoot, recursive: true);
-        }
-    }
+    private const string MountDir = "/mnt/nzbdav";
 
     [Fact]
     public void GetLibraryDavItemLinks_SkipsMalformedSymlinkDavItemIds()
@@ -118,9 +21,9 @@ public sealed class OrganizedLinksUtilTests
             File.CreateSymbolicLink(
                 Path.Join(libraryRoot, "Broken.mkv"),
                 "/mnt/nzbdav/.ids/not-a-guid.mkv");
-            File.WriteAllText(
-                Path.Join(libraryRoot, "Valid.strm"),
-                $"http://localhost:3000/view/.ids/{validId}.mkv?downloadKey=test&extension=mkv");
+            File.CreateSymbolicLink(
+                Path.Join(libraryRoot, "Valid.mkv"),
+                DatabaseStoreSymlinkFile.GetTargetPath(validId, MountDir));
             var configManager = CreateConfigManager(libraryRoot);
 
             var links = OrganizedLinksUtil.GetLibraryDavItemLinks(configManager).ToList();
@@ -147,7 +50,7 @@ public sealed class OrganizedLinksUtilTests
                 $"/mnt/nzbdav-other/.ids/{outsideId}.mkv");
             File.CreateSymbolicLink(
                 Path.Join(libraryRoot, "Valid.mkv"),
-                $"/mnt/nzbdav/.ids/{validId}.mkv");
+                DatabaseStoreSymlinkFile.GetTargetPath(validId, MountDir));
             var configManager = CreateConfigManager(libraryRoot);
 
             var links = OrganizedLinksUtil.GetLibraryDavItemLinks(configManager).ToList();
@@ -164,14 +67,18 @@ public sealed class OrganizedLinksUtilTests
     [Fact]
     public void GetLibraryDavItemLinks_MapsRelativeIdsSymlinkTargets()
     {
-        var libraryRoot = CreateTempDirectory();
+        var testRoot = CreateTempDirectory();
         try
         {
+            var mountDir = Path.Join(testRoot, "mount");
+            var libraryRoot = Path.Join(mountDir, "library");
+            Directory.CreateDirectory(libraryRoot);
             var validId = Guid.NewGuid();
-            var relativeTarget = "../" + DatabaseStoreSymlinkFile.GetTargetPath(validId, '/');
             var symlinkPath = Path.Join(libraryRoot, "Relative.mkv");
+            var absoluteTarget = DatabaseStoreSymlinkFile.GetTargetPath(validId, mountDir);
+            var relativeTarget = Path.GetRelativePath(Path.GetDirectoryName(symlinkPath)!, absoluteTarget);
             File.CreateSymbolicLink(symlinkPath, relativeTarget);
-            var configManager = CreateConfigManager(libraryRoot);
+            var configManager = CreateConfigManager(libraryRoot, mountDir);
 
             var links = OrganizedLinksUtil.GetLibraryDavItemLinks(configManager).ToList();
 
@@ -181,7 +88,97 @@ public sealed class OrganizedLinksUtilTests
         }
         finally
         {
+            Directory.Delete(testRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void GetLibraryDavItemLinks_RejectsIdsDirectoryPrefixConfusion()
+    {
+        var libraryRoot = CreateTempDirectory();
+        try
+        {
+            var id = Guid.NewGuid();
+            File.CreateSymbolicLink(
+                Path.Join(libraryRoot, "Prefix-confusion.mkv"),
+                Path.Join(MountDir, ".ids-evil", id.ToString("D")));
+
+            var links = OrganizedLinksUtil.GetLibraryDavItemLinks(CreateConfigManager(libraryRoot));
+
+            Assert.Empty(links);
+        }
+        finally
+        {
             Directory.Delete(libraryRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void GetLibraryDavItemLinks_RejectsTraversalOutsideIdsDirectory()
+    {
+        var libraryRoot = CreateTempDirectory();
+        try
+        {
+            var id = Guid.NewGuid();
+            File.CreateSymbolicLink(
+                Path.Join(libraryRoot, "Traversal.mkv"),
+                Path.Join(MountDir, ".ids", "..", "decoy", id.ToString("D")));
+
+            var links = OrganizedLinksUtil.GetLibraryDavItemLinks(CreateConfigManager(libraryRoot));
+
+            Assert.Empty(links);
+        }
+        finally
+        {
+            Directory.Delete(libraryRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void GetLibraryDavItemLinks_RejectsWrongIdsShardForGuid()
+    {
+        var libraryRoot = CreateTempDirectory();
+        try
+        {
+            var id = Guid.NewGuid();
+            File.CreateSymbolicLink(
+                Path.Join(libraryRoot, "Wrong-shard.mkv"),
+                Path.Join(MountDir, ".ids", "w", "r", "o", "n", "g", id.ToString("D")));
+
+            var links = OrganizedLinksUtil.GetLibraryDavItemLinks(CreateConfigManager(libraryRoot));
+
+            Assert.Empty(links);
+        }
+        finally
+        {
+            Directory.Delete(libraryRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void GetLibraryDavItemLinks_RejectsRelativeIdsDecoyOutsideMount()
+    {
+        var testRoot = CreateTempDirectory();
+        try
+        {
+            var mountDir = Path.Join(testRoot, "mount");
+            var libraryRoot = Path.Join(testRoot, "library");
+            Directory.CreateDirectory(mountDir);
+            Directory.CreateDirectory(libraryRoot);
+            var id = Guid.NewGuid();
+            var symlinkPath = Path.Join(libraryRoot, "Relative-decoy.mkv");
+            File.CreateSymbolicLink(
+                symlinkPath,
+                Path.Join("..", ".ids", "decoy", id.ToString("D")));
+
+            var links = OrganizedLinksUtil.GetLibraryDavItemLinks(
+                CreateConfigManager(libraryRoot, mountDir));
+
+            Assert.Empty(links);
+        }
+        finally
+        {
+            Directory.Delete(testRoot, recursive: true);
         }
     }
 
@@ -194,14 +191,12 @@ public sealed class OrganizedLinksUtilTests
             ClearCache();
             var targetId = Guid.NewGuid();
             var unrelatedId = Guid.NewGuid();
-            var targetPath = Path.Join(libraryRoot, "000-target.strm");
-            var unrelatedPath = Path.Join(libraryRoot, "999-unrelated.strm");
-            File.WriteAllText(
-                targetPath,
-                $"http://localhost:3000/view/.ids/{targetId}.mkv?downloadKey=test&extension=mkv");
-            File.WriteAllText(
+            var targetPath = Path.Join(libraryRoot, "000-target.mkv");
+            var unrelatedPath = Path.Join(libraryRoot, "999-unrelated.mkv");
+            File.CreateSymbolicLink(targetPath, DatabaseStoreSymlinkFile.GetTargetPath(targetId, MountDir));
+            File.CreateSymbolicLink(
                 unrelatedPath,
-                $"http://localhost:3000/view/.ids/{unrelatedId}.mkv?downloadKey=test&extension=mkv");
+                DatabaseStoreSymlinkFile.GetTargetPath(unrelatedId, MountDir));
             var configManager = CreateConfigManager(libraryRoot);
             var davItem = new DavItem { Id = targetId };
 
@@ -227,10 +222,8 @@ public sealed class OrganizedLinksUtilTests
         {
             ClearCache();
             var targetId = Guid.NewGuid();
-            var stalePath = Path.Join(oldLibraryRoot, "Movie.strm");
-            File.WriteAllText(
-                stalePath,
-                $"http://localhost:3000/view/.ids/{targetId}.mkv?downloadKey=test&extension=mkv");
+            var stalePath = Path.Join(oldLibraryRoot, "Movie.mkv");
+            File.CreateSymbolicLink(stalePath, DatabaseStoreSymlinkFile.GetTargetPath(targetId, MountDir));
             GetCache()[targetId] = stalePath;
             var configManager = CreateConfigManager(currentLibraryRoot);
             var davItem = new DavItem { Id = targetId };
@@ -247,12 +240,12 @@ public sealed class OrganizedLinksUtilTests
         }
     }
 
-    private static ConfigManager CreateConfigManager(string libraryRoot)
+    private static ConfigManager CreateConfigManager(string libraryRoot, string mountDir = MountDir)
     {
         var configManager = new ConfigManager();
         configManager.UpdateValues([
             new ConfigItem { ConfigName = "media.library-dir", ConfigValue = libraryRoot },
-            new ConfigItem { ConfigName = "rclone.mount-dir", ConfigValue = "/mnt/nzbdav" }
+            new ConfigItem { ConfigName = "rclone.mount-dir", ConfigValue = mountDir }
         ]);
         return configManager;
     }

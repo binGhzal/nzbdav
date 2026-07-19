@@ -85,7 +85,7 @@ public sealed class MaintenanceRunTransitionTests
         var run = new MaintenanceRun
         {
             Id = Guid.NewGuid(),
-            Kind = MaintenanceRunKind.RecreateStrmFiles,
+            Kind = MaintenanceRunKind.RemoveUnlinkedFiles,
             Status = MaintenanceRunStatus.Running,
             ActiveSlot = 1,
             RequestedBy = "manual",

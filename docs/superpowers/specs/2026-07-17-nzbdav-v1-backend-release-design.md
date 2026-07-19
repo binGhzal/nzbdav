@@ -19,7 +19,8 @@ NZBDav V1 is a Docker-first, clean-install-only release with:
 - no in-place upgrade promise from any pre-V1 tag;
 - no PostgreSQL, Transfer-v3 Phase 4, split-role, multi-host, or multi-owner
   runtime reachability;
-- no full visual rebrand until the backend release gate is completely green;
+- no full visual rebrand until Task 10 reaches GO and the user reviews the
+  complete backend verification and residual-risk report;
 - no user-facing frontend or rebrand implementation before its design is
   created and approved in the existing
   [Pinrail Figma file](https://www.figma.com/design/WxDUx3FJ9iINrtXn2GmkZC/Pinrail-%E2%80%94-Product-Design---Wireframes?m=auto&t=YBuWaX8ZhLg6aYZd-6).
@@ -31,8 +32,8 @@ this design close.
 
 ## 2. Why this boundary
 
-The current product has substantial passing coverage and a working SQLite
-runtime, but release evidence is not yet trustworthy enough for end users:
+At design approval, the product had substantial passing coverage and a working
+SQLite runtime, but release evidence was not trustworthy enough for end users:
 
 - three cleanup/visibility tests fail in the broad backend suite;
 - a Usenet redaction test recursively disposes its own Serilog sink and crashes
@@ -92,6 +93,10 @@ council's stricter proposals are reconciled as follows:
 - `role=all` only.
 - Web UI, WebDAV, SAB-compatible API, queue, history, health diagnostics,
   cleanup, repair, and rclone integration in that topology.
+- The reviewed rclone sidecar is the V1 mount-delivery contract.
+- Hard-symlink-only completed imports: ARR/Plex consume
+  `/completed-symlinks` entries targeting canonical mounted `/.ids` content;
+  AIOStreams consumes independently authenticated WebDAV `/content`.
 - Reverse-proxy HTTPS as the recommended authenticated deployment.
 - Explicitly acknowledged insecure-cookie mode for loopback/private development
   only.
@@ -105,7 +110,12 @@ council's stricter proposals are reconciled as follows:
   registration, Compose, or UI.
 - Split roles, multiple control owners, multi-host coordination, and
   Kubernetes/native-package deployment.
-- Full visual rebrand before backend freeze.
+- Full visual rebrand before Task 10 GO and user review of the backend
+  pass/risk report.
+- Privileged in-container DFS/FUSE prototypes. They remain post-gate and are
+  not covered by any dynamic-user exception required by the combined image.
+- STRM or mixed import strategies, STRM generation/recreation/conversion,
+  and their configuration, maintenance, controller, or UI surfaces.
 - Code-first user-facing frontend or rebrand work that has not first been
   designed and approved in the existing Pinrail Figma file. Behavioral tests
   and non-visual server/security work may proceed before that visual gate.
@@ -134,11 +144,17 @@ omitting documentation is insufficient.
 9. Liveness and readiness are separate contracts.
 10. Every release claim is tied to one source revision, lockfiles, image digest,
     architecture manifest, test record, and SBOM.
+11. Combined-container PID 1 may remain root only to resolve a configured
+    nonzero dynamic identity, prepare owned paths, and supervise both children.
+    Backend and frontend workloads run with the resolved non-root user and
+    group; standalone backend/frontend images are not V1 artifacts.
 
 ## 6. Required end-user journeys
 
-The backend is not frozen until all six journeys pass against the exact
-candidate image.
+The release candidate cannot reach GO until all six journeys pass against the
+exact candidate image. Task 7 freezes the backend first; Task 8 then proves
+these journeys without visual redesign, and neither task unlocks rebrand before
+Task 10 GO plus user review.
 
 ### Journey A: clean install and first login
 
@@ -208,6 +224,15 @@ Authentik failure or malformed configuration fails closed and never falls back
 to local login. Changing modes requires a restart and emits a bounded startup
 audit event without secret values.
 
+The combined-container entrypoint preflights exact mode/session configuration
+before identity-system discovery/mutation, filesystem, database, or
+child-process side effects on normal
+startup. Invalid `AUTH_MODE` fails with a fixed configuration diagnostic.
+Local mode requires the exact session-key contract below; Authentik proxy mode
+does not require a session key. Valid maintenance argv remains independent of
+frontend session configuration, and invalid maintenance argv retains first
+precedence.
+
 In local mode:
 
 - `SESSION_KEY` is required and is exactly 64 hexadecimal characters (32 bytes
@@ -235,9 +260,28 @@ In Authentik proxy mode:
   API-key/WebDAV authentication and never inherit browser-admin authority from
   an unauthenticated proxy path.
 
+The co-located frontend/backend internal key is a separate credential. A
+combined-container start generates a fresh lowercase 64-hex value only when
+`FRONTEND_BACKEND_API_KEY` is omitted or empty, or preserves an explicit valid
+64-hex value byte-for-byte. Invalid explicit values and failed entropy encoding
+fail before side effects with fixed diagnostics and no candidate disclosure.
+Split development supplies one independently generated shared internal key;
+neither topology reuses the session key or public protocol API key.
+
+`PUID` and `PGID` accept only nonzero decimal identities; all-zero spellings,
+including padded zero, fail closed before system identity mutation. Valid
+nonzero spellings normalize before lookup. The root `Dockerfile` carries one
+exact DS-0002 exception solely for dynamic identity, owned-path preparation,
+and two-child supervision. Every real/effective/saved/filesystem UID and GID
+column for both network children must match the resolved non-root identity.
+This exception grants no privileged DFS/FUSE capability.
+
 ### 7.2 Proxy contract
 
-The server classifies routes before implementation:
+The frontend is the only published listener. The backend binds explicit IPv4
+loopback and rejects configured Kestrel endpoints; Docker exposes only port
+3000. Before any private hop, the server classifies the raw mount-relative
+target without decoded-prefix matching:
 
 - UI-admin routes require a valid frontend principal from the selected local or
   Authentik mode, strip any client-supplied internal API key, and inject the
@@ -247,6 +291,34 @@ The server classifies routes before implementation:
 - every forwarded prefix and method is explicitly allowlisted;
 - encoded-separator, double-encoding, prefix-confusion, conflicting-header,
   oversized-header, and client-supplied-key cases fail closed.
+
+`URL_BASE` is root or a literal sequence of RFC3986-unreserved ASCII segments.
+Routing is case-sensitive. Dynamic Express/path-to-regexp syntax, Unicode,
+percent encoding, dot/repeated segments, control/whitespace, and a mounted
+WebDAV PathBase over 8,192 UTF-8 bytes fail before binding. The only WebSocket
+target is exact `<URL_BASE>/ws` without a query; Host/Origin and the selected
+frontend principal are validated before HTTP 101 and before a backend socket.
+
+The canonical external client base is exactly
+`<origin><normalized URL_BASE>/protocol`. SAB, ARR event, WebDAV, and operator
+tool routes are logical suffixes below that base. rclone mounts the complete
+protocol root rather than a `/content` subtree, preserving `/.ids`,
+`/completed-symlinks`, `/content`, and `/nzbs`. The authenticated browser route
+`<origin><URL_BASE>/view` is outside the protocol namespace and never appears
+in an unauthenticated-path exception.
+
+WebDAV removes `<URL_BASE>/protocol` at the edge but sends one bounded,
+canonical base64url internal PathBase header to loopback. Backend middleware
+validates and removes that header, sets ASP.NET `PathBase`, and the logical
+WebDAV store strips the same validated prefix. This preserves correct mounted
+absolute `DAV:href` values without changing store namespaces. Every client copy
+of the internal header is discarded.
+
+The edge honors legitimate custom hop-by-hop `Connection` options only after
+rejecting any option that nominates an API-key, Authorization, form/framing,
+Host, Destination, Range, conditional `If`/`If-*`, or internal PathBase header.
+This prevents a proxy hop from erasing a conflicting carrier or write
+precondition before backend policy evaluates it.
 
 The public/protocol API-key parser has one frozen compatibility exception.
 Individually it accepts exactly one `x-api-key` header, exactly one lowercase
@@ -265,14 +337,18 @@ three locations, a conflicting header-plus-query pair, noncanonical query/form
 name casing, empty values, and values over 512 characters fail closed with the
 existing stable malformed-carrier exception. Missing carriers return null. The
 internal parser remains separate and header-only. This parser contract does not
-authorize a proxy route or widen browser authority; the production proxy still
-requires the complete reviewed route/method/credential matrix before wiring.
+authorize a proxy route or widen browser authority. The production proxy is
+wired only for the complete reviewed route/method/credential matrix and its
+zero-upstream negatives.
 
 ### 7.3 Error and log contract
 
 - Public failures use a bounded envelope: stable code, safe message, correlation
   ID, and optional allowlisted detail.
 - Server logs use structured stable fields and redaction.
+- Runtime wildcard `DEBUG` output is disabled before Express/HPM routing; proxy
+  errors use fixed bounded responses and never include target, backend origin,
+  credential, or raw exception text.
 - Tests inject canary credentials, paths, URLs, provider responses, CR/LF,
   terminal escapes, oversized text, and nested exceptions.
 - The canary must be absent from response body, logs, persisted diagnostics,
@@ -363,10 +439,11 @@ V1 has no in-place downgrade promise.
 
 ## 12. Definition of done
 
-V1 backend freeze requires all of the following on the exact candidate:
+V1 release acceptance requires all of the following on the exact candidate.
+Task 7 records the backend-only subset before Task 8 adds the required journeys:
 
 - backend suite: zero failures, zero crashed test hosts, no ad hoc exclusions;
-- no increase over the reviewed 84 deliberate post-V1 skips without written
+- no increase over the reviewed 85 deliberate post-V1 skips without written
   classification;
 - three consecutive complete backend passes;
 - ten consecutive affected cleanup/invalidation/concurrency passes;
@@ -377,7 +454,8 @@ V1 backend freeze requires all of the following on the exact candidate:
 - disposable SQLite migration, restart, integrity, lock-contention, read-only,
   and failure-recovery gates pass;
 - shell and container entrypoint contracts pass, including child death,
-  migration failure, and SIGTERM;
+  migration failure, SIGTERM, dynamic nonzero identity, root PID 1, and
+  non-root real/effective/saved/filesystem child IDs;
 - safe-rclone fault matrix passes;
 - session, cookie, proxy, error-envelope, and redaction abuse matrices pass;
 - liveness/readiness fault and recovery matrix passes;
@@ -388,6 +466,8 @@ V1 backend freeze requires all of the following on the exact candidate:
 - final independent review reports no P0/P1 and every accepted P2 is documented;
 - source revision, image digest, SBOM, provenance, test evidence, clean-install
   limitation, and residual risks are published together.
+- Task 10 records GO, and the user reviews the complete backend pass/risk report
+  before any Task 11 Figma or visual/rebrand mutation begins.
 
 Any failure, crash, timeout, flaky rerun, unexplained skip, digest mismatch,
 missing artifact, secret leak, or unsupported topology reachability is a

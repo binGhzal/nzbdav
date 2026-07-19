@@ -55,9 +55,9 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
                 setConnectionState('error');
                 setConnectionError("Rclone connection failed.");
             }
-        } catch (error) {
+        } catch {
             setConnectionState('error');
-            setConnectionError(`Rclone connection failed: ${error instanceof Error ? error.message : "unknown error"}.`);
+            setConnectionError("Rclone connection failed: request failed.");
         }
     }, [config]);
 

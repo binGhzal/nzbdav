@@ -1,9 +1,23 @@
 using System.Data.Common;
 using System.Diagnostics;
+using System.Globalization;
+using System.Net;
 using System.Reflection;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
@@ -11,11 +25,17 @@ using NzbWebDAV.Coordination;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Logging;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Security;
 using NzbWebDAV.Services;
 using NzbWebDAV.Tests.TestDoubles;
 using NzbWebDAV.Websocket;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 using backend.Tests.Services;
+using backend.Tests.Security;
 
 namespace backend.Tests.Queue;
 
@@ -56,9 +76,77 @@ public sealed class QueueItemProcessorVerificationTests
         Assert.Equal(0, await dbContext.QueueItems.CountAsync());
         var historyItem = await dbContext.HistoryItems.SingleAsync();
         Assert.Equal(HistoryItem.DownloadStatusOption.Failed, historyItem.DownloadStatus);
-        Assert.Equal("The NZB file is missing from the queue store.", historyItem.FailMessage);
+        Assert.Equal(PublicDiagnosticContract.Message(PublicDiagnosticKind.QueueFailure), historyItem.FailMessage);
         Assert.Null(queueItem.PauseUntil);
         Assert.Empty(await dbContext.ImportReceipts.Where(x => x.HistoryItemId == historyItem.Id).ToListAsync());
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SanitizesOneTerminalFailureAcrossPersistenceLifecycleAndWebsocket()
+    {
+        await using var dbContext = await _fixture.ResetAndCreateMigratedContextAsync();
+        var queueItem = CreateQueueItem();
+        dbContext.QueueItems.Add(queueItem);
+        await dbContext.SaveChangesAsync();
+        var configManager = _fixture.CreateConfigManager();
+        var websocketManager = new WebsocketManager();
+        using var usenetClient = new FakeNntpClient();
+        using var finalOutput = new StringWriter(CultureInfo.InvariantCulture);
+        var previousLogger = Log.Logger;
+        var finalOutputSink = new SafeFinalOutputSink(finalOutput);
+        using var logger = new LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(finalOutputSink)
+            .CreateLogger();
+        Log.Logger = logger;
+
+        QueueItemProcessor.ProcessingOutcome outcome;
+        try
+        {
+            outcome = await new QueueItemProcessor(
+                    queueItem,
+                    new FailingReadStream(new NonRetryableDownloadException(PublicFailureCanary.Composite)),
+                    new DavDatabaseClient(dbContext),
+                    usenetClient,
+                    configManager,
+                    websocketManager,
+                    new ArrDownloadReportService(configManager),
+                    new Progress<int>(),
+                    CancellationToken.None)
+                .ProcessAsync();
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+        }
+
+        Assert.Equal(QueueItemProcessor.ProcessingOutcome.Completed, outcome);
+        dbContext.ChangeTracker.Clear();
+        var history = await dbContext.HistoryItems.AsNoTracking().SingleAsync();
+        var lifecycle = await dbContext.ArrDownloadLifecycleEvents.AsNoTracking()
+            .SingleAsync(x => x.State == "Failed");
+        var websocketPayload = GetLastTopicMessage(websocketManager, WebsocketTopic.HistoryItemAdded);
+        var historyFailureFromHttp = await ReadHistoryFailureOverHttpAsync(
+            dbContext,
+            configManager,
+            history.Id);
+        var renderedLog = finalOutput.ToString();
+        var terminalLog = Assert.Single(finalOutputSink.Events);
+        var renderedEvent = terminalLog.RenderMessage(CultureInfo.InvariantCulture);
+        PublicFailureCanary.AssertSafe(history.FailMessage);
+        PublicFailureCanary.AssertSafe(lifecycle.StateReason);
+        PublicFailureCanary.AssertSafe(websocketPayload);
+        PublicFailureCanary.AssertSafe(historyFailureFromHttp);
+        PublicFailureCanary.AssertSafe(renderedLog);
+        PublicFailureCanary.AssertSafe(renderedEvent);
+        var expected = PublicDiagnosticContract.Message(PublicDiagnosticKind.QueueFailure);
+        Assert.False(string.IsNullOrWhiteSpace(renderedLog));
+        Assert.Contains(" level=ERR ", renderedLog, StringComparison.Ordinal);
+        Assert.Contains(expected, renderedEvent, StringComparison.Ordinal);
+        Assert.True(history.FailMessage == expected);
+        Assert.True(lifecycle.StateReason == expected);
+        Assert.True(historyFailureFromHttp == expected);
+        Assert.Contains(expected, websocketPayload, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -357,7 +445,10 @@ public sealed class QueueItemProcessorVerificationTests
         Assert.Null(await assertionContext.QueueItems.SingleOrDefaultAsync(x => x.Id == queueItem.Id));
         var history = await assertionContext.HistoryItems.SingleAsync(x => x.Id == queueItem.Id);
         Assert.Equal(expectedStatus, history.DownloadStatus);
-        Assert.Equal(error, history.FailMessage);
+        PublicFailureCanary.AssertSafe(history.FailMessage);
+        Assert.Equal(
+            error is null ? null : PublicDiagnosticContract.Message(PublicDiagnosticKind.QueueFailure),
+            history.FailMessage);
     }
 
     [Fact]
@@ -407,7 +498,7 @@ public sealed class QueueItemProcessorVerificationTests
         await using var assertionContext = new DavDatabaseContext(options);
         Assert.NotNull(await assertionContext.QueueItems.SingleOrDefaultAsync(x => x.Id == queueItem.Id));
         var history = await assertionContext.HistoryItems.SingleAsync(x => x.Id == queueItem.Id);
-        Assert.Equal("preexisting terminal state", history.FailMessage);
+        Assert.Equal(PublicDiagnosticContract.Message(PublicDiagnosticKind.QueueFailure), history.FailMessage);
     }
 
     [Fact]
@@ -719,7 +810,7 @@ public sealed class QueueItemProcessorVerificationTests
         Assert.Equal(0, await dbContext.QueueItems.CountAsync());
         var historyItem = await dbContext.HistoryItems.SingleAsync();
         Assert.Equal(HistoryItem.DownloadStatusOption.Failed, historyItem.DownloadStatus);
-        Assert.Equal("The NZB file could not be read from the queue store.", historyItem.FailMessage);
+        Assert.Equal(PublicDiagnosticContract.Message(PublicDiagnosticKind.QueueFailure), historyItem.FailMessage);
         Assert.Null(queueItem.PauseUntil);
     }
 
@@ -971,6 +1062,105 @@ public sealed class QueueItemProcessorVerificationTests
         Assert.NotNull(field);
         var messages = Assert.IsType<Dictionary<WebsocketTopic, string>>(field.GetValue(websocketManager));
         return messages.ContainsKey(WebsocketTopic.HistoryItemAdded);
+    }
+
+    private static string GetLastTopicMessage(WebsocketManager websocketManager, WebsocketTopic topic)
+    {
+        var field = typeof(WebsocketManager).GetField(
+            "_lastMessage",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        var messages = Assert.IsType<Dictionary<WebsocketTopic, string>>(field.GetValue(websocketManager));
+        return Assert.IsType<string>(messages[topic]);
+    }
+
+    private static async Task<string> ReadHistoryFailureOverHttpAsync(
+        DavDatabaseContext dbContext,
+        ConfigManager configManager,
+        Guid historyItemId)
+    {
+        var previousInternalKey = Environment.GetEnvironmentVariable("FRONTEND_BACKEND_API_KEY");
+        Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", "v1");
+        try
+        {
+            var builder = WebApplication.CreateSlimBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0));
+            builder.Services.AddControllers();
+            await using var application = builder.Build();
+            application.MapMethods("/api", [HttpMethods.Get], async context =>
+            {
+                var controller = new SabApiController(
+                    new DavDatabaseClient(dbContext),
+                    configManager,
+                    null!,
+                    null!,
+                    null!,
+                    null!,
+                    null!,
+                    null!,
+                    null!,
+                    null!,
+                    null!)
+                {
+                    ControllerContext = new ControllerContext { HttpContext = context }
+                };
+                var result = await controller.HandleApiRequests().ConfigureAwait(false);
+                await result.ExecuteResultAsync(new ActionContext(
+                    context,
+                    context.GetRouteData(),
+                    new ActionDescriptor())).ConfigureAwait(false);
+            });
+
+            using var startupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await application.StartAsync(startupTimeout.Token).ConfigureAwait(false);
+            var address = application.Services
+                .GetRequiredService<IServer>()
+                .Features
+                .Get<IServerAddressesFeature>()!
+                .Addresses
+                .Single();
+            using var client = new HttpClient
+            {
+                BaseAddress = new Uri(address),
+                Timeout = TimeSpan.FromSeconds(5)
+            };
+            var target = $"/api?mode=history&failed_only=1&limit=1&nzo_ids={historyItemId:D}";
+
+            using var denied = await client.GetAsync(target).ConfigureAwait(false);
+            Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
+
+            using var authorizedRequest = new HttpRequestMessage(HttpMethod.Get, target);
+            authorizedRequest.Headers.Add("X-Api-Key", configManager.GetApiKey());
+            using var authorized = await client.SendAsync(authorizedRequest).ConfigureAwait(false);
+            Assert.Equal(HttpStatusCode.OK, authorized.StatusCode);
+            Assert.Equal("application/json", authorized.Content.Headers.ContentType?.MediaType);
+            var serializedBody = await authorized.Content.ReadAsStringAsync().ConfigureAwait(false);
+            Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(serializedBody), 1, 64 * 1024);
+            PublicFailureCanary.AssertSafe(serializedBody, maximumLength: 64 * 1024);
+            using var document = JsonDocument.Parse(serializedBody);
+            Assert.True(document.RootElement.GetProperty("status").GetBoolean());
+            var slots = document.RootElement.GetProperty("history").GetProperty("slots");
+            var slot = Assert.Single(slots.EnumerateArray());
+            Assert.Equal(historyItemId.ToString(), slot.GetProperty("nzo_id").GetString());
+            return Assert.IsType<string>(slot.GetProperty("fail_message").GetString());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", previousInternalKey);
+        }
+    }
+
+    private sealed class SafeFinalOutputSink(TextWriter output) : ILogEventSink
+    {
+        private readonly V1SafeConsoleFormatter _formatter = new();
+        public List<LogEvent> Events { get; } = [];
+
+        public void Emit(LogEvent logEvent)
+        {
+            Events.Add(logEvent);
+            _formatter.Format(logEvent, output);
+        }
     }
 
     private sealed class FailingReadStream(Exception exception) : Stream

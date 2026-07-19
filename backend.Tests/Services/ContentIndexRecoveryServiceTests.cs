@@ -8,6 +8,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
+using NzbWebDAV.WebDav;
 
 namespace backend.Tests.Services;
 
@@ -174,8 +175,8 @@ public sealed class ContentIndexRecoveryServiceTests
         if (OperatingSystem.IsWindows()) return;
 
         var libraryPath = _fixture.CreateLibraryDirectory();
-        var blockingStrmPath = Path.Join(libraryPath, "blocking.strm");
-        await RunProcessAsync("mkfifo", blockingStrmPath);
+        var blockingMediaPath = Path.Join(libraryPath, "blocking.mkv");
+        await RunProcessAsync("mkfifo", blockingMediaPath);
 
         await using (var dbContext = await _fixture.ResetAndCreateMigratedContextAsync())
         {
@@ -199,7 +200,7 @@ public sealed class ContentIndexRecoveryServiceTests
         var completedTask = await Task.WhenAny(startTask, timeoutTask);
 
         if (completedTask != startTask && !startTask.IsCompleted)
-            await UnblockNamedPipeAsync(blockingStrmPath);
+            await UnblockNamedPipeAsync(blockingMediaPath);
 
         Assert.Same(startTask, completedTask);
         await startTask;
@@ -230,10 +231,9 @@ public sealed class ContentIndexRecoveryServiceTests
         }
 
         var libraryPath = _fixture.CreateLibraryDirectory();
-        await File.WriteAllTextAsync(
-            Path.Join(libraryPath, "Missing.strm"),
-            $"http://localhost:3000/view/.ids/{linkedItemId}.mkv?downloadKey=test&extension=mkv"
-        );
+        File.CreateSymbolicLink(
+            Path.Join(libraryPath, "Missing.mkv"),
+            DatabaseStoreSymlinkFile.GetTargetPath(linkedItemId, "/mnt/nzbdav"));
 
         await using (var dbContext = await _fixture.CreateMigratedContextAsync())
         {
